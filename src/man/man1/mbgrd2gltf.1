@@ -98,6 +98,8 @@ With values (e.g., --geoorigin=-122.0,36.8,-1000): use specified GeoOrigin.
 Without values: automatically compute and use grid center and mean altitude.
 .br
 Not specified: vertices use original ECEF coordinates from Earth's center (default).
+.br
+GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about 6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to preserve sub-meter detail.
 
 .TP
 .B \-\-draco, \-D

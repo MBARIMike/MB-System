@@ -120,6 +120,9 @@ void print_help() {
   std::cout << "                                  With values: use specified lon,lat,elev\n";
   std::cout << "                                  Without values: use grid center and mean altitude\n";
   std::cout << "                                  Not specified: original ECEF coordinates (default)\n";
+  std::cout << "                                GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about\n";
+  std::cout << "                                6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to\n";
+  std::cout << "                                preserve sub-meter detail\n";
   std::cout << "  --draco, -D                   Enable Draco mesh compression\n";
   std::cout << "  --quantize-position NUM       Draco position quantization bits (2-30) [default: 16]\n";
   std::cout << "  --quantize-normal NUM         Draco normal quantization bits (2-30) [default: 7]\n";
