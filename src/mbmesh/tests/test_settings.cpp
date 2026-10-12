@@ -97,6 +97,36 @@ int main() {
         return 1;
     }
 
+    // --geoorigin resolution follows mbgrd2gltf: none by default, the given
+    // lon,lat,elev when specified, otherwise the bounds center and mean elevation.
+    DatalistMetadata geo_metadata;
+    geo_metadata.geodetic_bounds = {-122.4, -122.2, 36.5, 36.7};
+    geo_metadata.mean_elevation = -1500.0;
+
+    Options geo_options;
+    GeodeticPosition geo_origin = {1.0, 2.0, 3.0};
+    if (!check(!resolve_geoorigin(geo_options, geo_metadata, &geo_origin) && geo_origin.longitude == 1.0,
+               "No --geoorigin should leave absolute ECEF output and the origin untouched")) {
+        return 1;
+    }
+
+    geo_options.geoorigin_mode = GeoOriginMode::Auto;
+    if (!check(resolve_geoorigin(geo_options, geo_metadata, &geo_origin) &&
+                   nearly_equal(geo_origin.longitude, -122.3) && nearly_equal(geo_origin.latitude, 36.6) &&
+                   nearly_equal(geo_origin.elevation, -1500.0),
+               "Automatic GeoOrigin should be the bounds center at the mean elevation")) {
+        return 1;
+    }
+
+    geo_options.geoorigin_mode = GeoOriginMode::Specified;
+    geo_options.geoorigin = {-121.9, 36.8, -10.0};
+    if (!check(resolve_geoorigin(geo_options, geo_metadata, &geo_origin) &&
+                   nearly_equal(geo_origin.longitude, -121.9) && nearly_equal(geo_origin.latitude, 36.8) &&
+                   nearly_equal(geo_origin.elevation, -10.0),
+               "Specified GeoOrigin should be used as given")) {
+        return 1;
+    }
+
     std::printf("Settings defaults and Poisson budget checks passed\n");
     return 0;
 }

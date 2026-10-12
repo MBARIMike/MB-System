@@ -27,7 +27,13 @@ struct ReadArrays {
 struct ReadContext {
     const DatalistReaderOptions &options;
     DatalistReadResult &result;
-    bool has_frame = false;
+
+    // Soundings are held as absolute ECEF until the frame origin is known.
+    // The centroid is accumulated relative to the first point to keep the
+    // sum well conditioned.
+    bool has_reference = false;
+    Vec3 reference_ecef;
+    Vec3 offset_sum;
 };
 
 void set_error(std::string *error, const std::string &message) {
@@ -53,10 +59,10 @@ void set_error(std::string *error, const std::string &message) {
     return std::isfinite(ping.timestamp) && is_finite(ping.sensor_position) && is_finite(sounding.position);
 }
 
-[[nodiscard]] CollectedPoint make_collected_point(const Ping &ping, const Sounding &sounding, const CoordinateFrame &frame) {
+[[nodiscard]] CollectedPoint make_collected_point(const Ping &ping, const Sounding &sounding) {
     CollectedPoint collected_point;
-    collected_point.point = geodetic_to_local(sounding.position, frame);
-    collected_point.origin = geodetic_to_local(ping.sensor_position, frame);
+    collected_point.point = geodetic_to_ecef(sounding.position);
+    collected_point.origin = geodetic_to_ecef(ping.sensor_position);
     return collected_point;
 }
 
@@ -84,12 +90,13 @@ bool append_sounding_to_pointcloud(const Ping &ping, const Sounding &sounding, R
         return true;
     }
 
-    if (!context->has_frame) {
-        context->result.frame = coordinate_frame_from_origin(ping.sensor_position);
-        context->has_frame = true;
+    const CollectedPoint collected_point = make_collected_point(ping, sounding);
+    if (!context->has_reference) {
+        context->reference_ecef = collected_point.point;
+        context->has_reference = true;
     }
-
-    context->result.points.push_back(make_collected_point(ping, sounding, context->result.frame));
+    context->offset_sum += collected_point.point - context->reference_ecef;
+    context->result.points.push_back(collected_point);
     ++stats.soundings_accepted;
     return true;
 }
@@ -301,25 +308,6 @@ bool GeographicBounds::contains(double lon, double lat) const {
     return latitude_in_bounds && longitude_in_bounds;
 }
 
-CoordinateFrame coordinate_frame_from_origin(
-    const GeodeticPosition &origin) {
-    constexpr double pi = 3.14159265358979323846;
-    constexpr double earth_radius_meters = 6378137.0;
-    constexpr double degrees_to_radians = pi / 180.0;
-
-    CoordinateFrame frame;
-    frame.origin = origin;
-    frame.meters_per_degree_lat = earth_radius_meters * degrees_to_radians;
-    frame.meters_per_degree_lon = earth_radius_meters * std::cos(origin.latitude * degrees_to_radians) * degrees_to_radians;
-    return frame;
-}
-
-Vec3 geodetic_to_local(const GeodeticPosition &position, const CoordinateFrame &frame) {
-    return Vec3((position.longitude - frame.origin.longitude) * frame.meters_per_degree_lon,
-                (position.latitude - frame.origin.latitude) * frame.meters_per_degree_lat,
-                position.elevation - frame.origin.elevation);
-}
-
 bool read_datalist(const std::filesystem::path &path, const DatalistReaderOptions &options, DatalistReadResult *result, std::string *error) {
     if (error != nullptr) {
         error->clear();
@@ -413,6 +401,25 @@ bool read_datalist(const std::filesystem::path &path, const DatalistReaderOption
     if (read_result.points.empty()) {
         set_error(error, "Datalist produced no accepted bathymetry soundings: " + datalist_path);
         return false;
+    }
+
+    // Choose the reconstruction frame origin now that all soundings have been
+    // seen: the point on the ellipsoid below the centroid. This internal frame
+    // is independent of --geoorigin, which only sets the output offset.
+    const double count = static_cast<double>(read_result.points.size());
+    const Vec3 centroid_ecef = context.reference_ecef + context.offset_sum * (1.0 / count);
+    GeodeticPosition origin = ecef_to_geodetic(centroid_ecef);
+    origin.elevation = 0.0;
+
+    // Round so the same survey always yields the same, readable origin.
+    constexpr double origin_resolution_degrees = 1.0e-6;
+    origin.longitude = std::round(origin.longitude / origin_resolution_degrees) * origin_resolution_degrees;
+    origin.latitude = std::round(origin.latitude / origin_resolution_degrees) * origin_resolution_degrees;
+    read_result.frame = coordinate_frame_from_origin(origin);
+
+    for (CollectedPoint &collected_point : read_result.points) {
+        collected_point.point = ecef_to_local(collected_point.point, read_result.frame);
+        collected_point.origin = ecef_to_local(collected_point.origin, read_result.frame);
     }
 
     *result = std::move(read_result);

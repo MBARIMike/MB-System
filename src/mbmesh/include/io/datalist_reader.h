@@ -6,6 +6,7 @@
 
 #include "../data_types/geometry.h"
 #include "../data_types/swathfile.h"
+#include "coordinate_frame.h"
 
 struct DatalistReaderOptions {
     GeographicBounds bounds;
@@ -29,13 +30,6 @@ struct DatalistReadResult {
     CoordinateFrame frame;
     DatalistReaderStats stats;
 };
-
-[[nodiscard]] CoordinateFrame coordinate_frame_from_origin(
-    const GeodeticPosition &origin);
-
-[[nodiscard]] Vec3 geodetic_to_local(
-    const GeodeticPosition &position,
-    const CoordinateFrame &frame);
 
 [[nodiscard]] bool read_datalist(
     const std::filesystem::path &path,

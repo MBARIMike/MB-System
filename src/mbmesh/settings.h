@@ -13,6 +13,12 @@
 #include "data_types/swathfile.h"
 #include "io/datalist_reader.h"
 
+enum class GeoOriginMode {
+    None,       // absolute ECEF vertices (default)
+    Auto,       // -G with no value: center of the data bounds and mean elevation
+    Specified,  // -G lon,lat,elev
+};
+
 struct Options {
     bool help_requested = false;
     bool metadata_requested = false;
@@ -32,6 +38,12 @@ struct Options {
 
     bool use_bounds = false;
     GeographicBounds bounds;
+
+    // --geoorigin / -G, with the same meaning as in mbgrd2gltf. Output
+    // vertices are WGS84 ECEF coordinates; with a GeoOrigin they are offsets
+    // from that point's ECEF position instead.
+    GeoOriginMode geoorigin_mode = GeoOriginMode::None;
+    GeodeticPosition geoorigin;   // used when geoorigin_mode == Specified
 
     // Smallest feature size, in local meters, that mbmesh should try to preserve.
     double level_of_detail = 0.5;
@@ -64,6 +76,7 @@ struct DatalistMetadata {
     Bounds3D bounds;
     GeodeticBounds geodetic_bounds;
     SpacingMetadata spacing;
+    double mean_elevation = 0.0;   // mean accepted sounding elevation, meters above the ellipsoid
     std::size_t point_count = 0;
     bool lod_supported_by_spacing = true;
     bool normal_radius_exceeds_feature_limit = false;
@@ -73,6 +86,10 @@ struct PreprocessedDatalist {
     DatalistReadResult read_result;
     DatalistMetadata metadata;
 };
+
+// Resolves the GeoOrigin that --geoorigin selects. Returns false (and leaves
+// *origin untouched) when no GeoOrigin was requested.
+bool resolve_geoorigin(const Options &options, const DatalistMetadata &metadata, GeodeticPosition *origin);
 
 void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata);
 bool adjust_poisson_grid_to_budget(Options &options, const DatalistMetadata &metadata, std::string *error = nullptr);

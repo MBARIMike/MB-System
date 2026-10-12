@@ -15,22 +15,20 @@ signed scalar field with screened Poisson, extracts a surface with marching
 cubes, trims unsupported mesh regions, and writes the result as a binary glTF
 mesh.
 .LP
-The output mesh vertices are positioned in the same local Cartesian coordinate
-frame used for reconstruction, with units in meters. This is an east-north-up
-frame initialized from the first accepted ping's sensor position: X is positive
-east, Y is positive north, and Z is positive up relative to that origin.
-Longitude and latitude are converted to local meters using an equirectangular
-approximation based on the origin latitude.
+The output mesh vertices are WGS84 Earth-Centered, Earth-Fixed (ECEF)
+coordinates in meters, following the conventions of \fBmbgrd2gltf\fR. Without
+\fB--geoorigin\fR the vertices are absolute ECEF coordinates. With
+\fB--geoorigin\fR they are offsets from the ECEF position of a GeoOrigin; the
+axes stay aligned with ECEF. An \fBmbmesh\fR product and an \fBmbgrd2gltf\fR
+product made with the same GeoOrigin therefore line up directly. GLB positions
+are 32-bit floats, so absolute ECEF coordinates resolve only about 0.5 m; use a
+GeoOrigin to preserve finer detail.
 .LP
-This local frame is not the Earth-Centered, Earth-Fixed (ECEF) frame used by
-\fBmbgrd2gltf\fR by default, and it is not the ECEF-offset frame produced by
-\fBmbgrd2gltf --geoorigin\fR. The \fB--geoorigin\fR option in
-\fBmbgrd2gltf\fR allows vertices to be expressed as offsets from a local origin
-point rather than from Earth's center in order to reduce coordinate magnitudes
-and improve rendering precision. \fBmbmesh\fR currently uses its own local
-projected frame instead. When combining \fBmbmesh\fR GLB output with
-\fBmbgrd2gltf\fR output, transform both products into the same coordinate
-frame first; otherwise their vertices can appear offset or fail to line up.
+Reconstruction itself runs in a local east-north-up frame tangent to the WGS84
+ellipsoid at the point below the centroid of the accepted soundings. Soundings
+are converted to ECEF and rigidly translated and rotated into this frame, so no
+map-projection distortion is introduced, and results are converted back to ECEF
+exactly on output. This frame does not depend on \fB--geoorigin\fR.
 .LP
 The default output is:
 .RS
@@ -61,6 +59,20 @@ Requested smallest feature size in local meters. If omitted, \fBmbmesh\fR
 derives level of detail from estimated point spacing. The implementation clamps
 the resolved value to a supported range and uses it to derive default
 normal-estimation, Poisson, and trimming parameters.
+.TP
+.B \--geoorigin [\fIlon,lat,elev\fR], \-G[\fIlon,lat,elev\fR]
+Write vertices as ECEF offsets from a GeoOrigin, with the same syntax and meaning
+as in \fBmbgrd2gltf\fR. With a value, longitude and latitude in decimal degrees
+and elevation in meters above the WGS84 ellipsoid are all required. With no
+value, the GeoOrigin is the center of the data bounds at the mean sounding
+elevation. If the option is not given, vertices are absolute ECEF coordinates.
+GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about 6.4
+million meters) resolves only about 0.5 m; use a GeoOrigin to preserve
+sub-meter detail.
+As in \fBmbgrd2gltf\fR the value must be attached to the option, for example
+\fB--geoorigin=-122.4,36.6,0\fR or \fB-G-122.4,36.6,0\fR. With
+\fB--html\fR, the viewer page positions the model with GeoOrigin and
+GeoViewpoint nodes.
 .TP
 .B \--decimate \fImeters\fR
 Enable voxel-grid point decimation with the specified cell size in local meters.
@@ -188,11 +200,11 @@ soundings. Geographic filtering is applied when \fB-R\fR is specified.
 .LP
 .B Coordinate frame
 .br
-\fBmbmesh\fR initializes its local Cartesian frame from the first accepted
-ping's sensor position. Sounding elevation is stored as negative bathymetry,
-and sensor elevation is stored as negative sensor depth. The local-to-geodetic
-conversion used for optional ECEF point-cloud outputs reverses this
-equirectangular approximation before converting to WGS84 ECEF coordinates.
+\fBmbmesh\fR converts each sounding and sensor position to WGS84 ECEF
+coordinates and then to a local east-north-up frame (see above). Sounding
+elevation is taken as negative bathymetry, and sensor elevation as negative
+sensor depth, both treated as heights above the WGS84 ellipsoid. The optional
+ECEF point-cloud outputs apply the exact inverse transform.
 .LP
 .B Automatic settings
 .br

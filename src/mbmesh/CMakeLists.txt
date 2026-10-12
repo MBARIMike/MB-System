@@ -12,6 +12,7 @@ message("In src/mbmesh")
 set(MBMESH_SOURCES
   mbmesh.cpp
   settings.cpp
+  src/io/coordinate_frame.cpp
   src/io/datalist_reader.cpp
   src/io/xyz_writer.cpp
   src/io/glb_writer.cpp
@@ -51,6 +52,7 @@ if(buildTests)
   add_executable(mbmesh_test_settings
     tests/test_settings.cpp
     settings.cpp
+    src/io/coordinate_frame.cpp
     src/io/datalist_reader.cpp
     src/algorithms/point_decimation.cpp
     src/algorithms/normal_estimation.cpp
@@ -65,6 +67,14 @@ if(buildTests)
     ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
   target_link_libraries(mbmesh_test_settings PRIVATE mbio)
   add_test(NAME mbmesh_settings COMMAND mbmesh_test_settings)
+
+  add_executable(mbmesh_test_coordinate_frame
+    tests/test_coordinate_frame.cpp
+    src/io/coordinate_frame.cpp)
+  target_compile_features(mbmesh_test_coordinate_frame PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_coordinate_frame PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mbmesh_coordinate_frame COMMAND mbmesh_test_coordinate_frame)
 
   add_executable(mbmesh_test_marching_cubes
     tests/test_marching_cubes.cpp

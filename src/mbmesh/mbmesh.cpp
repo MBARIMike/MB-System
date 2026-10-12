@@ -2,7 +2,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <cmath>
 #include <getopt.h>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -12,6 +14,7 @@
 
 #include "settings.h"
 
+#include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
 #include "io/glb_writer.h"
 #include "io/x3dom_writer.h"
@@ -47,6 +50,14 @@ void log_fatal(const std::string &message) {
 
 } // namespace
 
+// Where output vertices go. GLB outputs are WGS84 ECEF; with a GeoOrigin they
+// are offsets from the GeoOrigin's ECEF position (exactly as in mbgrd2gltf).
+struct OutputPlacement {
+    bool use_geoorigin = false;
+    GeodeticPosition geoorigin;
+    X3DomGeoOrigin view;
+};
+
 bool write_outputs(
     const Mesh &mesh,
     const Mesh &raw_mesh,
@@ -54,6 +65,7 @@ bool write_outputs(
     const OrientedPointCloud &oriented_points,
     const CollectedPointCloud &collected_points,
     const CoordinateFrame &frame,
+    const OutputPlacement &placement,
     const Options &options,
     std::string *error);
 
@@ -100,6 +112,43 @@ int main(int argc, char **argv) {
     if (options.metadata_requested) {
         print_datalist_metadata(preprocessed, options);
         return 0;
+    }
+
+    // ====================================================================================================
+    // Output Placement (--geoorigin)
+    // ====================================================================================================
+
+    OutputPlacement placement;
+    {
+        const GeodeticBounds &bounds = preprocessed.metadata.geodetic_bounds;
+        placement.use_geoorigin = resolve_geoorigin(options, preprocessed.metadata, &placement.geoorigin);
+
+        if (placement.use_geoorigin) {
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(6)
+                    << (options.geoorigin_mode == GeoOriginMode::Auto ? "using automatic GeoOrigin (data center): "
+                                                                       : "using user-specified GeoOrigin: ")
+                    << placement.geoorigin.longitude << "," << placement.geoorigin.latitude << ","
+                    << std::setprecision(2) << placement.geoorigin.elevation;
+            log_message("output", message.str(), options.verbose);
+
+            // Viewpoint values follow mbgrd2gltf: center of the bounds, framed to fill a 45 degree view.
+            X3DomGeoOrigin &view = placement.view;
+            view.origin_lat = placement.geoorigin.latitude;
+            view.origin_lon = placement.geoorigin.longitude;
+            view.origin_elevation = placement.geoorigin.elevation;
+            view.center_lat = (bounds.min_lat + bounds.max_lat) / 2.0;
+            view.center_lon = (bounds.min_lon + bounds.max_lon) / 2.0;
+            view.mean_elevation = preprocessed.metadata.mean_elevation;
+            constexpr double pi = 3.14159265358979323846;
+            const double lat_extent_m = (bounds.max_lat - bounds.min_lat) * 111000.0;
+            const double lon_extent_m = (bounds.max_lon - bounds.min_lon) * 111000.0 * std::cos(view.center_lat * pi / 180.0);
+            constexpr double field_of_view = 0.785398;
+            view.view_altitude = (std::max(lat_extent_m, lon_extent_m) / 2.0) / std::tan(field_of_view / 2.0);
+        } else {
+            log_warning("no GeoOrigin: GLB vertices are absolute ECEF stored as 32-bit floats (about 0.5 m resolution); "
+                        "use --geoorigin to preserve sub-meter detail");
+        }
     }
 
     CollectedPointCloud collected_points = std::move(preprocessed.read_result.points);
@@ -277,7 +326,7 @@ int main(int argc, char **argv) {
         output_points.push_back(collected_point.point);
     }
 
-    if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, options, &error)) {
+    if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, options, &error)) {
         log_fatal(error);
         return 1;
     }
@@ -349,6 +398,7 @@ Options parse_options(int argc, char **argv) {
         {"origin-glb", no_argument, nullptr, 1008},
         {"raw-mesh-glb", no_argument, nullptr, 1009},
         {"decimate", required_argument, nullptr, 1010},
+        {"geoorigin", optional_argument, nullptr, 'G'},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -358,7 +408,7 @@ Options parse_options(int argc, char **argv) {
 
     int c = 0;
     int option_index = 0;
-    while ((c = getopt_long(argc, argv, "I:O:R:L:VHh", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "I:O:R:L:G::VHh", long_options, &option_index)) != -1) {
 
         switch (c) {
 
@@ -387,6 +437,27 @@ Options parse_options(int argc, char **argv) {
         case 'L':
             options.level_of_detail = std::strtod(optarg, nullptr);
             options.level_of_detail_requested = true;
+            break;
+
+        case 'G':
+            // Same syntax and meaning as mbgrd2gltf: no value selects the
+            // automatic GeoOrigin; otherwise all of lon,lat,elev are required.
+            // As in mbgrd2gltf, the value must be attached (--geoorigin=V, -GV).
+            if (optarg == nullptr) {
+                options.geoorigin_mode = GeoOriginMode::Auto;
+            } else {
+                const std::string geoorigin_string(optarg);
+                const std::size_t comma1 = geoorigin_string.find(',');
+                const std::size_t comma2 = geoorigin_string.rfind(',');
+                if (comma1 == std::string::npos || comma2 == std::string::npos || comma1 == comma2) {
+                    log_fatal("GeoOrigin format must be lon,lat,elev");
+                    std::exit(1);
+                }
+                options.geoorigin.longitude = std::atof(geoorigin_string.substr(0, comma1).c_str());
+                options.geoorigin.latitude = std::atof(geoorigin_string.substr(comma1 + 1, comma2 - comma1 - 1).c_str());
+                options.geoorigin.elevation = std::atof(geoorigin_string.substr(comma2 + 1).c_str());
+                options.geoorigin_mode = GeoOriginMode::Specified;
+            }
             break;
 
         case 'V':
@@ -484,6 +555,15 @@ void print_usage() {
     std::cout << "  -R, --bounds <w/e/s/n>       Geographic bounds in degrees\n";
     std::cout << "  -L, --lod <meters>           Requested smallest feature size; auto if omitted\n";
     std::cout << "      --decimate <meters>      Enable voxel-grid point decimation\n";
+    std::cout << "  -G, --geoorigin [lon,lat,elev]\n";
+    std::cout << "                               Write vertices as ECEF offsets from a GeoOrigin, as in mbgrd2gltf\n";
+    std::cout << "                                 With values: use the specified lon,lat,elev\n";
+    std::cout << "                                 Without values: use the data center and mean elevation\n";
+    std::cout << "                                 Not specified: absolute ECEF coordinates (default)\n";
+    std::cout << "                               GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about\n";
+    std::cout << "                               6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to\n";
+    std::cout << "                               preserve sub-meter detail\n";
+    std::cout << "                               The value must be attached: --geoorigin=lon,lat,elev or -Glon,lat,elev\n";
     std::cout << "      --metadata, --info       Print dataset metadata and exit\n";
     std::cout << "  -V, --verbose                Enable progress and diagnostic logging\n";
     std::cout << "  -H, -h, --help               Print this help message\n\n";
@@ -506,6 +586,56 @@ void print_usage() {
 namespace {
 
 constexpr std::size_t maximum_diagnostic_glb_points = 2'000'000;
+
+// Output-frame conversion: local ENU -> ECEF, minus the GeoOrigin's ECEF
+// position when one is in use. Directions only rotate; they do not translate.
+
+Vec3 output_position(const Vec3 &local, const CoordinateFrame &frame, const Vec3 &offset) {
+    return local_to_ecef(local, frame) - offset;
+}
+
+Mesh output_mesh(const Mesh &mesh, const CoordinateFrame &frame, const Vec3 &offset) {
+    Mesh out;
+    out.indices = mesh.indices;
+    out.vertices.reserve(mesh.vertices.size());
+    for (const Vec3 &vertex : mesh.vertices) {
+        out.vertices.push_back(output_position(vertex, frame, offset));
+    }
+    out.normals.reserve(mesh.normals.size());
+    for (const Vec3 &normal : mesh.normals) {
+        out.normals.push_back(local_vector_to_ecef(normal, frame));
+    }
+    return out;
+}
+
+PointCloud output_points(const PointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
+    PointCloud out;
+    out.reserve(points.size());
+    for (const Vec3 &point : points) {
+        out.push_back(output_position(point, frame, offset));
+    }
+    return out;
+}
+
+OrientedPointCloud output_oriented_points(const OrientedPointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
+    OrientedPointCloud out;
+    out.reserve(points.size());
+    for (const OrientedPoint &point : points) {
+        OrientedPoint converted(output_position(point.point, frame, offset), local_vector_to_ecef(point.normal, frame));
+        converted.lambdas = point.lambdas;
+        out.push_back(converted);
+    }
+    return out;
+}
+
+CollectedPointCloud output_collected_points(const CollectedPointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
+    CollectedPointCloud out;
+    out.reserve(points.size());
+    for (const CollectedPoint &point : points) {
+        out.push_back({output_position(point.point, frame, offset), output_position(point.origin, frame, offset)});
+    }
+    return out;
+}
 
 std::string shell_quote(const std::string &value) {
     std::string quoted = "'";
@@ -531,9 +661,12 @@ bool write_outputs(
     const OrientedPointCloud &oriented_points,
     const CollectedPointCloud &collected_points,
     const CoordinateFrame &frame,
+    const OutputPlacement &placement,
     const Options &options,
     std::string *error)
 {
+    const Vec3 offset = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
+
     if (options.output_directory.empty()) {
         if (error != nullptr) {
             *error = "Output directory path is empty";
@@ -577,7 +710,7 @@ bool write_outputs(
 
     if (options.write_pointcloud_glb) {
         const auto pointcloud_glb_path = options.output_directory / "pointcloud.glb";
-        if (!write_pointcloud_glb_file(pointcloud_glb_path, points, error)) {
+        if (!write_pointcloud_glb_file(pointcloud_glb_path, output_points(points, frame, offset), error)) {
             return false;
         }
         log_message("output", "wrote " + pointcloud_glb_path.string(), options.verbose);
@@ -585,7 +718,7 @@ bool write_outputs(
 
     if (options.write_normal_glb) {
         const auto normals_glb_path = options.output_directory / "normals.glb";
-        if (!write_normal_lines_glb_file(normals_glb_path, oriented_points, 0.25, error)) {
+        if (!write_normal_lines_glb_file(normals_glb_path, output_oriented_points(oriented_points, frame, offset), 0.25, error)) {
             return false;
         }
         log_message("output", "wrote " + normals_glb_path.string(), options.verbose);
@@ -593,7 +726,7 @@ bool write_outputs(
 
     if (options.write_origin_glb) {
         const auto origins_glb_path = options.output_directory / "origins.glb";
-        if (!write_origin_ray_lines_glb_file(origins_glb_path, collected_points, 0.25, error)) {
+        if (!write_origin_ray_lines_glb_file(origins_glb_path, output_collected_points(collected_points, frame, offset), 0.25, error)) {
             return false;
         }
         log_message("output", "wrote " + origins_glb_path.string(), options.verbose);
@@ -601,21 +734,24 @@ bool write_outputs(
 
     if (options.write_raw_mesh_glb) {
         const auto raw_mesh_glb_path = options.output_directory / "raw_mesh.glb";
-        if (!write_mesh_glb_file(raw_mesh_glb_path, raw_mesh, error)) {
+        if (!write_mesh_glb_file(raw_mesh_glb_path, output_mesh(raw_mesh, frame, offset), error)) {
             return false;
         }
         log_message("output", "wrote " + raw_mesh_glb_path.string(), options.verbose);
     }
 
     const auto clean_mesh_glb_path = options.output_directory / "mesh.glb";
-    if (!write_mesh_glb_file(clean_mesh_glb_path, mesh, error)) {
+    if (!write_mesh_glb_file(clean_mesh_glb_path, output_mesh(mesh, frame, offset), error)) {
         return false;
     }
     log_message("output", "wrote " + clean_mesh_glb_path.string(), options.verbose);
 
     if (options.write_html) {
         const auto html_path = options.output_directory / "mesh.html";
-        if (!write_glb_x3dom_file(html_path, "mesh.glb", {}, error)) {
+        X3DomWriterOptions html_options;
+        html_options.use_geoorigin = placement.use_geoorigin;
+        html_options.geo = placement.view;
+        if (!write_glb_x3dom_file(html_path, "mesh.glb", html_options, error)) {
             return false;
         }
         log_message("output", "wrote " + html_path.string(), options.verbose);

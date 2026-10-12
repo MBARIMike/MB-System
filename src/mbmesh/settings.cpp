@@ -36,15 +36,13 @@ Bounds3D collected_point_bounds(const CollectedPointCloud &points) {
     return bounds;
 }
 
-GeodeticBounds collected_geodetic_bounds(const CollectedPointCloud &points, const CoordinateFrame &frame) {
+GeodeticBounds collected_geodetic_bounds(const CollectedPointCloud &points, const CoordinateFrame &frame, double *mean_elevation) {
     GeodeticBounds bounds;
     bool initialized = false;
+    double elevation_sum = 0.0;
     for (const CollectedPoint &point : points) {
-        const GeodeticPosition position = {
-            frame.origin.longitude + point.point.x / frame.meters_per_degree_lon,
-            frame.origin.latitude + point.point.y / frame.meters_per_degree_lat,
-            frame.origin.elevation + point.point.z,
-        };
+        const GeodeticPosition position = local_to_geodetic(point.point, frame);
+        elevation_sum += position.elevation;
 
         if (!initialized) {
             bounds.min_lon = position.longitude;
@@ -59,6 +57,9 @@ GeodeticBounds collected_geodetic_bounds(const CollectedPointCloud &points, cons
         bounds.max_lon = std::max(bounds.max_lon, position.longitude);
         bounds.min_lat = std::min(bounds.min_lat, position.latitude);
         bounds.max_lat = std::max(bounds.max_lat, position.latitude);
+    }
+    if (mean_elevation != nullptr && !points.empty()) {
+        *mean_elevation = elevation_sum / static_cast<double>(points.size());
     }
     return bounds;
 }
@@ -220,6 +221,21 @@ void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata)
         desired_feature_size / average_spacing >= automatic_feature_size_spacing_scale;
 }
 
+bool resolve_geoorigin(const Options &options, const DatalistMetadata &metadata, GeodeticPosition *origin) {
+    if (options.geoorigin_mode == GeoOriginMode::Specified) {
+        *origin = options.geoorigin;
+        return true;
+    }
+    if (options.geoorigin_mode == GeoOriginMode::Auto) {
+        // Same convention as mbgrd2gltf: center of the bounds, mean elevation.
+        origin->longitude = (metadata.geodetic_bounds.min_lon + metadata.geodetic_bounds.max_lon) / 2.0;
+        origin->latitude = (metadata.geodetic_bounds.min_lat + metadata.geodetic_bounds.max_lat) / 2.0;
+        origin->elevation = metadata.mean_elevation;
+        return true;
+    }
+    return false;
+}
+
 bool adjust_poisson_grid_to_budget(Options &options, const DatalistMetadata &metadata, std::string *error) {
     PoissonGridEstimate estimate =
         estimate_poisson_grid(metadata.bounds, options.poisson.cell_size, options.poisson.padding);
@@ -263,7 +279,8 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
 
     preprocessed->metadata.point_count = preprocessed->read_result.points.size();
     preprocessed->metadata.bounds = collected_point_bounds(preprocessed->read_result.points);
-    preprocessed->metadata.geodetic_bounds = collected_geodetic_bounds(preprocessed->read_result.points, preprocessed->read_result.frame);
+    preprocessed->metadata.geodetic_bounds = collected_geodetic_bounds(
+        preprocessed->read_result.points, preprocessed->read_result.frame, &preprocessed->metadata.mean_elevation);
     preprocessed->metadata.spacing = estimate_point_spacing(preprocessed->read_result.points);
 
     apply_spacing_driven_defaults(options, &preprocessed->metadata);

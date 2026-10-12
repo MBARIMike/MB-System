@@ -9,6 +9,7 @@ mbmesh_CXXFLAGS = -std=c++17
 mbmesh_SOURCES = \
 	mbmesh.cpp \
 	settings.cpp \
+	src/io/coordinate_frame.cpp \
 	src/io/datalist_reader.cpp \
 	src/io/xyz_writer.cpp \
 	src/io/glb_writer.cpp \

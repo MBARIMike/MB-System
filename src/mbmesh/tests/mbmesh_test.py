@@ -19,6 +19,21 @@ class MbmeshTest(unittest.TestCase):
                    output)
     self.assertIn('usage: mbmesh', output)
 
+  def testGeoOriginRequiresThreeValues(self):
+    # Same rule as mbgrd2gltf: a specified GeoOrigin must be lon,lat,elev.
+    for arg in ('--geoorigin=-122.4,36.6', '-G-122.4'):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', arg],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+      self.assertNotEqual(proc.returncode, 0, arg)
+      self.assertIn('GeoOrigin format must be lon,lat,elev',
+                    proc.stdout.decode(), arg)
+
+  def testHelpDocumentsGeoOrigin(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--geoorigin', output)
+
   def testNoInputFailsCleanly(self):
     cmd = [self.cmd]
     proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,

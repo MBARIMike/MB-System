@@ -1,6 +1,8 @@
 #include "io/x3dom_writer.h"
 
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -88,11 +90,39 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const std::str
         << "  <h1 class=\"viewer-name\">" << escape_html(options.title)
         << "</h1>\n"
         << "  <x3d>\n"
-        << "    <scene>\n"
-        << "      <navigationInfo type='\"EXAMINE\" \"ANY\"'>"
-           "</navigationInfo>\n"
-        << "      <inline url=\"" << escape_html(glb_uri)
-        << "\"></inline>\n"
+        << "    <scene>\n";
+
+    if (options.use_geoorigin) {
+        // Mirrors the scene mbgrd2gltf writes for --geoorigin.
+        const X3DomGeoOrigin &geo = options.geo;
+        std::ostringstream origin_coords, position, center;
+        origin_coords << std::fixed << std::setprecision(6) << geo.origin_lat << " " << geo.origin_lon << " "
+                      << std::setprecision(2) << geo.origin_elevation;
+        position << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " "
+                 << std::setprecision(1) << (geo.mean_elevation + geo.view_altitude);
+        center << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " "
+               << std::setprecision(2) << geo.mean_elevation;
+
+        output
+            << "      <GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='" << origin_coords.str()
+            << "'></GeoOrigin>\n"
+            << "      <GeoViewpoint DEF='OVERVIEW' position='" << position.str()
+            << "' orientation='1 0 0 -1.5708' fieldOfView='0.785398' centerOfRotation='" << center.str()
+            << "' geoOrigin='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"'></GeoViewpoint>\n"
+            << "      <transform>\n"
+            << "        <inline id='inline' url=\"" << escape_html(glb_uri)
+            << "\" nameSpaceName='gltf' mapDEFToID='true'></inline>\n"
+            << "      </transform>\n";
+    }
+    else {
+        output
+            << "      <navigationInfo type='\"EXAMINE\" \"ANY\"'>"
+               "</navigationInfo>\n"
+            << "      <inline url=\"" << escape_html(glb_uri)
+            << "\"></inline>\n";
+    }
+
+    output
         << "    </scene>\n"
         << "  </x3d>\n"
         << "</body>\n"

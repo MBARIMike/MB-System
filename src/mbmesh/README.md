@@ -6,9 +6,15 @@
 
 The current implementation is an end-to-end mesh-generation prototype. It reads MB-System swath files, converts valid soundings and sensor origins into a local Cartesian frame, estimates dataset spacing, derives reconstruction parameters from either a requested or automatic level of detail, estimates oriented normals, reconstructs a scalar field with screened Poisson, extracts a raw mesh with marching cubes, trims unsupported regions, and writes a binary glTF mesh.
 
-`mesh.glb` vertices are written in the same local Cartesian coordinate frame used for reconstruction, with units in meters. This is an east-north-up frame initialized from the first accepted ping's sensor position: X is positive east, Y is positive north, and Z is positive up relative to that origin. Longitude and latitude are converted to local meters using an equirectangular approximation based on the origin latitude.
+`mesh.glb` vertices are WGS84 Earth-Centered, Earth-Fixed (ECEF) coordinates in meters, using the same conventions as `mbgrd2gltf`:
 
-This frame is not the Earth-Centered, Earth-Fixed (ECEF) frame used by `mbgrd2gltf` by default, and it is not the ECEF-offset frame produced by `mbgrd2gltf --geoorigin`. `mbgrd2gltf --geoorigin` expresses vertices as offsets from a local origin point in the ECEF coordinate system to reduce coordinate magnitudes and improve rendering precision. `mbmesh` currently uses its own local projected reconstruction frame instead. When combining `mbmesh` GLB output with `mbgrd2gltf` output, transform both products into the same coordinate frame first; otherwise the vertices can appear offset or fail to line up.
+- **No `--geoorigin`** (default): absolute ECEF coordinates.
+- **`--geoorigin` / `-G` with no value**: ECEF offsets from the GeoOrigin at the center of the data bounds and the mean sounding elevation.
+- **`--geoorigin=LON,LAT,ELEV` / `-GLON,LAT,ELEV`**: ECEF offsets from the specified GeoOrigin.
+
+Offsets are a pure translation (`vertex = ECEF(point) - ECEF(GeoOrigin)`); the axes stay aligned with ECEF, exactly as in `mbgrd2gltf --geoorigin`. A `mbmesh` and an `mbgrd2gltf` product made with the same GeoOrigin therefore line up directly. GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about 6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to preserve sub-meter detail. `mbmesh` prints a warning when no GeoOrigin is given.
+
+Internally, reconstruction runs in a separate local east-north-up (ENU) frame tangent to the WGS84 ellipsoid at the point below the data centroid. Each sounding and sensor position is converted to ECEF and then rigidly translated and rotated into this frame, so there is no map-projection distortion, and results are converted back to ECEF exactly. This frame is an implementation detail and does not depend on `--geoorigin`. `pointcloud-local.xyz` is written in it.
 
 The default output is:
 
@@ -72,6 +78,7 @@ When `--html` is used, `mbmesh` writes `mesh.html`, starts a local Python HTTP s
 | `-I`, `--input` | `datalist` | Input MB-System datalist path. Required unless the datalist is supplied as the first non-option argument. |
 | `-O`, `--output` | `outputdir` | Output directory. Defaults to `mbmesh_output`. |
 | `-R`, `--bounds` | `west/east/south/north` | Geographic subset bounds in degrees. Use `--bounds=-122.5/-121.8/36.5/37.2` when the west value is negative. |
+| `-G`, `--geoorigin` | `[lon,lat,elev]` | Write GLB vertices as ECEF offsets from a GeoOrigin, as in `mbgrd2gltf`. With a value, all three of lon, lat, elev (degrees, degrees, meters above the ellipsoid) are required. With no value, uses the data-bounds center and mean elevation. Without the option, vertices are absolute ECEF. The value must be attached, as in `mbgrd2gltf`: `--geoorigin=-122.4,36.6,0` or `-G-122.4,36.6,0`. |
 | `-L`, `--lod`, `--level-of-detail` | `meters` | Requested smallest feature size in local meters. If omitted, `mbmesh` derives LOD from estimated point spacing. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--metadata`, `--info` | none | Read the datalist, print dataset metadata, and exit before mesh reconstruction. |
@@ -103,7 +110,7 @@ Notes:
 1. **`mesh.glb`** - Final support-trimmed triangle mesh
    - Always written on successful reconstruction runs
    - Uses binary glTF format
-   - Uses the `mbmesh` local Cartesian reconstruction frame, not ECEF or `mbgrd2gltf --geoorigin` offsets
+   - Vertices are ECEF, or ECEF offsets from the GeoOrigin with `--geoorigin`, matching `mbgrd2gltf`
    - Intended for web and desktop GLB viewers
 
 ### Optional Outputs
@@ -114,7 +121,7 @@ Notes:
 
 3. **`mesh.html`** - X3DOM viewer page
    - Written with `--html` or `--all-outputs`
-   - References `mesh.glb`
+   - References `mesh.glb`; with `--geoorigin` it places the model with `GeoOrigin` and `GeoViewpoint` nodes as `mbgrd2gltf` does
    - Served locally and opened in the default browser when generated
 
 4. **`pointcloud-local.xyz`** - Local Cartesian point cloud
@@ -176,9 +183,9 @@ An MB-System datalist contains one or more swath sonar files. Each swath file co
 - Convert accepted soundings into local Cartesian coordinates
 - Store the sonar sensor origin for each accepted sounding
 
-The current local coordinate frame is initialized from the first accepted ping's sensor position. This is an east-north-up Cartesian frame in meters: X is positive east, Y is positive north, and Z is positive up relative to that origin. Longitude and latitude are converted to meters using an equirectangular local approximation based on the origin latitude. Sounding elevation is stored as negative bathymetry, and sensor elevation is stored as negative sensor depth.
+Soundings and sensor positions are converted to WGS84 ECEF while reading and held in absolute ECEF until all files have been read. The reconstruction frame origin is then chosen (the point on the ellipsoid below the centroid, rounded to 1e-6 degrees) and every point is converted in place to the local east-north-up frame described in the Overview. Sounding elevation is stored as negative bathymetry and sensor elevation as negative sensor depth, both treated as heights above the WGS84 ellipsoid. The conversions live in `include/io/coordinate_frame.h` and `src/io/coordinate_frame.cpp`.
 
-This frame is intentionally small-magnitude for reconstruction and GLB output, but it is not directly compatible with `mbgrd2gltf` GLB output. `mbgrd2gltf` writes vertices in full WGS84 ECEF coordinates by default. With `--geoorigin`, `mbgrd2gltf` writes ECEF offsets from the selected GeoOrigin rather than from Earth's center. `mbmesh` does not currently expose a matching `--geoorigin` option, so combined `mbmesh` and `mbgrd2gltf` products must be transformed into a common coordinate frame before overlaying or merging them.
+On output, mesh and diagnostic GLB vertices are converted from the local frame back to ECEF and offset by the `--geoorigin` position when one is used (normals rotate but do not translate).
 
 Each accepted sample is stored as a `CollectedPoint`:
 
@@ -408,7 +415,7 @@ Important limitations:
 
 High-value future work:
 
-- Implement a `--geoorigin[=LON,LAT,ELEV]` option matching `mbgrd2gltf` semantics so `mbmesh` GLB vertices can be written as WGS84 ECEF offsets from an explicit or automatically selected GeoOrigin. This would allow `mbmesh` outputs to line up directly with `mbgrd2gltf --geoorigin` outputs when both tools use the same origin.
+- Write a 3D Tiles `tileset.json` with an ENU-to-ECEF `transform`, so tiles do not depend on the glb vertex offsets.
 - Expose selected reconstruction parameters as documented CLI options.
 - Add chunked or tiled reconstruction for large surveys.
 - Investigate octree/adaptive Poisson reconstruction.
@@ -452,6 +459,7 @@ High-value future work:
 
 ### I/O
 
+- **include/io/coordinate_frame.h** and **src/io/coordinate_frame.cpp** - Geodetic, ECEF, and local east-north-up conversions
 - **include/io/datalist_reader.h** and **src/io/datalist_reader.cpp** - MB-System datalist and swath reading
 - **include/io/glb_writer.h** and **src/io/glb_writer.cpp** - Mesh, point, normal, and origin-ray GLB writers
 - **include/io/xyz_writer.h** and **src/io/xyz_writer.cpp** - Local XYZ, ECEF XYZ, and oriented PLY writers
@@ -462,6 +470,7 @@ High-value future work:
 - **tests/test_marching_cubes.cpp** - Marching-cubes test program
 - **tests/test_normal_estimation.cpp** - Normal-estimation test program
 - **tests/test_support_trimming.cpp** - Support-trimming test program
+- **tests/test_coordinate_frame.cpp** - Geodetic/ECEF/local frame conversion tests
 - **tests/synthetic_data.h** and **tests/perlin_noise.h** - Synthetic test data helpers
 
 ### Build Configuration
