@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
@@ -17,6 +18,12 @@ constexpr double minimum_feature_size = 0.01; // meters
 constexpr double maximum_feature_size = 5.0;  // meters
 constexpr double automatic_feature_size_spacing_scale = 2.0;
 constexpr double maximum_poisson_grid_cells = 45.0e6;
+
+// Target size of one chunk's Poisson grid. The solver holds seven grids of
+// about 72 bytes per cell in all, so this is roughly 0.6 GB.
+constexpr double target_chunk_grid_cells = 8.0e6;
+constexpr double minimum_auto_chunk_cells = 16.0;
+constexpr double maximum_auto_chunk_cells = 512.0;
 constexpr std::size_t maximum_spacing_samples = 8192;
 
 struct PoissonGridEstimate {
@@ -221,6 +228,67 @@ void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata)
         desired_feature_size / average_spacing >= automatic_feature_size_spacing_scale;
 }
 
+ReconstructionOptions reconstruction_options(const Options &options) {
+    ReconstructionOptions reconstruction;
+    reconstruction.normals = options.normals;
+    reconstruction.poisson = options.poisson;
+    reconstruction.marching_cubes = options.marching_cubes;
+    reconstruction.trimming = options.trimming;
+    return reconstruction;
+}
+
+bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::string *error) {
+    options.use_chunking = false;
+
+    const double cell = options.poisson.cell_size;
+    const PoissonGridEstimate whole = estimate_poisson_grid(metadata.bounds, cell, options.poisson.padding);
+
+    const bool forced = options.chunk_size_requested || options.chunk_tile_requested || options.max_chunks > 0;
+    if (!forced && whole.cell_count <= target_chunk_grid_cells) {
+        return true;   // small enough to reconstruct in one piece
+    }
+
+    const ReconstructionOptions reconstruction = reconstruction_options(options);
+    const double halo = chunk_halo(reconstruction);
+
+    double tile_size = 0.0;
+    if (options.chunk_size_requested) {
+        if (!(options.chunk_size > 0.0) || !std::isfinite(options.chunk_size)) {
+            if (error != nullptr) {
+                *error = "--chunk-size must be a positive number of meters";
+            }
+            return false;
+        }
+        tile_size = round_to_cells(options.chunk_size, cell);
+    }
+    else {
+        // Pick the tile edge so a tile's grid, including its halo and padding,
+        // holds about target_chunk_grid_cells. The survey's full depth range is
+        // used for the vertical extent, which is the worst case for any tile.
+        const double depth_cells = std::ceil((metadata.bounds.size().z + 2.0 * options.poisson.padding) / cell) + 1.0;
+        const double columns = target_chunk_grid_cells / std::max(1.0, depth_cells);
+        const double side_cells = std::floor(std::sqrt(columns));
+        const double margin_cells = 2.0 * (halo + options.poisson.padding) / cell;
+        const double tile_cells = std::clamp(side_cells - margin_cells, minimum_auto_chunk_cells, maximum_auto_chunk_cells);
+        tile_size = tile_cells * cell;
+    }
+
+    options.use_chunking = true;
+    options.chunking.tile_size = tile_size;
+    options.chunking.halo = halo;
+    options.chunking.single_tile = options.chunk_tile_requested;
+    options.chunking.tile_i = options.chunk_tile_i;
+    options.chunking.tile_j = options.chunk_tile_j;
+    options.chunking.max_tiles = options.max_chunks;
+
+    // Each tile holds its own Poisson grid, so cap the automatic thread count to
+    // keep memory modest. Ask for more with --threads.
+    constexpr std::size_t automatic_thread_limit = 4;
+    const std::size_t hardware = std::max<std::size_t>(1, std::thread::hardware_concurrency());
+    options.chunking.threads = options.threads > 0 ? options.threads : std::min(hardware, automatic_thread_limit);
+    return true;
+}
+
 bool resolve_geoorigin(const Options &options, const DatalistMetadata &metadata, GeodeticPosition *origin) {
     if (options.geoorigin_mode == GeoOriginMode::Specified) {
         *origin = options.geoorigin;
@@ -284,7 +352,10 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
     preprocessed->metadata.spacing = estimate_point_spacing(preprocessed->read_result.points);
 
     apply_spacing_driven_defaults(options, &preprocessed->metadata);
-    if (!adjust_poisson_grid_to_budget(options, preprocessed->metadata, error)) {
+    if (!resolve_chunking(options, preprocessed->metadata, error)) {
+        return false;
+    }
+    if (!options.use_chunking && !adjust_poisson_grid_to_budget(options, preprocessed->metadata, error)) {
         return false;
     }
     print_warnings(options, preprocessed->metadata);
@@ -322,4 +393,21 @@ void print_datalist_metadata(const PreprocessedDatalist &preprocessed, const Opt
     std::cout << "  maximum: " << metadata.spacing.maximum << '\n';
     std::cout << "  average: " << metadata.spacing.average << '\n';
     std::cout << "  median: " << metadata.spacing.median << '\n';
+
+    std::cout << "reconstruction:\n";
+    std::cout << "  poisson_cell_size: " << options.poisson.cell_size << '\n';
+    std::cout << "  whole_survey_grid_cells: " << grid.cell_count << '\n';
+    std::cout << "  chunked: " << (options.use_chunking ? "yes" : "no") << '\n';
+    if (options.use_chunking) {
+        const double tile = options.chunking.tile_size;
+        const double halo = options.chunking.halo;
+        const Vec3 survey = extent;
+        const double tiles_x = std::ceil(survey.x / tile) + 1.0;
+        const double tiles_y = std::ceil(survey.y / tile) + 1.0;
+        const double side = (tile + 2.0 * (halo + options.poisson.padding)) / options.poisson.cell_size + 1.0;
+        std::cout << "  tile_size: " << tile << '\n';
+        std::cout << "  halo: " << halo << '\n';
+        std::cout << "  tiles_at_most: " << tiles_x * tiles_y << '\n';
+        std::cout << "  tile_grid_columns: " << side * side << '\n';
+    }
 }

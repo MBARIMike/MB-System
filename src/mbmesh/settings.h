@@ -7,6 +7,7 @@
 #include "algorithms/marching_cubes.h"
 #include "algorithms/normal_estimation.h"
 #include "algorithms/point_decimation.h"
+#include "algorithms/reconstruction.h"
 #include "algorithms/screened_poisson.h"
 #include "algorithms/support_trimming.h"
 #include "data_types/geometry.h"
@@ -50,6 +51,20 @@ struct Options {
     bool level_of_detail_requested = false;
     bool decimation_requested = false;
 
+    // Chunked reconstruction. --chunk-size forces it on with the given tile size
+    // in meters; otherwise it turns on automatically when a single Poisson grid
+    // would be too large. chunking and use_chunking are resolved from these in
+    // preprocess_datalist().
+    bool chunk_size_requested = false;
+    double chunk_size = 0.0;
+    bool chunk_tile_requested = false;
+    int chunk_tile_i = 0;
+    int chunk_tile_j = 0;
+    std::size_t max_chunks = 0;
+    std::size_t threads = 0;   // tiles reconstructed at once; 0 chooses automatically
+    bool use_chunking = false;
+    ChunkingOptions chunking;
+
     PointDecimationOptions decimation;
     NormalEstimationOptions normals;
     ScreenedPoissonOptions poisson;
@@ -90,6 +105,13 @@ struct PreprocessedDatalist {
 // Resolves the GeoOrigin that --geoorigin selects. Returns false (and leaves
 // *origin untouched) when no GeoOrigin was requested.
 bool resolve_geoorigin(const Options &options, const DatalistMetadata &metadata, GeodeticPosition *origin);
+
+// Builds the options the reconstruction stages use.
+ReconstructionOptions reconstruction_options(const Options &options);
+
+// Decides whether to chunk and, if so, sets options.use_chunking and
+// options.chunking. Returns false (with *error) if the settings cannot work.
+bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::string *error = nullptr);
 
 void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata);
 bool adjust_poisson_grid_to_budget(Options &options, const DatalistMetadata &metadata, std::string *error = nullptr);

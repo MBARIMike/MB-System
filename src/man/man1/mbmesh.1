@@ -74,6 +74,24 @@ As in \fBmbgrd2gltf\fR the value must be attached to the option, for example
 \fB--html\fR, the viewer page positions the model with GeoOrigin and
 GeoViewpoint nodes.
 .TP
+.B \--chunk-size \fImeters\fR
+Reconstruct in square horizontal tiles of about this size (rounded up to a whole
+number of Poisson cells) instead of in one pass. Chunking turns on
+automatically when a single Poisson grid would exceed about 8 million cells.
+See \fBChunked reconstruction\fR below.
+.TP
+.B \--chunk \fIi,j\fR
+Reconstruct only tile (i,j). Tile (i,j) covers x from i*size to (i+1)*size and y
+from j*size to (j+1)*size in the local east-north frame. Intended for testing.
+.TP
+.B \--max-chunks \fIn\fR
+Stop after n tiles. Intended for testing.
+.TP
+.B \--threads \fIn\fR
+Number of tiles reconstructed at the same time when chunking. The default is the
+smaller of the number of processor cores and 4. Each tile holds its own Poisson
+grid, so memory use grows with this value. The output does not depend on it.
+.TP
 .B \--decimate \fImeters\fR
 Enable voxel-grid point decimation with the specified cell size in local meters.
 The legacy single-dash form \fB-decimate\fR is also accepted.
@@ -162,8 +180,13 @@ Print dataset metadata without reconstructing a mesh:
 their corresponding output options are supplied.
 .TP
 .B mesh.glb
-Final trimmed triangle mesh in binary glTF format. Vertex positions are in the
-\fBmbmesh\fR local Cartesian coordinate frame.
+Final trimmed triangle mesh in binary glTF format. Vertex positions are ECEF
+coordinates, or ECEF offsets from the GeoOrigin when \fB--geoorigin\fR is
+used. When reconstruction is chunked this is the merged mesh of all tiles.
+.TP
+.B tiles/tile_I_J.glb
+Written only when reconstruction is chunked: one file per tile, with vertices
+placed exactly as in \fBmesh.glb\fR.
 .TP
 .B raw_mesh.glb
 Optional untrimmed triangle mesh before support trimming.
@@ -205,6 +228,18 @@ coordinates and then to a local east-north-up frame (see above). Sounding
 elevation is taken as negative bathymetry, and sensor elevation as negative
 sensor depth, both treated as heights above the WGS84 ellipsoid. The optional
 ECEF point-cloud outputs apply the exact inverse transform.
+.LP
+.B Chunked reconstruction
+.br
+A single screened-Poisson grid covers the bounding box of its input, so memory
+and run time grow quickly with survey size and level of detail. In chunked mode
+the survey is divided into square horizontal tiles on a fixed lattice anchored at
+the local-frame origin. Each tile is reconstructed from its own points plus a
+surrounding halo of neighboring points, on a Poisson grid aligned to a lattice
+shared by all tiles, and keeps only the triangles whose centroids fall inside
+it. Tiles are reconstructed in parallel and delivered in tile order. All
+soundings are still read into memory before tiling, and tile edges are not
+welded, so small steps or cracks can occur where tiles meet.
 .LP
 .B Automatic settings
 .br

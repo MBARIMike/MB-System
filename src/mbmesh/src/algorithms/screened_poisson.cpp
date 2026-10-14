@@ -56,7 +56,9 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 	 * observed surface instead of being clipped at the input bounds.
 	 **************************************************************************/
 
-	const ReconstructionDomain domain(oriented_points, options.padding, options.cell_size);
+	const ReconstructionDomain domain = options.use_fixed_domain
+	                                        ? ReconstructionDomain(options.domain_bounds, options.cell_size)
+	                                        : ReconstructionDomain(oriented_points, options.padding, options.cell_size);
 
 	/**************************************************************************
 	 * Step 2: Splat oriented samples into a vector field.

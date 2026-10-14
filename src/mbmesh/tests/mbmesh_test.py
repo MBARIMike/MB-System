@@ -29,6 +29,19 @@ class MbmeshTest(unittest.TestCase):
       self.assertIn('GeoOrigin format must be lon,lat,elev',
                     proc.stdout.decode(), arg)
 
+  def testChunkOptionsAreValidated(self):
+    proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--chunk=abc'],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+    self.assertNotEqual(proc.returncode, 0)
+    self.assertIn('invalid --chunk argument', proc.stdout.decode())
+
+  def testHelpDocumentsChunking(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    for option in ('--chunk-size', '--chunk <i,j>', '--max-chunks', '--threads'):
+      self.assertIn(option, output)
+
   def testHelpDocumentsGeoOrigin(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

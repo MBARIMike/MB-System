@@ -66,6 +66,17 @@ struct ReconstructionDomain {
     int ny = 0;
     int nz = 0;
 
+    // Explicit domain, used by chunked reconstruction so that grid nodes land
+    // on a lattice shared by neighboring chunks.
+    ReconstructionDomain(const Bounds3D &domain_bounds, double cells) {
+        bounds = domain_bounds;
+        origin = domain_bounds.min;
+        cell_size = cells;
+        nx = static_cast<int>(std::ceil(bounds.size().x / cell_size)) + 1;
+        ny = static_cast<int>(std::ceil(bounds.size().y / cell_size)) + 1;
+        nz = static_cast<int>(std::ceil(bounds.size().z / cell_size)) + 1;
+    }
+
     ReconstructionDomain(const std::vector<OrientedPoint> &oriented_points, double padding, double cells) {
 
         Bounds3D point_bounds(oriented_points[0].point, oriented_points[0].point);

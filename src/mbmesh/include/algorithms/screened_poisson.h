@@ -29,6 +29,12 @@ struct ScreenedPoissonOptions {
     // Apply sample-position constraints in addition to the normal field.
     bool use_screening = true;
 
+    // When set, the grid covers domain_bounds exactly instead of the padded
+    // bounds of the samples. Chunked reconstruction uses this so that every
+    // chunk's grid nodes sit on one global lattice.
+    bool use_fixed_domain = false;
+    Bounds3D domain_bounds;
+
     // Scalar value assigned to the observed surface after centering the field.
     // MarchingCubesOptions::iso_value should normally use the same value.
     double iso_value = 0.0;

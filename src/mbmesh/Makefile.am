@@ -18,9 +18,10 @@ mbmesh_SOURCES = \
 	src/algorithms/normal_estimation.cpp \
 	src/algorithms/screened_poisson.cpp \
 	src/algorithms/marching_cubes.cpp \
-	src/algorithms/support_trimming.cpp
+	src/algorithms/support_trimming.cpp \
+	src/algorithms/reconstruction.cpp
 
-mbmesh_LDADD = $(top_builddir)/src/mbio/libmbio.la
+mbmesh_LDADD = $(top_builddir)/src/mbio/libmbio.la -lpthread
 
 check_PROGRAMS = mbmesh_test_support_trimming
 TESTS = mbmesh_test_support_trimming

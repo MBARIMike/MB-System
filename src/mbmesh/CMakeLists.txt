@@ -21,13 +21,16 @@ set(MBMESH_SOURCES
   src/algorithms/normal_estimation.cpp
   src/algorithms/screened_poisson.cpp
   src/algorithms/marching_cubes.cpp
-  src/algorithms/support_trimming.cpp)
+  src/algorithms/support_trimming.cpp
+  src/algorithms/reconstruction.cpp)
+
+find_package(Threads REQUIRED)
 
 add_executable(mbmesh ${MBMESH_SOURCES})
 target_compile_features(mbmesh PRIVATE cxx_std_17)
 
 # Link to MB-System mbio library
-target_link_libraries(mbmesh PRIVATE mbio)
+target_link_libraries(mbmesh PRIVATE mbio Threads::Threads)
 
 target_include_directories(mbmesh PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -58,14 +61,15 @@ if(buildTests)
     src/algorithms/normal_estimation.cpp
     src/algorithms/screened_poisson.cpp
     src/algorithms/marching_cubes.cpp
-    src/algorithms/support_trimming.cpp)
+    src/algorithms/support_trimming.cpp
+    src/algorithms/reconstruction.cpp)
   target_compile_features(mbmesh_test_settings PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_settings PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/mbio
     ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
-  target_link_libraries(mbmesh_test_settings PRIVATE mbio)
+  target_link_libraries(mbmesh_test_settings PRIVATE mbio Threads::Threads)
   add_test(NAME mbmesh_settings COMMAND mbmesh_test_settings)
 
   add_executable(mbmesh_test_coordinate_frame
@@ -75,6 +79,19 @@ if(buildTests)
   target_include_directories(mbmesh_test_coordinate_frame PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME mbmesh_coordinate_frame COMMAND mbmesh_test_coordinate_frame)
+
+  add_executable(mbmesh_test_chunking
+    tests/test_chunking.cpp
+    src/algorithms/reconstruction.cpp
+    src/algorithms/normal_estimation.cpp
+    src/algorithms/screened_poisson.cpp
+    src/algorithms/marching_cubes.cpp
+    src/algorithms/support_trimming.cpp)
+  target_compile_features(mbmesh_test_chunking PRIVATE cxx_std_17)
+  target_link_libraries(mbmesh_test_chunking PRIVATE Threads::Threads)
+  target_include_directories(mbmesh_test_chunking PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mbmesh_chunking COMMAND mbmesh_test_chunking)
 
   add_executable(mbmesh_test_marching_cubes
     tests/test_marching_cubes.cpp

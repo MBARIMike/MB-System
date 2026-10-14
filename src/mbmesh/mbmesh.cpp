@@ -21,6 +21,7 @@
 
 #include "algorithms/point_decimation.h"
 #include "algorithms/normal_estimation.h"
+#include "algorithms/reconstruction.h"
 #include "algorithms/screened_poisson.h"
 #include "algorithms/marching_cubes.h"
 #include "algorithms/support_trimming.h"
@@ -46,6 +47,76 @@ void log_warning(const std::string &message) {
 
 void log_fatal(const std::string &message) {
     std::cerr << "mbmesh: [fatal] " << message << '\n';
+}
+
+} // namespace
+
+namespace {
+
+// Output-frame conversion: local ENU -> ECEF, minus the GeoOrigin's ECEF
+// position when one is in use. Directions only rotate; they do not translate.
+
+Vec3 output_position(const Vec3 &local, const CoordinateFrame &frame, const Vec3 &offset) {
+    return local_to_ecef(local, frame) - offset;
+}
+
+Mesh output_mesh(const Mesh &mesh, const CoordinateFrame &frame, const Vec3 &offset) {
+    Mesh out;
+    out.indices = mesh.indices;
+    out.vertices.reserve(mesh.vertices.size());
+    for (const Vec3 &vertex : mesh.vertices) {
+        out.vertices.push_back(output_position(vertex, frame, offset));
+    }
+    out.normals.reserve(mesh.normals.size());
+    for (const Vec3 &normal : mesh.normals) {
+        out.normals.push_back(local_vector_to_ecef(normal, frame));
+    }
+    return out;
+}
+
+PointCloud output_points(const PointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
+    PointCloud out;
+    out.reserve(points.size());
+    for (const Vec3 &point : points) {
+        out.push_back(output_position(point, frame, offset));
+    }
+    return out;
+}
+
+OrientedPointCloud output_oriented_points(const OrientedPointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
+    OrientedPointCloud out;
+    out.reserve(points.size());
+    for (const OrientedPoint &point : points) {
+        OrientedPoint converted(output_position(point.point, frame, offset), local_vector_to_ecef(point.normal, frame));
+        converted.lambdas = point.lambdas;
+        out.push_back(converted);
+    }
+    return out;
+}
+
+CollectedPointCloud output_collected_points(const CollectedPointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
+    CollectedPointCloud out;
+    out.reserve(points.size());
+    for (const CollectedPoint &point : points) {
+        out.push_back({output_position(point.point, frame, offset), output_position(point.origin, frame, offset)});
+    }
+    return out;
+}
+
+void append_mesh(Mesh *destination, const Mesh &source) {
+    const unsigned int offset = static_cast<unsigned int>(destination->vertices.size());
+    const bool had_normals = destination->normals.size() == destination->vertices.size();
+    const bool has_normals = source.normals.size() == source.vertices.size();
+    destination->vertices.insert(destination->vertices.end(), source.vertices.begin(), source.vertices.end());
+    if (had_normals && has_normals) {
+        destination->normals.insert(destination->normals.end(), source.normals.begin(), source.normals.end());
+    } else {
+        destination->normals.clear();
+    }
+    destination->indices.reserve(destination->indices.size() + source.indices.size());
+    for (const unsigned int index : source.indices) {
+        destination->indices.push_back(index + offset);
+    }
 }
 
 } // namespace
@@ -184,121 +255,77 @@ int main(int argc, char **argv) {
     }
 
     // ====================================================================================================
-    // Normal Estimation
+    // Reconstruction: normal estimation, screened Poisson, marching cubes, support trimming
     // ====================================================================================================
 
-    if (options.verbose) {
-        const bool using_search_radius = options.normals.search_radius > 0.0;
-        std::ostringstream verbose_message;
-        verbose_message << "starting: search_radius=" << options.normals.search_radius
-                        << ", radius_mode=" << (using_search_radius ? "enabled" : "disabled")
-                        << ", k_nearest=" << options.normals.k
-                        << ", fallback_min_neighbors=" << options.normals.minimum_neighbors
-                        << ", fallback_to_knearest="
-                        << (using_search_radius ? "when radius neighborhood < minimum_neighbors" : "always");
-        log_message("normal-estimation", verbose_message.str(), options.verbose);
-    }
-
-    OrientedPointCloud oriented_points = normal_estimation(decimated_points, options.normals);
-
-    if (oriented_points.empty()) {
-        log_fatal("normal estimation produced no oriented samples");
-        return 1;
-    }
-    log_message("normal-estimation",
-                "completed: oriented " + std::to_string(oriented_points.size()) + " samples",
-                options.verbose);
-
-    // ====================================================================================================
-    // Screened Poisson
-    // ====================================================================================================
-
-    if (options.verbose) {
-        std::ostringstream verbose_message;
-        verbose_message << "starting: cell_size=" << options.poisson.cell_size
-                        << ", padding=" << options.poisson.padding
-                        << ", splat_radius=" << options.poisson.normal_splat_radius
-                        << ", iterations=" << options.poisson.solver_iterations
-                        << ", screening=" << (options.poisson.use_screening ? "enabled" : "disabled")
-                        << ", screening_weight=" << options.poisson.screening_weight;
-        log_message("poisson", verbose_message.str(), options.verbose);
-    }
-
-    ScalarGrid3D poisson_surface = screened_poisson(oriented_points, options.poisson);
-
-    if (poisson_surface.values.empty()) {
-        log_fatal("screened Poisson reconstruction produced an empty field");
-        return 1;
-    }
-
-    log_message("poisson",
-                "completed: grid=" + std::to_string(poisson_surface.nx) + "x" +
-                    std::to_string(poisson_surface.ny) + "x" + std::to_string(poisson_surface.nz),
-                options.verbose);
-
-    // ====================================================================================================
-    // Marching Cubes
-    // ====================================================================================================
-
-    log_message("marching-cubes",
-                "starting: iso_value=" + std::to_string(options.marching_cubes.iso_value),
-                options.verbose);
-
-    Mesh raw_mesh = marching_cubes(poisson_surface, options.marching_cubes);
-
-    if (raw_mesh.vertices.empty() || raw_mesh.indices.empty()) {
-        log_fatal("marching cubes produced an empty mesh");
-        return 1;
-    }
-
-    log_message("marching-cubes",
-                "completed: " + std::to_string(raw_mesh.vertices.size()) + " vertices, " +
-                    std::to_string(raw_mesh.indices.size() / 3) + " triangles",
-                options.verbose);
-
-    // ====================================================================================================
-    // Support Trimming
-    // ====================================================================================================
+    const ReconstructionOptions reconstruction = reconstruction_options(options);
+    const ReconstructionLogger reconstruction_log = [&](const std::string &stage, const std::string &message) {
+        log_message(stage, message, options.verbose);
+    };
 
     Mesh clean_mesh;
+    Mesh raw_mesh;
+    OrientedPointCloud oriented_points;
 
-    SupportTrimmingDiagnostics trimming_diagnostics;
-
-    if (options.trimming.enabled) {
-        if (options.verbose) {
-            std::ostringstream verbose_message;
-            verbose_message << "starting: radius="
-                            << ((options.trimming.support_radius > 0.0) ? std::to_string(options.trimming.support_radius) : "auto")
-                            << ", normal_offset="
-                            << ((options.trimming.max_normal_offset > 0.0) ? std::to_string(options.trimming.max_normal_offset) : "auto")
-                            << ", minimum_neighbors=" << options.trimming.minimum_neighbors
-                            << ", minimum_normal_alignment="
-                            << ((options.trimming.minimum_normal_alignment > 0.0) ? std::to_string(options.trimming.minimum_normal_alignment) : "disabled");
-            log_message("support-trimming", verbose_message.str(), options.verbose);
+    if (!options.use_chunking) {
+        ReconstructionResult result = reconstruct_chunk(decimated_points, reconstruction, reconstruction_log);
+        if (result.status != ReconstructionStatus::Ok) {
+            log_fatal(reconstruction_status_message(result.status));
+            return 1;
         }
-        clean_mesh = support_trimming(raw_mesh, oriented_points, options.trimming, &trimming_diagnostics);
-    } else {
-        log_message("support-trimming", "disabled; using raw mesh", options.verbose);
-        clean_mesh = raw_mesh;
+        clean_mesh = std::move(result.mesh);
+        raw_mesh = std::move(result.raw_mesh);
+        oriented_points = std::move(result.oriented_points);
     }
+    else {
+        const bool keep_raw_mesh = options.write_raw_mesh_glb;
+        const bool keep_oriented_points = options.write_normal_glb || options.write_oriented_ply;
 
-    if (clean_mesh.vertices.empty() || clean_mesh.indices.empty()) {
-        log_fatal("support trimming removed the entire mesh; adjust the trimming thresholds or disable trimming");
-        return 1;
-    }
+        const std::filesystem::path tiles_directory = options.output_directory / "tiles";
+        std::error_code filesystem_error;
+        std::filesystem::create_directories(tiles_directory, filesystem_error);
+        if (filesystem_error) {
+            log_fatal("error creating tile directory '" + tiles_directory.string() + "': " + filesystem_error.message());
+            return 1;
+        }
 
-    if (options.verbose && options.trimming.enabled) {
-        std::ostringstream verbose_message;
-        verbose_message << "completed: spacing=" << trimming_diagnostics.estimated_point_spacing
-                        << ", resolved_radius=" << trimming_diagnostics.resolved_support_radius
-                        << ", resolved_normal_offset=" << trimming_diagnostics.resolved_max_normal_offset
-                        << ", supported_vertices=" << trimming_diagnostics.supported_vertices << '/' << trimming_diagnostics.input_vertices
-                        << ", rejected=(neighbors=" << trimming_diagnostics.rejected_for_neighbors
-                        << ", offset=" << trimming_diagnostics.rejected_for_normal_offset
-                        << ", alignment=" << trimming_diagnostics.rejected_for_normal_alignment << ")"
-                        << ", output=" << clean_mesh.vertices.size() << " vertices, "
-                        << clean_mesh.indices.size() / 3 << " triangles";
-        log_message("support-trimming", verbose_message.str(), options.verbose);
+        const Vec3 tile_offset = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
+        const CoordinateFrame &tile_frame = preprocessed.read_result.frame;
+
+        const TileCallback on_tile = [&](TileResult &tile) {
+            const std::string tile_name = "tile_" + std::to_string(tile.i) + "_" + std::to_string(tile.j) + ".glb";
+            std::string tile_error;
+            if (!write_mesh_glb_file(tiles_directory / tile_name, output_mesh(tile.result.mesh, tile_frame, tile_offset), &tile_error)) {
+                log_warning(tile_error);
+            }
+
+            append_mesh(&clean_mesh, tile.result.mesh);
+            if (keep_raw_mesh) {
+                append_mesh(&raw_mesh, tile.result.raw_mesh);
+            }
+            if (keep_oriented_points) {
+                oriented_points.insert(oriented_points.end(), tile.result.oriented_points.begin(), tile.result.oriented_points.end());
+            }
+            return true;
+        };
+
+        ChunkingStats chunking_stats;
+        if (!reconstruct_chunked(decimated_points, reconstruction, options.chunking, reconstruction_log, on_tile, &chunking_stats, &error)) {
+            log_fatal(error);
+            return 1;
+        }
+
+        log_message("chunking",
+                    "completed: " + std::to_string(chunking_stats.tiles_processed) + " tiles written, " +
+                        std::to_string(chunking_stats.tiles_failed) + " failed, " +
+                        std::to_string(chunking_stats.tiles_skipped_sparse) + " skipped as sparse, " +
+                        std::to_string(chunking_stats.tiles_empty_after_crop) + " empty",
+                    options.verbose, true);
+
+        if (clean_mesh.vertices.empty() || clean_mesh.indices.empty()) {
+            log_fatal("chunked reconstruction produced no mesh; adjust the level of detail or chunk size");
+            return 1;
+        }
     }
 
     // ====================================================================================================
@@ -399,6 +426,10 @@ Options parse_options(int argc, char **argv) {
         {"raw-mesh-glb", no_argument, nullptr, 1009},
         {"decimate", required_argument, nullptr, 1010},
         {"geoorigin", optional_argument, nullptr, 'G'},
+        {"chunk-size", required_argument, nullptr, 1013},
+        {"chunk", required_argument, nullptr, 1014},
+        {"max-chunks", required_argument, nullptr, 1015},
+        {"threads", required_argument, nullptr, 1016},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -511,6 +542,32 @@ Options parse_options(int argc, char **argv) {
             options.decimation_requested = true;
             break;
 
+        case 1013:
+            options.chunk_size = std::strtod(optarg, nullptr);
+            options.chunk_size_requested = true;
+            break;
+
+        case 1014: {
+            int tile_i = 0, tile_j = 0;
+            if (std::sscanf(optarg, "%d,%d", &tile_i, &tile_j) == 2) {
+                options.chunk_tile_i = tile_i;
+                options.chunk_tile_j = tile_j;
+                options.chunk_tile_requested = true;
+            } else {
+                log_fatal("invalid --chunk argument (expected I,J): " + std::string(optarg));
+                std::exit(1);
+            }
+            break;
+        }
+
+        case 1015:
+            options.max_chunks = static_cast<std::size_t>(std::strtoull(optarg, nullptr, 10));
+            break;
+
+        case 1016:
+            options.threads = static_cast<std::size_t>(std::strtoull(optarg, nullptr, 10));
+            break;
+
         case 1011:
             options.write_pointcloud_glb = true;
             options.write_normal_glb = true;
@@ -564,6 +621,13 @@ void print_usage() {
     std::cout << "                               6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to\n";
     std::cout << "                               preserve sub-meter detail\n";
     std::cout << "                               The value must be attached: --geoorigin=lon,lat,elev or -Glon,lat,elev\n";
+    std::cout << "      --chunk-size <meters>    Reconstruct in square tiles of about this size, writing tiles/tile_I_J.glb\n";
+    std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
+    std::cout << "                               surveys too large for one Poisson grid\n";
+    std::cout << "      --chunk <i,j>            Reconstruct only tile (i,j); tile (i,j) covers x in [i*size,(i+1)*size)\n";
+    std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
+    std::cout << "      --max-chunks <n>         Stop after n tiles (for testing)\n";
+    std::cout << "      --threads <n>            Tiles reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
     std::cout << "      --metadata, --info       Print dataset metadata and exit\n";
     std::cout << "  -V, --verbose                Enable progress and diagnostic logging\n";
     std::cout << "  -H, -h, --help               Print this help message\n\n";
@@ -586,56 +650,6 @@ void print_usage() {
 namespace {
 
 constexpr std::size_t maximum_diagnostic_glb_points = 2'000'000;
-
-// Output-frame conversion: local ENU -> ECEF, minus the GeoOrigin's ECEF
-// position when one is in use. Directions only rotate; they do not translate.
-
-Vec3 output_position(const Vec3 &local, const CoordinateFrame &frame, const Vec3 &offset) {
-    return local_to_ecef(local, frame) - offset;
-}
-
-Mesh output_mesh(const Mesh &mesh, const CoordinateFrame &frame, const Vec3 &offset) {
-    Mesh out;
-    out.indices = mesh.indices;
-    out.vertices.reserve(mesh.vertices.size());
-    for (const Vec3 &vertex : mesh.vertices) {
-        out.vertices.push_back(output_position(vertex, frame, offset));
-    }
-    out.normals.reserve(mesh.normals.size());
-    for (const Vec3 &normal : mesh.normals) {
-        out.normals.push_back(local_vector_to_ecef(normal, frame));
-    }
-    return out;
-}
-
-PointCloud output_points(const PointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
-    PointCloud out;
-    out.reserve(points.size());
-    for (const Vec3 &point : points) {
-        out.push_back(output_position(point, frame, offset));
-    }
-    return out;
-}
-
-OrientedPointCloud output_oriented_points(const OrientedPointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
-    OrientedPointCloud out;
-    out.reserve(points.size());
-    for (const OrientedPoint &point : points) {
-        OrientedPoint converted(output_position(point.point, frame, offset), local_vector_to_ecef(point.normal, frame));
-        converted.lambdas = point.lambdas;
-        out.push_back(converted);
-    }
-    return out;
-}
-
-CollectedPointCloud output_collected_points(const CollectedPointCloud &points, const CoordinateFrame &frame, const Vec3 &offset) {
-    CollectedPointCloud out;
-    out.reserve(points.size());
-    for (const CollectedPoint &point : points) {
-        out.push_back({output_position(point.point, frame, offset), output_position(point.origin, frame, offset)});
-    }
-    return out;
-}
 
 std::string shell_quote(const std::string &value) {
     std::string quoted = "'";

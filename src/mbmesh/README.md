@@ -80,6 +80,10 @@ When `--html` is used, `mbmesh` writes `mesh.html`, starts a local Python HTTP s
 | `-R`, `--bounds` | `west/east/south/north` | Geographic subset bounds in degrees. Use `--bounds=-122.5/-121.8/36.5/37.2` when the west value is negative. |
 | `-G`, `--geoorigin` | `[lon,lat,elev]` | Write GLB vertices as ECEF offsets from a GeoOrigin, as in `mbgrd2gltf`. With a value, all three of lon, lat, elev (degrees, degrees, meters above the ellipsoid) are required. With no value, uses the data-bounds center and mean elevation. Without the option, vertices are absolute ECEF. The value must be attached, as in `mbgrd2gltf`: `--geoorigin=-122.4,36.6,0` or `-G-122.4,36.6,0`. |
 | `-L`, `--lod`, `--level-of-detail` | `meters` | Requested smallest feature size in local meters. If omitted, `mbmesh` derives LOD from estimated point spacing. |
+| `--chunk-size` | `meters` | Reconstruct in square tiles of about this size (rounded up to whole Poisson cells) instead of one pass. Chunking turns on automatically when a single Poisson grid would exceed about 8 million cells. |
+| `--chunk` | `i,j` | Reconstruct only tile (i,j), for fast testing. Tile (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--metadata` and a verbose run to see tile indices. |
+| `--max-chunks` | `n` | Stop after n tiles (for testing). |
+| `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--metadata`, `--info` | none | Read the datalist, print dataset metadata, and exit before mesh reconstruction. |
 | `--html`, `-html` | none | Write `mesh.html`, start a local Python HTTP server, and open the X3DOM viewer. |
@@ -112,6 +116,10 @@ Notes:
    - Uses binary glTF format
    - Vertices are ECEF, or ECEF offsets from the GeoOrigin with `--geoorigin`, matching `mbgrd2gltf`
    - Intended for web and desktop GLB viewers
+
+### Chunked Output
+
+When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is still written as the merged mesh, and each tile is also written as `tiles/tile_I_J.glb`, with vertices placed exactly as in `mesh.glb`.
 
 ### Optional Outputs
 
@@ -153,12 +161,13 @@ The current pipeline is orchestrated by `src/mbmesh/mbmesh.cpp`:
 2. Read and preprocess the MB-System datalist.
 3. Print metadata and exit if requested.
 4. Optionally decimate collected points.
-5. Estimate oriented normals.
-6. Reconstruct a screened-Poisson scalar field.
-7. Extract a raw mesh with marching cubes.
-8. Trim unsupported mesh regions.
-9. Write `mesh.glb` and requested optional outputs.
-10. Launch the local HTML viewer if `--html` was requested.
+5. Reconstruct the surface, either in one pass or tile by tile (steps 5a-5d are the same either way, and run once per tile when chunked):
+   - 5a. Estimate oriented normals.
+   - 5b. Reconstruct a screened-Poisson scalar field.
+   - 5c. Extract a raw mesh with marching cubes.
+   - 5d. Trim unsupported mesh regions.
+6. Write `mesh.glb`, per-tile GLBs when chunked, and requested optional outputs.
+7. Launch the local HTML viewer if `--html` was requested.
 
 ## Pipeline Details
 
@@ -381,6 +390,33 @@ and opens:
 http://127.0.0.1:8000/mesh.html
 ```
 
+## Chunked Reconstruction
+
+Implemented in:
+
+- `include/algorithms/reconstruction.h`
+- `src/algorithms/reconstruction.cpp`
+
+A single screened-Poisson grid covers the bounding box of its input. A seafloor survey is a thin sheet through a large 3D box, so the grid is mostly empty, and its memory and run time grow quickly with survey size and level of detail. Chunking splits the survey into square horizontal tiles and reconstructs each one separately.
+
+How it works:
+
+- **Tile lattice.** Tile (i, j) owns x in [i*T, (i+1)*T) and y in [j*T, (j+1)*T) in the local east-north frame, where T is the tile size, a whole number of Poisson cells. The lattice is anchored at the local-frame origin, so tile indices do not depend on the order of the data.
+- **Shared grid lattice.** Every tile's Poisson grid is snapped to the same global lattice of cell-size steps, so neighboring tiles share grid nodes and their surfaces nearly coincide where they overlap.
+- **Halo.** A tile reads its own points plus a ring of neighboring points, so that points near the tile edge see the neighborhoods a single run would give them. The halo covers the reach of normal splatting or support trimming plus the normal-estimation radius plus a few cells.
+- **Ownership.** After trimming, a tile keeps only triangles whose centroid lies inside its half-open square, so each triangle belongs to exactly one tile and the merged mesh has no overlap.
+- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the tile size so each tile's grid, including halo and padding, is about that size. The survey's full depth range is used for the vertical extent, which is the worst case for any tile. `--metadata` prints the resulting tile size, halo and grid size.
+- **Threads.** Tiles are independent, so several are reconstructed at once (`--threads`). Results are delivered in tile order, so the output does not depend on the thread count.
+
+Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 m) at `-L 2`, a single run took 207 s and 1.4 GB. Tiled with 10 m tiles, it took 254 s on one thread and 69 s on four threads at a peak of 0.76 GB, with 151,057 triangles against 151,148 for the single run. The median distance from a tiled vertex to the nearest single-run vertex was 4.9 cm, about the vertex spacing. At the default level of detail (a 0.098 m cell, about 102 million cells for the whole survey, which a single run refuses to attempt) automatic chunking produced 20 tiles of about 8.3 m and 528,208 triangles in 232 s at a peak of 1.8 GB on four threads. Three survey-edge tiles with fewer than 32 owned points were skipped.
+
+Current limitations:
+
+- All soundings are still read into memory before tiling; only the Poisson grids are chunked. A survey too large to hold in memory still needs a spill-to-disk binning pass.
+- Each tile computes its own iso-value shift from its own samples, and the tiles are not welded, so there can be small steps or cracks at tile edges. The halo keeps these small; they have been checked on a synthetic surface and one real file only.
+- Per-tile run time is not reduced, only memory per run, so small surveys can run slower chunked on one thread than in one pass because the halo and padding are reconstructed more than once.
+- Boundary triangles are assigned by centroid and are not clipped at tile edges.
+
 ## Legacy Implementation
 
 The previous implementation in `src/mbmesh/legacy/` was created by the Spring 2026 CSUMB Capstone project team. It read MB-System datalists and generated point-cloud outputs:
@@ -407,7 +443,7 @@ Important limitations:
 
 - Reconstruction is a single end-to-end run; there is no reusable preprocessing artifact yet.
 - Decimation is available through `--decimate`, but remains off by default because it trades reconstruction detail for lower downstream cost.
-- Screened Poisson uses a regular grid, so high-detail reconstruction of large datasets can be memory intensive.
+- Screened Poisson uses a regular grid, so memory per run grows with grid size. Chunked reconstruction bounds this per tile, but all soundings are still held in memory.
 - Normal estimation is sensitive to sparse data, sharp edges, and inconsistent spacing.
 - Support trimming can over-trim when normals or thresholds are poor.
 - Boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
@@ -417,7 +453,8 @@ High-value future work:
 
 - Write a 3D Tiles `tileset.json` with an ENU-to-ECEF `transform`, so tiles do not depend on the glb vertex offsets.
 - Expose selected reconstruction parameters as documented CLI options.
-- Add chunked or tiled reconstruction for large surveys.
+- Bin soundings to per-tile files on disk so surveys larger than memory can be chunked.
+- Weld or clip tile edges, and make the iso-value shift consistent across tiles.
 - Investigate octree/adaptive Poisson reconstruction.
 - Improve normal estimation near boundaries and sharp orientation changes.
 - Clip support-trimmed boundary triangles instead of dropping them.
@@ -457,6 +494,8 @@ High-value future work:
 - **include/math/eigen.h** - Symmetric 3x3 eigen decomposition
 - **include/math/kdtree.h** - KD-tree nearest-neighbor search
 
+- **include/algorithms/reconstruction.h** and **src/algorithms/reconstruction.cpp** - Per-tile reconstruction pipeline and the chunked, threaded tile driver
+
 ### I/O
 
 - **include/io/coordinate_frame.h** and **src/io/coordinate_frame.cpp** - Geodetic, ECEF, and local east-north-up conversions
@@ -470,6 +509,7 @@ High-value future work:
 - **tests/test_marching_cubes.cpp** - Marching-cubes test program
 - **tests/test_normal_estimation.cpp** - Normal-estimation test program
 - **tests/test_support_trimming.cpp** - Support-trimming test program
+- **tests/test_chunking.cpp** - Chunked reconstruction test (accuracy, coverage, ownership, thread-count independence) on a synthetic surface
 - **tests/test_coordinate_frame.cpp** - Geodetic/ECEF/local frame conversion tests
 - **tests/synthetic_data.h** and **tests/perlin_noise.h** - Synthetic test data helpers
 
