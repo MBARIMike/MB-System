@@ -488,6 +488,7 @@ High-value future work:
 
 - **include/data_types/geometry.h** - Point, mesh, bounds, reconstruction-domain, and grid data types
 - **include/data_types/swathfile.h** - Swath-file data types
+- **include/util/logger.h** - Header-only logger producing the same line format as `mbgrd2gltf`
 - **include/math/vec2.h**, **vec3.h**, **mat3.h** - Basic vector and matrix helpers
 - **include/math/eigen.h** - Symmetric 3x3 eigen decomposition
 - **include/math/kdtree.h** - KD-tree nearest-neighbor search
@@ -547,6 +548,17 @@ From the MB-System repository root:
 ./configure
 make mbmesh
 ```
+
+## Log Messages
+
+`mbmesh` logs in the same line format as `mbgrd2gltf`: the level, the local date and time to the millisecond, the source file, function and line of the call, then the message:
+
+```text
+INFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] input=datalist.mb-1 output=mbmesh_output
+DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chunking] tile_size=6.05 m, halo=0.72 m, 6 tiles contain points
+```
+
+By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each tile (the tile name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--metadata` report. Output is serialized, so lines from tiles reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
 
 ## Development Notes
 

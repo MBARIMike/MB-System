@@ -14,6 +14,8 @@
 
 #include "settings.h"
 
+#include "util/logger.h"
+
 #include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
 #include "io/glb_writer.h"
@@ -31,25 +33,6 @@
 Options parse_options(int argc, char **argv);
 
 void print_usage();
-
-namespace {
-
-void log_message(const std::string &stage, const std::string &message, bool verbose, bool always_print = false) {
-    if (!verbose && !always_print) {
-        return;
-    }
-    std::cerr << "mbmesh: [" << stage << "] " << message << '\n';
-}
-
-void log_warning(const std::string &message) {
-    std::cerr << "mbmesh: [warning] " << message << '\n';
-}
-
-void log_fatal(const std::string &message) {
-    std::cerr << "mbmesh: [fatal] " << message << '\n';
-}
-
-} // namespace
 
 namespace {
 
@@ -148,37 +131,43 @@ void print_html_viewer_command(
 
 int main(int argc, char **argv) {
 
+    using mbmesh::LogLevel;
+    using mbmesh::Logger;
+
+    // INFO until the options are parsed, so option errors are reported; -V then
+    // raises it to DEBUG for progress messages, as in mbgrd2gltf.
+    Logger::set_level(LogLevel::INFO);
+
     Options options = parse_options(argc, argv);
+    if (options.verbose) {
+        Logger::set_level(LogLevel::DEBUG);
+    }
 
     if (options.help_requested) {
         print_usage();
         return 0;
     }
 
-    log_message("startup",
-                "input=" + options.input_datalist.string() + " output=" + options.output_directory.string(),
-                options.verbose,
-                true);
+    LOG_INFO("[startup]", "input=" + options.input_datalist.string() + " output=" + options.output_directory.string());
 
     if (options.input_datalist.empty()) {
-        log_fatal("input datalist path is empty; use -I <path>");
+        LOG_ERROR("input datalist path is empty; use -I <path>");
         return 1;
     }
 
-    log_message("input", "reading datalist " + options.input_datalist.string(), options.verbose);
+    LOG_DEBUG("[input]", "reading datalist " + options.input_datalist.string());
 
     std::string error;
     PreprocessedDatalist preprocessed;
     if (!preprocess_datalist(options, &preprocessed, &error)) {
-        log_fatal(error);
+        LOG_ERROR(error);
         return 1;
     }
 
-    log_message("input", "completed: accepted " + std::to_string(preprocessed.read_result.points.size()) +
+    LOG_DEBUG("[input]", "completed: accepted " + std::to_string(preprocessed.read_result.points.size()) +
                               " of " + std::to_string(preprocessed.read_result.stats.soundings_read) +
                               " soundings from " + std::to_string(preprocessed.read_result.stats.files_read) +
-                              " files",
-                options.verbose);
+                              " files");
 
     if (options.metadata_requested) {
         print_datalist_metadata(preprocessed, options);
@@ -201,7 +190,7 @@ int main(int argc, char **argv) {
                                                                        : "using user-specified GeoOrigin: ")
                     << placement.geoorigin.longitude << "," << placement.geoorigin.latitude << ","
                     << std::setprecision(2) << placement.geoorigin.elevation;
-            log_message("output", message.str(), options.verbose);
+            LOG_DEBUG("[output]", message.str());
 
             // Viewpoint values follow mbgrd2gltf: center of the bounds, framed to fill a 45 degree view.
             X3DomGeoOrigin &view = placement.view;
@@ -217,7 +206,7 @@ int main(int argc, char **argv) {
             constexpr double field_of_view = 0.785398;
             view.view_altitude = (std::max(lat_extent_m, lon_extent_m) / 2.0) / std::tan(field_of_view / 2.0);
         } else {
-            log_warning("no GeoOrigin: GLB vertices are absolute ECEF stored as 32-bit floats (about 0.5 m resolution); "
+            LOG_WARN("no GeoOrigin: GLB vertices are absolute ECEF stored as 32-bit floats (about 0.5 m resolution); "
                         "use --geoorigin to preserve sub-meter detail");
         }
     }
@@ -234,23 +223,19 @@ int main(int argc, char **argv) {
 
     if (options.decimation.decimate) {
 
-        log_message("decimation", "starting: cell_size=" + std::to_string(options.decimation.cell_size), options.verbose);
+        LOG_DEBUG("[decimation]", "starting: cell_size=" + std::to_string(options.decimation.cell_size));
 
         decimated_points = point_decimation(std::move(collected_points), options.decimation);
 
         if (decimated_points.empty()) {
-            log_fatal("point decimation produced no samples");
+            LOG_ERROR("point decimation produced no samples");
             return 1;
         }
-        log_message("decimation",
-                    "completed: retained " + std::to_string(decimated_points.size()) + " of " +
-                        std::to_string(input_sample_count) + " samples",
-                    options.verbose);
+        LOG_DEBUG("[decimation]", "completed: retained " + std::to_string(decimated_points.size()) + " of " +
+                        std::to_string(input_sample_count) + " samples");
 
     } else {
-        log_message("decimation",
-                    "disabled; using " + std::to_string(input_sample_count) + " input samples",
-                    options.verbose);
+        LOG_DEBUG("[decimation]", "disabled; using " + std::to_string(input_sample_count) + " input samples");
         decimated_points = std::move(collected_points);
     }
 
@@ -259,18 +244,15 @@ int main(int argc, char **argv) {
     // ====================================================================================================
 
     const ReconstructionOptions reconstruction = reconstruction_options(options);
-    const ReconstructionLogger reconstruction_log = [&](const std::string &stage, const std::string &message) {
-        log_message(stage, message, options.verbose);
-    };
 
     Mesh clean_mesh;
     Mesh raw_mesh;
     OrientedPointCloud oriented_points;
 
     if (!options.use_chunking) {
-        ReconstructionResult result = reconstruct_chunk(decimated_points, reconstruction, reconstruction_log);
+        ReconstructionResult result = reconstruct_chunk(decimated_points, reconstruction);
         if (result.status != ReconstructionStatus::Ok) {
-            log_fatal(reconstruction_status_message(result.status));
+            LOG_ERROR(reconstruction_status_message(result.status));
             return 1;
         }
         clean_mesh = std::move(result.mesh);
@@ -285,7 +267,7 @@ int main(int argc, char **argv) {
         std::error_code filesystem_error;
         std::filesystem::create_directories(tiles_directory, filesystem_error);
         if (filesystem_error) {
-            log_fatal("error creating tile directory '" + tiles_directory.string() + "': " + filesystem_error.message());
+            LOG_ERROR("error creating tile directory '" + tiles_directory.string() + "': " + filesystem_error.message());
             return 1;
         }
 
@@ -296,7 +278,7 @@ int main(int argc, char **argv) {
             const std::string tile_name = "tile_" + std::to_string(tile.i) + "_" + std::to_string(tile.j) + ".glb";
             std::string tile_error;
             if (!write_mesh_glb_file(tiles_directory / tile_name, output_mesh(tile.result.mesh, tile_frame, tile_offset), &tile_error)) {
-                log_warning(tile_error);
+                LOG_WARN(tile_error);
             }
 
             append_mesh(&clean_mesh, tile.result.mesh);
@@ -310,20 +292,18 @@ int main(int argc, char **argv) {
         };
 
         ChunkingStats chunking_stats;
-        if (!reconstruct_chunked(decimated_points, reconstruction, options.chunking, reconstruction_log, on_tile, &chunking_stats, &error)) {
-            log_fatal(error);
+        if (!reconstruct_chunked(decimated_points, reconstruction, options.chunking, on_tile, &chunking_stats, &error)) {
+            LOG_ERROR(error);
             return 1;
         }
 
-        log_message("chunking",
-                    "completed: " + std::to_string(chunking_stats.tiles_processed) + " tiles written, " +
+        LOG_INFO("[chunking]", "completed: " + std::to_string(chunking_stats.tiles_processed) + " tiles written, " +
                         std::to_string(chunking_stats.tiles_failed) + " failed, " +
                         std::to_string(chunking_stats.tiles_skipped_sparse) + " skipped as sparse, " +
-                        std::to_string(chunking_stats.tiles_empty_after_crop) + " empty",
-                    options.verbose, true);
+                        std::to_string(chunking_stats.tiles_empty_after_crop) + " empty");
 
         if (clean_mesh.vertices.empty() || clean_mesh.indices.empty()) {
-            log_fatal("chunked reconstruction produced no mesh; adjust the level of detail or chunk size");
+            LOG_ERROR("chunked reconstruction produced no mesh; adjust the level of detail or chunk size");
             return 1;
         }
     }
@@ -344,7 +324,7 @@ int main(int argc, char **argv) {
                         << ", normal_glb=" << (options.write_normal_glb ? "enabled" : "disabled")
                         << ", origin_glb=" << (options.write_origin_glb ? "enabled" : "disabled")
                         << ", raw_mesh_glb=" << (options.write_raw_mesh_glb ? "enabled" : "disabled");
-        log_message("output", verbose_message.str(), options.verbose);
+        LOG_DEBUG("[output]", verbose_message.str());
     }
 
     PointCloud output_points;
@@ -354,12 +334,12 @@ int main(int argc, char **argv) {
     }
 
     if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, options, &error)) {
-        log_fatal(error);
+        LOG_ERROR(error);
         return 1;
     }
 
-    log_message("output", "completed", options.verbose);
-    log_message("complete", "wrote " + (options.output_directory / "mesh.glb").string(), options.verbose, true);
+    LOG_DEBUG("[output]", "completed");
+    LOG_INFO("[complete]", "wrote " + (options.output_directory / "mesh.glb").string());
 
     // ====================================================================================================
     // X3DOM Viewer
@@ -460,7 +440,7 @@ Options parse_options(int argc, char **argv) {
                 options.bounds.degrees_N = north;
                 options.use_bounds = true;
             } else {
-                log_warning("invalid bounds argument: " + std::string(optarg));
+                LOG_WARN("invalid bounds argument: " + std::string(optarg));
             }
             break;
         }
@@ -481,7 +461,7 @@ Options parse_options(int argc, char **argv) {
                 const std::size_t comma1 = geoorigin_string.find(',');
                 const std::size_t comma2 = geoorigin_string.rfind(',');
                 if (comma1 == std::string::npos || comma2 == std::string::npos || comma1 == comma2) {
-                    log_fatal("GeoOrigin format must be lon,lat,elev");
+                    LOG_ERROR("GeoOrigin format must be lon,lat,elev");
                     std::exit(1);
                 }
                 options.geoorigin.longitude = std::atof(geoorigin_string.substr(0, comma1).c_str());
@@ -554,7 +534,7 @@ Options parse_options(int argc, char **argv) {
                 options.chunk_tile_j = tile_j;
                 options.chunk_tile_requested = true;
             } else {
-                log_fatal("invalid --chunk argument (expected I,J): " + std::string(optarg));
+                LOG_ERROR("invalid --chunk argument (expected I,J): " + std::string(optarg));
                 std::exit(1);
             }
             break;
@@ -703,7 +683,7 @@ bool write_outputs(
         if (!write_ecef_xyz_pointcloud(points, frame, ecef_xyz_path.string(), error)) {
             return false;
         }
-        log_message("output", "wrote " + ecef_xyz_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + ecef_xyz_path.string());
     }
 
     if (options.write_local_xyz) {
@@ -711,7 +691,7 @@ bool write_outputs(
         if (!write_local_xyz_pointcloud(points, local_xyz_path.string(), error)) {
             return false;
         }
-        log_message("output", "wrote " + local_xyz_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + local_xyz_path.string());
     }
 
     if (options.write_oriented_ply) {
@@ -719,7 +699,7 @@ bool write_outputs(
         if (!write_ply_oriented_pointcloud(oriented_points, frame, oriented_ply_path.string(), error)) {
             return false;
         }
-        log_message("output", "wrote " + oriented_ply_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + oriented_ply_path.string());
     }
 
     if (options.write_pointcloud_glb) {
@@ -727,7 +707,7 @@ bool write_outputs(
         if (!write_pointcloud_glb_file(pointcloud_glb_path, output_points(points, frame, offset), error)) {
             return false;
         }
-        log_message("output", "wrote " + pointcloud_glb_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + pointcloud_glb_path.string());
     }
 
     if (options.write_normal_glb) {
@@ -735,7 +715,7 @@ bool write_outputs(
         if (!write_normal_lines_glb_file(normals_glb_path, output_oriented_points(oriented_points, frame, offset), 0.25, error)) {
             return false;
         }
-        log_message("output", "wrote " + normals_glb_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + normals_glb_path.string());
     }
 
     if (options.write_origin_glb) {
@@ -743,7 +723,7 @@ bool write_outputs(
         if (!write_origin_ray_lines_glb_file(origins_glb_path, output_collected_points(collected_points, frame, offset), 0.25, error)) {
             return false;
         }
-        log_message("output", "wrote " + origins_glb_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + origins_glb_path.string());
     }
 
     if (options.write_raw_mesh_glb) {
@@ -751,14 +731,14 @@ bool write_outputs(
         if (!write_mesh_glb_file(raw_mesh_glb_path, output_mesh(raw_mesh, frame, offset), error)) {
             return false;
         }
-        log_message("output", "wrote " + raw_mesh_glb_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + raw_mesh_glb_path.string());
     }
 
     const auto clean_mesh_glb_path = options.output_directory / "mesh.glb";
     if (!write_mesh_glb_file(clean_mesh_glb_path, output_mesh(mesh, frame, offset), error)) {
         return false;
     }
-    log_message("output", "wrote " + clean_mesh_glb_path.string(), options.verbose);
+    LOG_DEBUG("[output]", "wrote " + clean_mesh_glb_path.string());
 
     if (options.write_html) {
         const auto html_path = options.output_directory / "mesh.html";
@@ -768,7 +748,7 @@ bool write_outputs(
         if (!write_glb_x3dom_file(html_path, "mesh.glb", html_options, error)) {
             return false;
         }
-        log_message("output", "wrote " + html_path.string(), options.verbose);
+        LOG_DEBUG("[output]", "wrote " + html_path.string());
     }
 
     return true;
@@ -791,10 +771,8 @@ void print_html_viewer_command(
         absolute_directory = directory;
     }
 
-    log_message("html", "to view " + html_filename + ", run this command in a terminal (Ctrl-C stops it), then open the URL:", true, true);
-    log_message("html",
-                "  python3 -m http.server " + std::to_string(port) + " --bind 127.0.0.1 --directory " +
-                    shell_quote(absolute_directory.string()),
-                true, true);
-    log_message("html", "  http://127.0.0.1:" + std::to_string(port) + "/" + html_filename, true, true);
+    LOG_INFO("[html]", "to view " + html_filename + ", run this command in a terminal (Ctrl-C stops it), then open the URL:");
+    LOG_INFO("[html]", "  python3 -m http.server " + std::to_string(port) + " --bind 127.0.0.1 --directory " +
+                    shell_quote(absolute_directory.string()));
+    LOG_INFO("[html]", "  http://127.0.0.1:" + std::to_string(port) + "/" + html_filename);
 }

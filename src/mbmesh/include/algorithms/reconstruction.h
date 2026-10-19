@@ -29,9 +29,6 @@ struct ReconstructionOptions {
     SupportTrimmingOptions trimming;
 };
 
-// Optional progress reporting: (stage name, message).
-using ReconstructionLogger = std::function<void(const std::string &, const std::string &)>;
-
 enum class ReconstructionStatus {
     Ok,
     NoOrientedSamples,
@@ -51,11 +48,13 @@ struct ReconstructionResult {
 };
 
 // Normal estimation, screened Poisson, marching cubes and support trimming for
-// one set of points. Decimation is not included; apply it beforehand.
+// one set of points. Decimation is not included; apply it beforehand. Progress
+// is logged at DEBUG level through util/logger.h; label, if given, prefixes each
+// message (the chunked driver passes the tile name).
 [[nodiscard]] ReconstructionResult reconstruct_chunk(
     const CollectedPointCloud &points,
     const ReconstructionOptions &options,
-    const ReconstructionLogger &log = {});
+    const std::string &label = "");
 
 /******************************************************************************/
 
@@ -126,7 +125,6 @@ using TileCallback = std::function<bool(TileResult &)>;
     const CollectedPointCloud &points,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
-    const ReconstructionLogger &log,
     const TileCallback &on_tile,
     ChunkingStats *stats,
     std::string *error);

@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include "util/logger.h"
+
 #include "math/kdtree.h"
 
 #include <algorithm>
@@ -155,19 +157,15 @@ void apply_cell_size_dependent_defaults(Options &options, double cell_size, doub
 
 void print_warnings(const Options &options, const DatalistMetadata &metadata) {
     if (!metadata.lod_supported_by_spacing) {
-        std::cerr << "mbmesh: [warning] resolved level_of_detail "
-                  << options.level_of_detail
-                  << " m is not supported by the estimated average point spacing "
-                  << metadata.spacing.average
-                  << " m; the result may be inaccurate\n";
+        LOG_WARN("resolved level_of_detail", options.level_of_detail,
+                 "m is not supported by the estimated average point spacing", metadata.spacing.average,
+                 "m; the result may be inaccurate");
     }
 
     if (metadata.normal_radius_exceeds_feature_limit) {
-        std::cerr << "mbmesh: [warning] normal estimation radius "
-                  << options.normals.search_radius
-                  << " m exceeds 45% of requested feature size "
-                  << options.level_of_detail
-                  << " m; normals may smooth features smaller than the radius\n";
+        LOG_WARN("normal estimation radius", options.normals.search_radius,
+                 "m exceeds 45% of requested feature size", options.level_of_detail,
+                 "m; normals may smooth features smaller than the radius");
     }
 }
 

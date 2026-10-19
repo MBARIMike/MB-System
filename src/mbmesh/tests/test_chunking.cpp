@@ -141,7 +141,7 @@ int main() {
     ChunkingStats stats;
     std::string error;
     const bool chunked_ok = reconstruct_chunked(
-        points, options, chunking, {},
+        points, options, chunking,
         [&](TileResult &tile) {
             append(&merged, tile.result.mesh);
             tile_meshes.push_back(tile);
@@ -210,7 +210,7 @@ int main() {
         threaded.threads = 4;
         std::vector<std::pair<int, int>> order;
         Mesh threaded_merged;
-        ok &= check(reconstruct_chunked(points, options, threaded, {}, [&](TileResult &tile) {
+        ok &= check(reconstruct_chunked(points, options, threaded, [&](TileResult &tile) {
                         order.push_back({tile.i, tile.j});
                         append(&threaded_merged, tile.result.mesh);
                         return true;
@@ -234,7 +234,7 @@ int main() {
 
         // Stopping from the callback stops the run.
         std::size_t seen = 0;
-        ok &= check(reconstruct_chunked(points, options, threaded, {}, [&](TileResult &) {
+        ok &= check(reconstruct_chunked(points, options, threaded, [&](TileResult &) {
                         seen++;
                         return false;
                     }, &stats, &error) && seen == 1,
@@ -248,7 +248,7 @@ int main() {
         one.tile_i = 1;
         one.tile_j = 1;
         std::size_t seen = 0;
-        ok &= check(reconstruct_chunked(points, options, one, {}, [&](TileResult &tile) {
+        ok &= check(reconstruct_chunked(points, options, one, [&](TileResult &tile) {
                         seen++;
                         return tile.i == 1 && tile.j == 1;
                     }, &stats, &error) && seen == 1,
@@ -257,7 +257,7 @@ int main() {
         ChunkingOptions limited = chunking;
         limited.max_tiles = 2;
         seen = 0;
-        ok &= check(reconstruct_chunked(points, options, limited, {}, [&](TileResult &) {
+        ok &= check(reconstruct_chunked(points, options, limited, [&](TileResult &) {
                         seen++;
                         return true;
                     }, &stats, &error) && seen == 2,

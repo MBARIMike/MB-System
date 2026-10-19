@@ -101,7 +101,12 @@ Print dataset metadata and exit before mesh reconstruction. The metadata
 includes input counts, geodetic bounds, and estimated point spacing.
 .TP
 .B \-V, \--verbose
-Enable progress and diagnostic logging.
+Enable progress and diagnostic logging. Messages use the same line format as
+\fBmbgrd2gltf\fR: level, local date and time, source file, function and line,
+then the message, for example
+\fBINFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] ...\fR.
+Without \fB-V\fR, INFO, WARN and ERROR lines are shown; \fB-V\fR adds DEBUG
+lines with per-stage and per-tile progress. All messages go to standard error.
 .TP
 .B \-H, \-h, \--help
 Display help message and exit.

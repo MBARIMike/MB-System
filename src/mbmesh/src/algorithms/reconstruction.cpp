@@ -1,5 +1,7 @@
 #include "algorithms/reconstruction.h"
 
+#include "util/logger.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -17,10 +19,10 @@ namespace {
 // machine; callers are expected to choose a tile size well below it.
 constexpr double maximum_tile_grid_cells = 1.5e8;
 
-void report(const ReconstructionLogger &log, const std::string &stage, const std::string &message) {
-    if (log) {
-        log(stage, message);
-    }
+// Prefixes a message with the tile it belongs to, so lines from tiles being
+// reconstructed at the same time can be told apart.
+[[nodiscard]] std::string labeled(const std::string &label, const std::string &message) {
+    return label.empty() ? message : label + ": " + message;
 }
 
 [[nodiscard]] double snap_down(double value, double cell_size) {
@@ -52,7 +54,7 @@ const char *reconstruction_status_message(ReconstructionStatus status) {
 ReconstructionResult reconstruct_chunk(
     const CollectedPointCloud &points,
     const ReconstructionOptions &options,
-    const ReconstructionLogger &log) {
+    const std::string &label) {
 
     ReconstructionResult result;
 
@@ -66,7 +68,7 @@ ReconstructionResult reconstruct_chunk(
                 << ", fallback_min_neighbors=" << options.normals.minimum_neighbors
                 << ", fallback_to_knearest="
                 << (using_search_radius ? "when radius neighborhood < minimum_neighbors" : "always");
-        report(log, "normal-estimation", message.str());
+        LOG_DEBUG("[normal-estimation]", labeled(label, message.str()));
     }
 
     result.oriented_points = normal_estimation(points, options.normals);
@@ -74,7 +76,7 @@ ReconstructionResult reconstruct_chunk(
         result.status = ReconstructionStatus::NoOrientedSamples;
         return result;
     }
-    report(log, "normal-estimation", "completed: oriented " + std::to_string(result.oriented_points.size()) + " samples");
+    LOG_DEBUG("[normal-estimation]", labeled(label, "completed: oriented " + std::to_string(result.oriented_points.size()) + " samples"));
 
     // ------------------------------------------------------------------ screened Poisson
     {
@@ -85,7 +87,7 @@ ReconstructionResult reconstruct_chunk(
                 << ", iterations=" << options.poisson.solver_iterations
                 << ", screening=" << (options.poisson.use_screening ? "enabled" : "disabled")
                 << ", screening_weight=" << options.poisson.screening_weight;
-        report(log, "poisson", message.str());
+        LOG_DEBUG("[poisson]", labeled(label, message.str()));
     }
 
     ScalarGrid3D poisson_surface = screened_poisson(result.oriented_points, options.poisson);
@@ -93,12 +95,11 @@ ReconstructionResult reconstruct_chunk(
         result.status = ReconstructionStatus::EmptyField;
         return result;
     }
-    report(log, "poisson",
-           "completed: grid=" + std::to_string(poisson_surface.nx) + "x" + std::to_string(poisson_surface.ny) + "x" +
-               std::to_string(poisson_surface.nz));
+    LOG_DEBUG("[poisson]", labeled(label, "completed: grid=" + std::to_string(poisson_surface.nx) + "x" + std::to_string(poisson_surface.ny) + "x" +
+               std::to_string(poisson_surface.nz)));
 
     // ------------------------------------------------------------------ marching cubes
-    report(log, "marching-cubes", "starting: iso_value=" + std::to_string(options.marching_cubes.iso_value));
+    LOG_DEBUG("[marching-cubes]", labeled(label, "starting: iso_value=" + std::to_string(options.marching_cubes.iso_value)));
 
     result.raw_mesh = marching_cubes(poisson_surface, options.marching_cubes);
 
@@ -110,9 +111,8 @@ ReconstructionResult reconstruct_chunk(
         result.status = ReconstructionStatus::EmptyMesh;
         return result;
     }
-    report(log, "marching-cubes",
-           "completed: " + std::to_string(result.raw_mesh.vertices.size()) + " vertices, " +
-               std::to_string(result.raw_mesh.indices.size() / 3) + " triangles");
+    LOG_DEBUG("[marching-cubes]", labeled(label, "completed: " + std::to_string(result.raw_mesh.vertices.size()) + " vertices, " +
+               std::to_string(result.raw_mesh.indices.size() / 3) + " triangles"));
 
     // ------------------------------------------------------------------ support trimming
     if (options.trimming.enabled) {
@@ -124,11 +124,11 @@ ReconstructionResult reconstruct_chunk(
                 << ", minimum_neighbors=" << options.trimming.minimum_neighbors
                 << ", minimum_normal_alignment="
                 << ((options.trimming.minimum_normal_alignment > 0.0) ? std::to_string(options.trimming.minimum_normal_alignment) : "disabled");
-        report(log, "support-trimming", message.str());
+        LOG_DEBUG("[support-trimming]", labeled(label, message.str()));
 
         result.mesh = support_trimming(result.raw_mesh, result.oriented_points, options.trimming, &result.trimming_diagnostics);
     } else {
-        report(log, "support-trimming", "disabled; using raw mesh");
+        LOG_DEBUG("[support-trimming]", labeled(label, "disabled; using raw mesh"));
         result.mesh = result.raw_mesh;
     }
 
@@ -149,7 +149,7 @@ ReconstructionResult reconstruct_chunk(
                 << ", alignment=" << diagnostics.rejected_for_normal_alignment << ")"
                 << ", output=" << result.mesh.vertices.size() << " vertices, "
                 << result.mesh.indices.size() / 3 << " triangles";
-        report(log, "support-trimming", message.str());
+        LOG_DEBUG("[support-trimming]", labeled(label, message.str()));
     }
 
     result.status = ReconstructionStatus::Ok;
@@ -215,7 +215,6 @@ bool reconstruct_chunked(
     const CollectedPointCloud &points,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
-    const ReconstructionLogger &log,
     const TileCallback &on_tile,
     ChunkingStats *stats,
     std::string *error) {
@@ -287,8 +286,7 @@ bool reconstruct_chunked(
             counts.tiles_with_points++;
         }
     }
-    report(log, "chunking",
-           "tile_size=" + std::to_string(tile) + " m, halo=" + std::to_string(halo) + " m, " +
+    LOG_DEBUG("[chunking]", "tile_size=" + std::to_string(tile) + " m, halo=" + std::to_string(halo) + " m, " +
                std::to_string(counts.tiles_with_points) + " tiles contain points");
 
     // ---------------------------------------------------------------- choose the tiles to run
@@ -307,7 +305,7 @@ bool reconstruct_chunked(
         }
         if (current.owned < chunking.minimum_tile_points) {
             counts.tiles_skipped_sparse++;
-            report(log, "chunking", "tile " + std::to_string(entry.first.first) + "," + std::to_string(entry.first.second) +
+            LOG_DEBUG("[chunking]", "tile " + std::to_string(entry.first.first) + "," + std::to_string(entry.first.second) +
                                         " skipped: only " + std::to_string(current.owned) + " points");
             continue;
         }
@@ -331,17 +329,11 @@ bool reconstruct_chunked(
     std::vector<Outcome> outcomes(jobs.size());
 
     std::mutex state_mutex;
-    std::mutex log_mutex;
     std::size_t next_job = 0;
     std::size_t next_emit = 0;
     bool stop = false;
     bool failed = false;
     std::string failure;
-
-    const ReconstructionLogger shared_log = [&](const std::string &stage, const std::string &message) {
-        std::lock_guard<std::mutex> lock(log_mutex);
-        report(log, stage, message);
-    };
 
     auto run_job = [&](Job &job, Outcome &outcome) -> bool {
         const int i = job.i;
@@ -384,24 +376,19 @@ bool reconstruct_chunked(
             return false;
         }
 
-        shared_log("chunking",
-                   name + ": " + std::to_string(job.owned) + " owned of " + std::to_string(chunk_points.size()) +
+        LOG_DEBUG("[chunking]", name + ": " + std::to_string(job.owned) + " owned of " + std::to_string(chunk_points.size()) +
                        " points, grid " + std::to_string(static_cast<long long>(grid_cells)) + " cells");
-
-        const ReconstructionLogger tile_log = [&](const std::string &stage, const std::string &message) {
-            shared_log(stage, name + ": " + message);
-        };
 
         TileResult &tile_result = outcome.tile;
         tile_result.i = i;
         tile_result.j = j;
         tile_result.owned_points = job.owned;
         tile_result.input_points = chunk_points.size();
-        tile_result.result = reconstruct_chunk(chunk_points, tile_options, tile_log);
+        tile_result.result = reconstruct_chunk(chunk_points, tile_options, name);
         chunk_points = CollectedPointCloud();
 
         if (tile_result.result.status != ReconstructionStatus::Ok) {
-            shared_log("chunking", name + " produced no mesh: " + reconstruction_status_message(tile_result.result.status));
+            LOG_DEBUG("[chunking]", name + " produced no mesh: " + reconstruction_status_message(tile_result.result.status));
             outcome.disposition = Disposition::Failed;
             tile_result.result = ReconstructionResult();
             return true;
@@ -426,14 +413,13 @@ bool reconstruct_chunked(
         result.oriented_points = std::move(owned_oriented);
 
         if (result.mesh.indices.empty()) {
-            shared_log("chunking", name + " has no triangles inside the tile");
+            LOG_DEBUG("[chunking]", name + " has no triangles inside the tile");
             outcome.disposition = Disposition::EmptyCrop;
             tile_result.result = ReconstructionResult();
             return true;
         }
 
-        shared_log("chunking",
-                   name + " completed: " + std::to_string(result.mesh.vertices.size()) + " vertices, " +
+        LOG_DEBUG("[chunking]", name + " completed: " + std::to_string(result.mesh.vertices.size()) + " vertices, " +
                        std::to_string(result.mesh.indices.size() / 3) + " triangles");
         outcome.disposition = Disposition::Mesh;
         return true;
