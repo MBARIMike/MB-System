@@ -140,7 +140,7 @@ bool write_outputs(
     const Options &options,
     std::string *error);
 
-bool launch_html_viewer_server(
+void print_html_viewer_command(
     const std::filesystem::path &directory,
     const std::string &html_filename);
 
@@ -362,11 +362,11 @@ int main(int argc, char **argv) {
     log_message("complete", "wrote " + (options.output_directory / "mesh.glb").string(), options.verbose, true);
 
     // ====================================================================================================
-    // Launch Local Server for X3DOM Viewer
+    // X3DOM Viewer
     // ====================================================================================================
 
-    if (options.write_html && !launch_html_viewer_server(options.output_directory, "mesh.html")) {
-        log_warning("failed to auto-launch Python web server/viewer");
+    if (options.write_html) {
+        print_html_viewer_command(options.output_directory, "mesh.html");
     }
 
     return 0;
@@ -632,7 +632,7 @@ void print_usage() {
     std::cout << "  -V, --verbose                Enable progress and diagnostic logging\n";
     std::cout << "  -H, -h, --help               Print this help message\n\n";
     std::cout << "Output options:\n";
-    std::cout << "      --html                   Also write mesh.html and launch local X3DOM viewer\n";
+    std::cout << "      --html                   Also write mesh.html, an X3DOM viewer page, and print the command to view it\n";
     std::cout << "      --xyz                    Also write local and ECEF XYZ point clouds\n";
     std::cout << "      --local-xyz              Also write pointcloud-local.xyz\n";
     std::cout << "      --ecef-xyz               Also write pointcloud-ecef.xyz\n";
@@ -776,38 +776,25 @@ bool write_outputs(
 
 // ========================================================================================================
 
-bool launch_html_viewer_server(
+void print_html_viewer_command(
     const std::filesystem::path &directory,
     const std::string &html_filename)
 {
-    if (directory.empty() || html_filename.empty()) {
-        return false;
+    // The viewer page loads mesh.glb over HTTP, which browsers require for local
+    // files. Rather than starting a server and a browser, which would leave a
+    // process running and hold the port, log the command to run.
+    constexpr int port = 8000;
+
+    std::error_code filesystem_error;
+    std::filesystem::path absolute_directory = std::filesystem::absolute(directory, filesystem_error);
+    if (filesystem_error) {
+        absolute_directory = directory;
     }
 
-    const int port = 8000;
-    const std::string directory_string = directory.string();
-
-    std::string server_command =
-        "python3 -m http.server " + std::to_string(port) +
-        " --bind 127.0.0.1 --directory " + shell_quote(directory_string) +
-        " >/tmp/mbmesh_http.log 2>&1 &";
-
-    const int server_status = std::system(server_command.c_str());
-    if (server_status != 0) {
-        return false;
-    }
-
-    const std::string url =
-        "http://127.0.0.1:" + std::to_string(port) + "/" + html_filename;
-    const std::string open_command =
-        "python3 -c \"import webbrowser; webbrowser.open('" + url + "')\"";
-
-    const int open_status = std::system(open_command.c_str());
-    if (open_status != 0) {
-        return false;
-    }
-
-    std::cerr << "mbmesh: [output] started Python web server at " << url << '\n';
-    std::cerr << "mbmesh: [output] server logs: /tmp/mbmesh_http.log\n";
-    return true;
+    log_message("html", "to view " + html_filename + ", run this command in a terminal (Ctrl-C stops it), then open the URL:", true, true);
+    log_message("html",
+                "  python3 -m http.server " + std::to_string(port) + " --bind 127.0.0.1 --directory " +
+                    shell_quote(absolute_directory.string()),
+                true, true);
+    log_message("html", "  http://127.0.0.1:" + std::to_string(port) + "/" + html_filename, true, true);
 }

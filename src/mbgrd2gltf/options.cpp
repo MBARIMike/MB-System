@@ -129,7 +129,7 @@ void print_help() {
   std::cout << "  --quantize-texcoord NUM       Draco texcoord quantization bits (2-30) [default: 10]\n";
   std::cout << "  --quantize-color NUM          Draco color quantization bits (2-30) [default: 8]\n";
   std::cout << "                      (-Qp, -Qn, -Qt, -Qc for legacy style)\n";
-  std::cout << "  --html, -W                    Generate HTML viewer with inline glTF/GLB model\n";
+  std::cout << "  --html, -W                    Generate HTML viewer with inline glTF/GLB model and print the command to view it\n";
   std::cout << "  --verbose, -V                 Enable verbose output\n";
   std::cout << "  --help, -H                    Print this help message\n\n";
 }

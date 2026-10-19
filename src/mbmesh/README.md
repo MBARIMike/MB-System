@@ -69,7 +69,15 @@ Generate an HTML viewer:
 ./build/src/mbmesh/mbmesh -I datalist.mb-1 -O ./mbmesh_output --html
 ```
 
-When `--html` is used, `mbmesh` writes `mesh.html`, starts a local Python HTTP server on `127.0.0.1:8000`, and opens the viewer in the default browser. Server logs are written to `/tmp/mbmesh_http.log`.
+When `--html` is used, `mbmesh` writes `mesh.html` and prints, as a log message, the command to view it. It does not start a server or a browser, so no process is left running and no port is held. Run the printed command in a terminal (Ctrl-C stops it) and open the printed URL:
+
+```text
+mbmesh: [html] to view mesh.html, run this command in a terminal (Ctrl-C stops it), then open the URL:
+mbmesh: [html]   python3 -m http.server 8000 --bind 127.0.0.1 --directory '/path/to/mbmesh_output'
+mbmesh: [html]   http://127.0.0.1:8000/mesh.html
+```
+
+The page has to be served over HTTP because browsers will not load `mesh.glb` from a `file://` URL.
 
 ## Command-Line Interface
 
@@ -86,7 +94,7 @@ When `--html` is used, `mbmesh` writes `mesh.html`, starts a local Python HTTP s
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--metadata`, `--info` | none | Read the datalist, print dataset metadata, and exit before mesh reconstruction. |
-| `--html`, `-html` | none | Write `mesh.html`, start a local Python HTTP server, and open the X3DOM viewer. |
+| `--html`, `-html` | none | Write `mesh.html`, an X3DOM viewer page, and print the command to serve and view it. |
 | `--xyz`, `-xyz` | none | Write both `pointcloud-local.xyz` and `pointcloud-ecef.xyz`. |
 | `--local-xyz`, `-local-xyz` | none | Write `pointcloud-local.xyz`. |
 | `--ecef-xyz`, `-ecef-xyz` | none | Write `pointcloud-ecef.xyz`. |
@@ -130,7 +138,7 @@ When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is sti
 3. **`mesh.html`** - X3DOM viewer page
    - Written with `--html` or `--all-outputs`
    - References `mesh.glb`; with `--geoorigin` it places the model with `GeoOrigin` and `GeoViewpoint` nodes as `mbgrd2gltf` does
-   - Served locally and opened in the default browser when generated
+   - The command to serve it locally is printed when it is generated; mbmesh does not start a server or browser
 
 4. **`pointcloud-local.xyz`** - Local Cartesian point cloud
    - Written with `--local-xyz`, `--xyz`, or `--all-outputs`
@@ -167,7 +175,7 @@ The current pipeline is orchestrated by `src/mbmesh/mbmesh.cpp`:
    - 5c. Extract a raw mesh with marching cubes.
    - 5d. Trim unsupported mesh regions.
 6. Write `mesh.glb`, per-tile GLBs when chunked, and requested optional outputs.
-7. Launch the local HTML viewer if `--html` was requested.
+7. Print the command to view `mesh.html` if `--html` was requested.
 
 ## Pipeline Details
 
@@ -378,17 +386,7 @@ Implemented in:
 
 Local XYZ output writes local reconstruction coordinates. ECEF XYZ and oriented PLY outputs convert local points back through the coordinate frame and then into WGS84 ECEF coordinates. The HTML writer creates a minimal X3DOM page titled `MB-System mbmesh Mesh Viewer`.
 
-When `--html` is used, `launch_html_viewer_server()` starts:
-
-```bash
-python3 -m http.server 8000 --bind 127.0.0.1 --directory <outputdir>
-```
-
-and opens:
-
-```text
-http://127.0.0.1:8000/mesh.html
-```
+When `--html` is used, `print_html_viewer_command()` logs the command to serve the output directory (`python3 -m http.server 8000 --bind 127.0.0.1 --directory <absolute outputdir>`) and the URL to open (`http://127.0.0.1:8000/mesh.html`). It does not start the server.
 
 ## Chunked Reconstruction
 
@@ -447,7 +445,7 @@ Important limitations:
 - Normal estimation is sensitive to sparse data, sharp edges, and inconsistent spacing.
 - Support trimming can over-trim when normals or thresholds are poor.
 - Boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
-- The HTML viewer launch depends on `python3` and a desktop/browser environment.
+- Viewing `mesh.html` needs `python3` (or any local web server) and a browser; mbmesh only prints the command.
 
 High-value future work:
 
@@ -466,7 +464,7 @@ High-value future work:
 
 ### Main Application
 
-- **mbmesh.cpp** - CLI parsing, pipeline orchestration, output selection, help text, and local HTML viewer launch
+- **mbmesh.cpp** - CLI parsing, pipeline orchestration, output selection, help text, and the viewer command message
 - **settings.cpp** - Runtime defaults, metadata computation, spacing estimation, bounds handling, and metadata output
 - **settings.h** - CLI option state and metadata structures
 

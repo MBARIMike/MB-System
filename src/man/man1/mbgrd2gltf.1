@@ -131,7 +131,7 @@ Draco color quantization bits (2-30). Affects the compression of vertex colors. 
 
 .TP
 .B \-\-html, \-W
-Generate an HTML viewer page with inline 3D visualization using X3DOM. The HTML file includes the glTF/GLB model with interactive navigation controls, processing provenance metadata (command line, timestamps, grid parameters, GeoOrigin settings, compression options), and links to MB-System and X3DOM documentation. The viewer requires serving the files via HTTP (e.g., python3 -m http.server) to avoid browser CORS restrictions when loading local files. Output file: <output_root>.html
+Generate an HTML viewer page with inline 3D visualization using X3DOM. The HTML file includes the glTF/GLB model with interactive navigation controls, processing provenance metadata (command line, timestamps, grid parameters, GeoOrigin settings, compression options), and links to MB-System and X3DOM documentation. The viewer requires serving the files via HTTP to avoid browser CORS restrictions when loading local files. The program does not start a web server or a browser; it logs the command to run (python3 -m http.server 8000 --bind 127.0.0.1 --directory <output directory>) and the URL to open. Output file: <output_root>.html
 
 .TP
 .B \-\-verbose, \-V

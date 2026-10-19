@@ -157,27 +157,37 @@ int main(int argc, char* argv[]) {
       
       model::write_html(bathymetry, geometry, options, command_line, timestamp, log_messages);
       
-      // Extract directory path for web server instructions
-      std::string output_dir = options.output_filepath();
-      size_t last_slash = output_dir.find_last_of("/\\");
-      if (last_slash != std::string::npos) {
-        output_dir = output_dir.substr(0, last_slash);
-      } else {
-        output_dir = ".";
+      // The viewer page loads the model over HTTP, which browsers require for
+      // local files. Log the command to run rather than starting a server, so
+      // no process is left running and no port is held.
+      std::string html_dir = ".";
+      size_t abs_slash = abs_output_file.find_last_of("/\\");
+      if (abs_slash != std::string::npos && abs_slash > 0) {
+        html_dir = abs_output_file.substr(0, abs_slash);
       }
-      
+
       // Get just the HTML filename
       std::string html_filename = options.output_filepath();
+      size_t last_slash = html_filename.find_last_of("/\\");
       if (last_slash != std::string::npos) {
         html_filename = html_filename.substr(last_slash + 1);
       }
       html_filename += ".html";
-      
-      LOG_INFO("To view the HTML file (avoiding CORS issues):");
-      LOG_INFO("  Start a local web server in the output directory:");
-      LOG_INFO("    cd", output_dir);
-      LOG_INFO("    python3 -m http.server 8000");
-      LOG_INFO("  Then open: http://localhost:8000/" + html_filename);
+
+      // Quote the directory for the shell
+      std::string quoted_dir = "'";
+      for (char c : html_dir) {
+        if (c == '\'') {
+          quoted_dir += "'\\''";
+        } else {
+          quoted_dir += c;
+        }
+      }
+      quoted_dir += "'";
+
+      LOG_INFO("To view", html_filename + ", run this command in a terminal (Ctrl-C stops it), then open the URL:");
+      LOG_INFO("  python3 -m http.server 8000 --bind 127.0.0.1 --directory", quoted_dir);
+      LOG_INFO("  http://127.0.0.1:8000/" + html_filename);
     }
   } catch (const std::invalid_argument& e) {
     std::cerr << "Invalid argument error: " << e.what() << std::endl;

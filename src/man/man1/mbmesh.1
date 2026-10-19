@@ -113,8 +113,10 @@ compatibility.
 .TP
 .B \--html
 Also write \fBmesh.html\fR, an X3DOM viewer page that references
-\fBmesh.glb\fR, launch a local Python HTTP server, and open the viewer in the
-default web browser.
+\fBmesh.glb\fR, and print the command to serve and view it. \fBmbmesh\fR does
+not start a web server or a browser; run the printed command
+(\fBpython3 -m http.server 8000 --bind 127.0.0.1 --directory\fR \fIoutputdir\fR)
+in a terminal, press Ctrl-C to stop it, and open the printed URL.
 .TP
 .B \--xyz
 Also write both local and ECEF XYZ point cloud files.
@@ -193,8 +195,8 @@ Optional untrimmed triangle mesh before support trimming.
 .TP
 .B mesh.html
 Optional X3DOM preview page referencing \fBmesh.glb\fR. When \fB--html\fR is
-used, \fBmbmesh\fR attempts to serve this page from the output directory and
-open it in the default web browser.
+used, \fBmbmesh\fR prints the command to serve this page from the output
+directory; browsers will not load \fBmesh.glb\fR from a file URL.
 .TP
 .B pointcloud-local.xyz
 Optional XYZ point cloud in the same local Cartesian coordinate frame as
