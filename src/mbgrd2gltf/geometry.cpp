@@ -46,6 +46,14 @@
 
 namespace mbgrd2gltf {
 
+// Log an ECEF coordinate with millimeter resolution; the default stream
+// precision shows only six digits, which hides the quantization this code avoids.
+static std::string ecef_text(double value) {
+  std::ostringstream text;
+  text << std::fixed << std::setprecision(3) << value;
+  return text.str();
+}
+
 Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
   // Apply GeoOrigin offset
   if (options.is_geoorigin_auto()) {
@@ -71,12 +79,12 @@ Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
     LOG_INFO("Using automatic GeoOrigin (grid center):", geoorigin_lon, ",", geoorigin_lat, ",", geoorigin_elev);
     
     // Compute GeoOrigin ECEF offset
-    Vertex geoorigin_vertex = get_earth_centered_vertex(geoorigin_lon, geoorigin_lat, geoorigin_elev, 0);
-    _geoorigin_x = geoorigin_vertex.x();
-    _geoorigin_y = geoorigin_vertex.y();
-    _geoorigin_z = geoorigin_vertex.z();
+    const EcefPosition geoorigin_ecef = get_ecef_position(geoorigin_lon, geoorigin_lat, geoorigin_elev);
+    _geoorigin_x = geoorigin_ecef.x;
+    _geoorigin_y = geoorigin_ecef.y;
+    _geoorigin_z = geoorigin_ecef.z;
     
-    LOG_INFO("GeoOrigin ECEF offset:", _geoorigin_x, ",", _geoorigin_y, ",", _geoorigin_z);
+    LOG_INFO("GeoOrigin ECEF offset:", ecef_text(_geoorigin_x), ",", ecef_text(_geoorigin_y), ",", ecef_text(_geoorigin_z));
   } else if (options.is_geoorigin_set()) {
     double geoorigin_lon = options.geoorigin_lon();
     double geoorigin_lat = options.geoorigin_lat();
@@ -84,12 +92,12 @@ Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
     LOG_INFO("Using user-specified GeoOrigin:", geoorigin_lon, ",", geoorigin_lat, ",", geoorigin_elev);
     
     // Compute GeoOrigin ECEF offset
-    Vertex geoorigin_vertex = get_earth_centered_vertex(geoorigin_lon, geoorigin_lat, geoorigin_elev, 0);
-    _geoorigin_x = geoorigin_vertex.x();
-    _geoorigin_y = geoorigin_vertex.y();
-    _geoorigin_z = geoorigin_vertex.z();
+    const EcefPosition geoorigin_ecef = get_ecef_position(geoorigin_lon, geoorigin_lat, geoorigin_elev);
+    _geoorigin_x = geoorigin_ecef.x;
+    _geoorigin_y = geoorigin_ecef.y;
+    _geoorigin_z = geoorigin_ecef.z;
     
-    LOG_INFO("GeoOrigin ECEF offset:", _geoorigin_x, ",", _geoorigin_y, ",", _geoorigin_z);
+    LOG_INFO("GeoOrigin ECEF offset:", ecef_text(_geoorigin_x), ",", ecef_text(_geoorigin_y), ",", ecef_text(_geoorigin_z));
   } else {
     // No GeoOrigin - use original ECEF coordinates (no offset)
     _geoorigin_x = 0.0;
@@ -120,8 +128,7 @@ double Geometry::get_latitude(const Bathymetry& bathymetry, size_t y) {
   return bathymetry.latitude_max() - bathymetry.latitude_spacing() * (double)y;
 }
 
-Vertex Geometry::get_earth_centered_vertex(double longitude, double latitude, double altitude,
-                                           uint32_t id) {
+Geometry::EcefPosition Geometry::get_ecef_position(double longitude, double latitude, double altitude) {
   // WGS-84 ellipsoid calculations
   double F = 1.0 / WGS_84_INVERSE_FLATTENING;
   double e_squared = F * (2.0 - F);
@@ -137,9 +144,19 @@ Vertex Geometry::get_earth_centered_vertex(double longitude, double latitude, do
   double y = tmp * sin_lon;
   double z = (N * (1 - e_squared) + altitude) * sin_lat;
 
+  return EcefPosition{x, y, z};
+}
+
+Vertex Geometry::get_earth_centered_vertex(double longitude, double latitude, double altitude,
+                                           uint32_t id) {
+  const EcefPosition ecef = get_ecef_position(longitude, latitude, altitude);
+
   // gltf assumes y is up
   // With "return Vertex(x, z, y, id)" terrain ends up south of Australia
-  return Vertex(x, y, z, id);
+  //
+  // This narrows to float. It is only right when no GeoOrigin is in use, where
+  // the coordinates are absolute ECEF and a float is all glTF can hold anyway.
+  return Vertex(ecef.x, ecef.y, ecef.z, id);
 }
 
 Matrix<Vertex> Geometry::get_vertices(const Bathymetry& bathymetry, double vertical_exaggeration,
@@ -158,22 +175,28 @@ Matrix<Vertex> Geometry::get_vertices(const Bathymetry& bathymetry, double verti
         double longitude = get_longitude(bathymetry, x);
         double latitude = get_latitude(bathymetry, y);
         double adjusted_altitude = (double)altitude * vertical_exaggeration;
-        Vertex vertex = get_earth_centered_vertex(longitude, latitude, adjusted_altitude, vertex_id++);
+
+        // Keep the ECEF position in double and subtract the GeoOrigin in double.
+        // Only the small remainder, within a few kilometers of the GeoOrigin, is
+        // narrowed to float. Narrowing the absolute ECEF position first would
+        // snap every vertex to a 0.25-0.5 m lattice, whatever the grid spacing.
+        const EcefPosition ecef = get_ecef_position(longitude, latitude, adjusted_altitude);
+        const uint32_t this_id = vertex_id++;
         
         // Print first few valid vertices for debugging
         if (!printed_first) {
           if (geoorigin_x != 0.0 || geoorigin_y != 0.0 || geoorigin_z != 0.0) {
-            LOG_INFO("First vertex [", x, ",", y, "] before offset: x=", vertex.x(), 
-                     "y=", vertex.y(), "z=", vertex.z(), 
+            LOG_INFO("First vertex [", x, ",", y, "] before offset: x=", ecef_text(ecef.x), 
+                     "y=", ecef_text(ecef.y), "z=", ecef_text(ecef.z), 
                      "lon=", longitude, "lat=", latitude, "alt=", altitude);
           }
         }
         
         // Apply GeoOrigin offset
-        out.at(x, y) = Vertex(vertex.x() - geoorigin_x, 
-                              vertex.y() - geoorigin_y, 
-                              vertex.z() - geoorigin_z, 
-                              vertex.index());
+        out.at(x, y) = Vertex(static_cast<float>(ecef.x - geoorigin_x), 
+                              static_cast<float>(ecef.y - geoorigin_y), 
+                              static_cast<float>(ecef.z - geoorigin_z), 
+                              this_id - 1);  // same numbering as before: Vertex::index() of the id
         
         if (!printed_first) {
           if (geoorigin_x != 0.0 || geoorigin_y != 0.0 || geoorigin_z != 0.0) {
@@ -187,8 +210,8 @@ Matrix<Vertex> Geometry::get_vertices(const Bathymetry& bathymetry, double verti
         // Print a sample from the middle
         if (valid_count == 1000) {
           if (geoorigin_x != 0.0 || geoorigin_y != 0.0 || geoorigin_z != 0.0) {
-            LOG_INFO("Sample vertex #1000 [", x, ",", y, "] before offset: x=", vertex.x(), 
-                     "y=", vertex.y(), "z=", vertex.z());
+            LOG_INFO("Sample vertex #1000 [", x, ",", y, "] before offset: x=", ecef_text(ecef.x), 
+                     "y=", ecef_text(ecef.y), "z=", ecef_text(ecef.z));
             LOG_INFO("Sample vertex #1000 [", x, ",", y, "] after offset:  x=", out.at(x, y).x(), 
                      "y=", out.at(x, y).y(), "z=", out.at(x, y).z());
           }

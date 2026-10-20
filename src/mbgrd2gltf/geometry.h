@@ -53,6 +53,17 @@ public:
   };
   static std::vector<Tile> get_triangles_tiled(const Matrix<Vertex>& vertices, size_t tileSize);
 
+public:
+  // A position in WGS84 Earth-Centered Earth-Fixed coordinates, in meters, kept
+  // in double precision. ECEF magnitudes are millions of meters, where a float
+  // can only resolve 0.25-0.5 m, so positions must stay in double until any
+  // GeoOrigin has been subtracted and only then be narrowed to float.
+  struct EcefPosition {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+  };
+
 private: // members
   Matrix<Vertex> _vertices;
   std::vector<Tile> _tiles;
@@ -64,6 +75,7 @@ private: // methods
   static double to_radians(double degrees);
   static double get_longitude(const Bathymetry& bathymetry, size_t x);
   static double get_latitude(const Bathymetry& bathymetry, size_t y);
+  static EcefPosition get_ecef_position(double longitude, double latitude, double altitude);
   static Vertex get_earth_centered_vertex(double longitude, double latitude, double altitude,
                                           uint32_t id);
   static Matrix<Vertex> get_vertices(const Bathymetry& bathymetry, double vertical_exaggeration,
