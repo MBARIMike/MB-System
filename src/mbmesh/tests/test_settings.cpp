@@ -127,6 +127,61 @@ int main() {
         return 1;
     }
 
+    // Automatic tiling must produce enough tiles to keep every thread busy. A
+    // coarse-celled survey with a modest depth range would otherwise get a few
+    // huge tiles, so that extra threads have nothing to do.
+    {
+        DatalistMetadata big;
+        big.spacing.average = 5.0;
+        // A 1.2 km survey: the memory budget alone would allow one tile, or a few,
+        // since a tile may be up to 512 cells (2.5 km) across here.
+        big.bounds = Bounds3D(Vec3(-600.0, -600.0, -30.0), Vec3(600.0, 600.0, 0.0));
+
+        Options base;
+        apply_spacing_driven_defaults(base, &big);
+
+        std::size_t previous_tiles = 0;
+        for (const std::size_t threads : {1, 4, 8}) {
+            Options options = base;
+            options.threads = threads;
+            options.max_chunks = 1000000;   // forces chunking on without fixing the tile size
+            std::string chunk_error;
+            if (!check(resolve_chunking(options, big, nullptr, &chunk_error) && options.use_chunking, "Chunking should be on with an automatically chosen tile size")) {
+                return 1;
+            }
+            if (!check(options.chunking.threads == threads, "Chunking should use the requested thread count")) {
+                return 1;
+            }
+
+            const double tile = options.chunking.tile_size;
+            const double tiles_x = std::floor(big.bounds.max.x / tile) - std::floor(big.bounds.min.x / tile) + 1.0;
+            const double tiles_y = std::floor(big.bounds.max.y / tile) - std::floor(big.bounds.min.y / tile) + 1.0;
+            const std::size_t tiles = static_cast<std::size_t>(tiles_x * tiles_y);
+            std::printf("  %zu threads: tile %.0f m, %zu tiles\n", threads, tile, tiles);
+
+            if (!check(tiles >= 2 * threads, "Automatic tiling should give at least two tiles per thread")) {
+                return 1;
+            }
+            if (!check(tiles >= previous_tiles, "Asking for more threads should not give fewer tiles")) {
+                return 1;
+            }
+            previous_tiles = tiles;
+        }
+
+        // An explicit --chunk-size is honoured, not adjusted for threads.
+        Options explicit_options = base;
+        explicit_options.threads = 8;
+        explicit_options.chunk_size_requested = true;
+        explicit_options.chunk_size = 2500.0;
+        std::string explicit_error;
+        if (!check(resolve_chunking(explicit_options, big, nullptr, &explicit_error) &&
+                       explicit_options.chunking.tile_size >= 2500.0 &&
+                       explicit_options.chunking.tile_size < 2500.0 + base.poisson.cell_size,
+                   "An explicit --chunk-size should be used as given (rounded up to whole cells)")) {
+            return 1;
+        }
+    }
+
     std::printf("Settings defaults and Poisson budget checks passed\n");
     return 0;
 }

@@ -111,7 +111,9 @@ ReconstructionOptions reconstruction_options(const Options &options);
 
 // Decides whether to chunk and, if so, sets options.use_chunking and
 // options.chunking. Returns false (with *error) if the settings cannot work.
-bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::string *error = nullptr);
+// If points is given, the tile count is taken from the tiles that contain
+// points; otherwise from the survey's bounding box.
+bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const CollectedPointCloud *points = nullptr, std::string *error = nullptr);
 
 void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata);
 bool adjust_poisson_grid_to_budget(Options &options, const DatalistMetadata &metadata, std::string *error = nullptr);

@@ -90,7 +90,9 @@ Stop after n tiles. Intended for testing.
 .B \--threads \fIn\fR
 Number of tiles reconstructed at the same time when chunking. The default is the
 smaller of the number of processor cores and 4. Each tile holds its own Poisson
-grid, so memory use grows with this value. The output does not depend on it.
+grid, so memory use grows with this value. With automatic tiling, a larger value
+also gives smaller tiles, since at least two tiles per thread are wanted. The
+output does not depend on it.
 .TP
 .B \--decimate \fImeters\fR
 Enable voxel-grid point decimation with the specified cell size in local meters.

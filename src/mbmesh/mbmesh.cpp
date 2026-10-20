@@ -15,6 +15,7 @@
 #include "settings.h"
 
 #include "util/logger.h"
+#include "util/stopwatch.h"
 
 #include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
@@ -133,6 +134,9 @@ int main(int argc, char **argv) {
 
     using mbmesh::LogLevel;
     using mbmesh::Logger;
+    using mbmesh::Stopwatch;
+
+    const Stopwatch run_timer;
 
     // INFO until the options are parsed, so option errors are reported; -V then
     // raises it to DEBUG for progress messages, as in mbgrd2gltf.
@@ -159,15 +163,16 @@ int main(int argc, char **argv) {
 
     std::string error;
     PreprocessedDatalist preprocessed;
+    const Stopwatch input_timer;
     if (!preprocess_datalist(options, &preprocessed, &error)) {
         LOG_ERROR(error);
         return 1;
     }
 
-    LOG_DEBUG("[input]", "completed: accepted " + std::to_string(preprocessed.read_result.points.size()) +
-                              " of " + std::to_string(preprocessed.read_result.stats.soundings_read) +
-                              " soundings from " + std::to_string(preprocessed.read_result.stats.files_read) +
-                              " files");
+    LOG_INFO("[input]", "completed: accepted " + std::to_string(preprocessed.read_result.points.size()) +
+                            " of " + std::to_string(preprocessed.read_result.stats.soundings_read) +
+                            " soundings from " + std::to_string(preprocessed.read_result.stats.files_read) +
+                            " files in " + input_timer.text());
 
     if (options.metadata_requested) {
         print_datalist_metadata(preprocessed, options);
@@ -248,6 +253,7 @@ int main(int argc, char **argv) {
     Mesh clean_mesh;
     Mesh raw_mesh;
     OrientedPointCloud oriented_points;
+    const Stopwatch reconstruction_timer;
 
     if (!options.use_chunking) {
         ReconstructionResult result = reconstruct_chunk(decimated_points, reconstruction);
@@ -333,13 +339,15 @@ int main(int argc, char **argv) {
         output_points.push_back(collected_point.point);
     }
 
+    LOG_INFO("[reconstruction]", "completed in " + reconstruction_timer.text() + (options.use_chunking ? " on " + std::to_string(options.chunking.threads) + " threads" : std::string(", single pass")));
+
     if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, options, &error)) {
         LOG_ERROR(error);
         return 1;
     }
 
     LOG_DEBUG("[output]", "completed");
-    LOG_INFO("[complete]", "wrote " + (options.output_directory / "mesh.glb").string());
+    LOG_INFO("[complete]", "wrote " + (options.output_directory / "mesh.glb").string() + ", total " + run_timer.text());
 
     // ====================================================================================================
     // X3DOM Viewer

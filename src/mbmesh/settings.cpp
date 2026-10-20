@@ -10,6 +10,8 @@
 #include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <set>
+#include <utility>
 #include <sstream>
 #include <vector>
 
@@ -26,6 +28,13 @@ constexpr double maximum_poisson_grid_cells = 45.0e6;
 constexpr double target_chunk_grid_cells = 8.0e6;
 constexpr double minimum_auto_chunk_cells = 16.0;
 constexpr double maximum_auto_chunk_cells = 512.0;
+
+// Automatic tiling aims for at least this many tiles per thread, so that all
+// threads stay busy and uneven tiles at the survey edge balance out. A tile is
+// never made smaller than this many halos across, to keep the cost of the
+// halo and padding, which every tile reconstructs again, to a modest factor.
+constexpr double target_tiles_per_thread = 2.0;
+constexpr double minimum_tile_halos = 4.0;
 constexpr std::size_t maximum_spacing_samples = 8192;
 
 struct PoissonGridEstimate {
@@ -126,6 +135,28 @@ SpacingMetadata estimate_point_spacing(const CollectedPointCloud &points) {
     metadata.average = distance_sum / static_cast<double>(distances.size());
     metadata.median = distances[distances.size() / 2];
     return metadata;
+}
+
+// Number of tiles of this size that the survey's horizontal extent touches.
+std::size_t tiles_covering(const Bounds3D &bounds, double tile_size) {
+    const double tiles_x = std::floor(bounds.max.x / tile_size) - std::floor(bounds.min.x / tile_size) + 1.0;
+    const double tiles_y = std::floor(bounds.max.y / tile_size) - std::floor(bounds.min.y / tile_size) + 1.0;
+    return static_cast<std::size_t>(tiles_x * tiles_y);
+}
+
+// Number of tiles of this size that contain points. A survey along a diagonal
+// track touches far fewer tiles than its bounding box suggests. A sample of the
+// points is enough, since this only steers the choice of tile size.
+std::size_t tiles_occupied(const CollectedPointCloud &points, double tile_size) {
+    constexpr std::size_t maximum_samples = 1000000;
+    const std::size_t stride = std::max<std::size_t>(1, points.size() / maximum_samples);
+
+    std::set<std::pair<long long, long long>> occupied;
+    for (std::size_t n = 0; n < points.size(); n += stride) {
+        occupied.insert({static_cast<long long>(std::floor(points[n].point.x / tile_size)),
+                         static_cast<long long>(std::floor(points[n].point.y / tile_size))});
+    }
+    return occupied.size();
 }
 
 PoissonGridEstimate estimate_poisson_grid(const Bounds3D &bounds, double cell_size, double padding) {
@@ -235,7 +266,7 @@ ReconstructionOptions reconstruction_options(const Options &options) {
     return reconstruction;
 }
 
-bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::string *error) {
+bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const CollectedPointCloud *points, std::string *error) {
     options.use_chunking = false;
 
     const double cell = options.poisson.cell_size;
@@ -248,6 +279,12 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::s
 
     const ReconstructionOptions reconstruction = reconstruction_options(options);
     const double halo = chunk_halo(reconstruction);
+
+    // Each tile holds its own Poisson grid, so cap the automatic thread count to
+    // keep memory modest. Ask for more with --threads.
+    constexpr std::size_t automatic_thread_limit = 4;
+    const std::size_t hardware = std::max<std::size_t>(1, std::thread::hardware_concurrency());
+    const std::size_t threads = options.threads > 0 ? options.threads : std::min(hardware, automatic_thread_limit);
 
     double tile_size = 0.0;
     if (options.chunk_size_requested) {
@@ -269,6 +306,18 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::s
         const double margin_cells = 2.0 * (halo + options.poisson.padding) / cell;
         const double tile_cells = std::clamp(side_cells - margin_cells, minimum_auto_chunk_cells, maximum_auto_chunk_cells);
         tile_size = tile_cells * cell;
+
+        // The memory budget alone can give a few huge tiles, which leaves most
+        // threads idle. Shrink the tile until there are enough tiles to keep
+        // every thread busy, down to a floor set by the halo.
+        const double minimum_tile = std::max(minimum_auto_chunk_cells * cell, round_to_cells(minimum_tile_halos * halo, cell));
+        const std::size_t wanted_tiles = static_cast<std::size_t>(std::ceil(target_tiles_per_thread * static_cast<double>(threads)));
+        const auto tile_count = [&](double size) {
+            return points != nullptr ? tiles_occupied(*points, size) : tiles_covering(metadata.bounds, size);
+        };
+        while (tile_size > minimum_tile && tile_count(tile_size) < wanted_tiles) {
+            tile_size = std::max(minimum_tile, round_to_cells(0.85 * tile_size, cell));
+        }
     }
 
     options.use_chunking = true;
@@ -279,11 +328,7 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, std::s
     options.chunking.tile_j = options.chunk_tile_j;
     options.chunking.max_tiles = options.max_chunks;
 
-    // Each tile holds its own Poisson grid, so cap the automatic thread count to
-    // keep memory modest. Ask for more with --threads.
-    constexpr std::size_t automatic_thread_limit = 4;
-    const std::size_t hardware = std::max<std::size_t>(1, std::thread::hardware_concurrency());
-    options.chunking.threads = options.threads > 0 ? options.threads : std::min(hardware, automatic_thread_limit);
+    options.chunking.threads = threads;
     return true;
 }
 
@@ -350,7 +395,7 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
     preprocessed->metadata.spacing = estimate_point_spacing(preprocessed->read_result.points);
 
     apply_spacing_driven_defaults(options, &preprocessed->metadata);
-    if (!resolve_chunking(options, preprocessed->metadata, error)) {
+    if (!resolve_chunking(options, preprocessed->metadata, &preprocessed->read_result.points, error)) {
         return false;
     }
     if (!options.use_chunking && !adjust_poisson_grid_to_budget(options, preprocessed->metadata, error)) {
@@ -399,13 +444,12 @@ void print_datalist_metadata(const PreprocessedDatalist &preprocessed, const Opt
     if (options.use_chunking) {
         const double tile = options.chunking.tile_size;
         const double halo = options.chunking.halo;
-        const Vec3 survey = extent;
-        const double tiles_x = std::ceil(survey.x / tile) + 1.0;
-        const double tiles_y = std::ceil(survey.y / tile) + 1.0;
         const double side = (tile + 2.0 * (halo + options.poisson.padding)) / options.poisson.cell_size + 1.0;
         std::cout << "  tile_size: " << tile << '\n';
         std::cout << "  halo: " << halo << '\n';
-        std::cout << "  tiles_at_most: " << tiles_x * tiles_y << '\n';
+        std::cout << "  tiles_with_points: " << tiles_occupied(preprocessed.read_result.points, tile)
+                  << " (of " << tiles_covering(metadata.bounds, tile) << " in the survey's bounding box)\n";
+        std::cout << "  threads: " << options.chunking.threads << '\n';
         std::cout << "  tile_grid_columns: " << side * side << '\n';
     }
 }

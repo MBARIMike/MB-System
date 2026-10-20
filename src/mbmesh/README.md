@@ -403,10 +403,12 @@ How it works:
 - **Shared grid lattice.** Every tile's Poisson grid is snapped to the same global lattice of cell-size steps, so neighboring tiles share grid nodes and their surfaces nearly coincide where they overlap.
 - **Halo.** A tile reads its own points plus a ring of neighboring points, so that points near the tile edge see the neighborhoods a single run would give them. The halo covers the reach of normal splatting or support trimming plus the normal-estimation radius plus a few cells.
 - **Ownership.** After trimming, a tile keeps only triangles whose centroid lies inside its half-open square, so each triangle belongs to exactly one tile and the merged mesh has no overlap.
-- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the tile size so each tile's grid, including halo and padding, is about that size. The survey's full depth range is used for the vertical extent, which is the worst case for any tile. `--metadata` prints the resulting tile size, halo and grid size.
-- **Threads.** Tiles are independent, so several are reconstructed at once (`--threads`). Results are delivered in tile order, so the output does not depend on the thread count.
+- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the tile size so each tile's grid, including halo and padding, is about that size. The survey's full depth range is used for the vertical extent, which is the worst case for any tile. The memory budget alone can give only a few huge tiles, which leaves most threads idle, so the tile is then made smaller until at least two tiles per thread contain points, down to a floor of four halos across (so that the halo and padding, which every tile reconstructs again, stay a modest cost). Asking for more threads therefore gives smaller tiles. An explicit `--chunk-size` is used as given. `--metadata` prints the resulting tile size, halo, grid size, number of tiles with points and thread count.
+- **Threads.** Tiles are independent, so several are reconstructed at once (`--threads`). The tiles with the most points are started first, so the last tiles to start are the small ones and the threads finish together. Results are delivered in tile order, so the output does not depend on the thread count or the start order.
 
 Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 m) at `-L 2`, a single run took 207 s and 1.4 GB. Tiled with 10 m tiles, it took 254 s on one thread and 69 s on four threads at a peak of 0.76 GB, with 151,057 triangles against 151,148 for the single run. The median distance from a tiled vertex to the nearest single-run vertex was 4.9 cm, about the vertex spacing. At the default level of detail (a 0.098 m cell, about 102 million cells for the whole survey, which a single run refuses to attempt) automatic chunking produced 20 tiles of about 8.3 m and 528,208 triangles in 232 s at a peak of 1.8 GB on four threads. Three survey-edge tiles with fewer than 32 owned points were skipped.
+
+On the same file at `-L 2` with automatic tiling, 4 threads took 66 s for 8 tiles with points, 8 threads 45 s for 16 tiles, and 12 threads 48 s for 20 tiles, so beyond about 8 threads the gain stops.
 
 Current limitations:
 
@@ -488,6 +490,7 @@ High-value future work:
 
 - **include/data_types/geometry.h** - Point, mesh, bounds, reconstruction-domain, and grid data types
 - **include/data_types/swathfile.h** - Swath-file data types
+- **include/util/stopwatch.h** - Wall-clock timer used for the timing messages
 - **include/util/logger.h** - Header-only logger producing the same line format as `mbgrd2gltf`
 - **include/math/vec2.h**, **vec3.h**, **mat3.h** - Basic vector and matrix helpers
 - **include/math/eigen.h** - Symmetric 3x3 eigen decomposition
@@ -557,6 +560,8 @@ make mbmesh
 INFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] input=datalist.mb-1 output=mbmesh_output
 DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chunking] tile_size=6.05 m, halo=0.72 m, 6 tiles contain points
 ```
+
+A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s`, `[reconstruction] completed in 1 min 7.5 s on 4 threads`, `[complete] ..., total 1 min 9.0 s`). With `-V` each stage of each tile also reports its own time, which shows where the time goes.
 
 By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each tile (the tile name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--metadata` report. Output is serialized, so lines from tiles reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
 

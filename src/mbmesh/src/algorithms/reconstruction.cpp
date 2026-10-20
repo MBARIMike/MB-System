@@ -1,6 +1,9 @@
 #include "algorithms/reconstruction.h"
 
 #include "util/logger.h"
+#include "util/stopwatch.h"
+
+using mbmesh::Stopwatch;
 
 #include <algorithm>
 #include <cmath>
@@ -57,6 +60,8 @@ ReconstructionResult reconstruct_chunk(
     const std::string &label) {
 
     ReconstructionResult result;
+    const Stopwatch total_timer;
+    Stopwatch stage_timer;
 
     // ------------------------------------------------------------------ normal estimation
     {
@@ -76,7 +81,8 @@ ReconstructionResult reconstruct_chunk(
         result.status = ReconstructionStatus::NoOrientedSamples;
         return result;
     }
-    LOG_DEBUG("[normal-estimation]", labeled(label, "completed: oriented " + std::to_string(result.oriented_points.size()) + " samples"));
+    LOG_DEBUG("[normal-estimation]", labeled(label, "completed: oriented " + std::to_string(result.oriented_points.size()) + " samples in " + stage_timer.text()));
+    stage_timer = Stopwatch();
 
     // ------------------------------------------------------------------ screened Poisson
     {
@@ -96,7 +102,8 @@ ReconstructionResult reconstruct_chunk(
         return result;
     }
     LOG_DEBUG("[poisson]", labeled(label, "completed: grid=" + std::to_string(poisson_surface.nx) + "x" + std::to_string(poisson_surface.ny) + "x" +
-               std::to_string(poisson_surface.nz)));
+               std::to_string(poisson_surface.nz) + " in " + stage_timer.text()));
+    stage_timer = Stopwatch();
 
     // ------------------------------------------------------------------ marching cubes
     LOG_DEBUG("[marching-cubes]", labeled(label, "starting: iso_value=" + std::to_string(options.marching_cubes.iso_value)));
@@ -112,7 +119,8 @@ ReconstructionResult reconstruct_chunk(
         return result;
     }
     LOG_DEBUG("[marching-cubes]", labeled(label, "completed: " + std::to_string(result.raw_mesh.vertices.size()) + " vertices, " +
-               std::to_string(result.raw_mesh.indices.size() / 3) + " triangles"));
+               std::to_string(result.raw_mesh.indices.size() / 3) + " triangles in " + stage_timer.text()));
+    stage_timer = Stopwatch();
 
     // ------------------------------------------------------------------ support trimming
     if (options.trimming.enabled) {
@@ -148,7 +156,8 @@ ReconstructionResult reconstruct_chunk(
                 << ", offset=" << diagnostics.rejected_for_normal_offset
                 << ", alignment=" << diagnostics.rejected_for_normal_alignment << ")"
                 << ", output=" << result.mesh.vertices.size() << " vertices, "
-                << result.mesh.indices.size() / 3 << " triangles";
+                << result.mesh.indices.size() / 3 << " triangles in " << stage_timer.text()
+                << " (reconstruction total " << total_timer.text() << ")";
         LOG_DEBUG("[support-trimming]", labeled(label, message.str()));
     }
 
@@ -328,6 +337,17 @@ bool reconstruct_chunked(
     };
     std::vector<Outcome> outcomes(jobs.size());
 
+    // Start the tiles with the most points first. The last tiles to start decide
+    // when the run ends, so starting small ones last keeps the threads evenly
+    // loaded. Delivery stays in tile order regardless.
+    std::vector<std::size_t> start_order(jobs.size());
+    for (std::size_t n = 0; n < start_order.size(); n++) {
+        start_order[n] = n;
+    }
+    std::stable_sort(start_order.begin(), start_order.end(), [&](std::size_t a, std::size_t b) {
+        return jobs[a].owned > jobs[b].owned;
+    });
+
     std::mutex state_mutex;
     std::size_t next_job = 0;
     std::size_t next_emit = 0;
@@ -433,7 +453,7 @@ bool reconstruct_chunked(
                 if (stop || failed || next_job >= jobs.size()) {
                     return;
                 }
-                n = next_job++;
+                n = start_order[next_job++];
             }
 
             Outcome outcome;
