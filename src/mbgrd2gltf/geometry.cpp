@@ -54,27 +54,38 @@ static std::string ecef_text(double value) {
   return text.str();
 }
 
+// Mean of the valid (non-NaN) altitudes of the grid, in meters.
+static double mean_altitude(const Bathymetry& bathymetry) {
+  const auto& altitudes = bathymetry.altitudes();
+  double altitude_sum = 0.0;
+  size_t altitude_count = 0;
+  for (size_t y = 0; y < altitudes.size_y(); ++y) {
+    for (size_t x = 0; x < altitudes.size_x(); ++x) {
+      float altitude = altitudes.at(x, y);
+      if (!std::isnan(altitude)) {
+        altitude_sum += altitude;
+        altitude_count++;
+      }
+    }
+  }
+  return (altitude_count > 0) ? (altitude_sum / altitude_count) : 0.0;
+}
+
 Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
+  // Vertical exaggeration scales the relief about the mean altitude of the grid,
+  // so the model stays where it is. Scaling the altitude itself would also move
+  // the whole model by (exaggeration - 1) times its depth, away from the GeoOrigin
+  // and from the viewpoint, which is set from the unexaggerated mean altitude.
+  const double reference_altitude = mean_altitude(bathymetry);
+
   // Apply GeoOrigin offset
   if (options.is_geoorigin_auto()) {
     // Automatic GeoOrigin: use geographic center of grid
     double geoorigin_lon = (bathymetry.longitude_min() + bathymetry.longitude_max()) / 2.0;
     double geoorigin_lat = (bathymetry.latitude_min() + bathymetry.latitude_max()) / 2.0;
     
-    // Compute mean altitude from valid altitude values
-    const auto& altitudes = bathymetry.altitudes();
-    double altitude_sum = 0.0;
-    size_t altitude_count = 0;
-    for (size_t y = 0; y < altitudes.size_y(); ++y) {
-      for (size_t x = 0; x < altitudes.size_x(); ++x) {
-        float altitude = altitudes.at(x, y);
-        if (!std::isnan(altitude)) {
-          altitude_sum += altitude;
-          altitude_count++;
-        }
-      }
-    }
-    double geoorigin_elev = (altitude_count > 0) ? (altitude_sum / altitude_count) : 0.0;
+    // The automatic GeoOrigin elevation is the mean altitude of the valid grid values
+    double geoorigin_elev = reference_altitude;
     
     LOG_INFO("Using automatic GeoOrigin (grid center):", geoorigin_lon, ",", geoorigin_lat, ",", geoorigin_elev);
     
@@ -107,7 +118,7 @@ Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
   }
   
   // Generate vertices with GeoOrigin offset applied (or no offset if not set)
-  _vertices = get_vertices(bathymetry, options.exaggeration(), 
+  _vertices = get_vertices(bathymetry, options.exaggeration(), reference_altitude,
                            _geoorigin_x, _geoorigin_y, _geoorigin_z);
   
   size_t valid_vertices = 0;
@@ -118,14 +129,17 @@ Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
   LOG_INFO("Created", Logger::format_with_commas(valid_vertices), "vertices");
 }
 
-double Geometry::to_radians(double degrees) { return degrees * (3.1415926535 / 180.0); }
+// Full double-precision pi. A value truncated to 3.1415926535 is off by 3e-11
+// relative, which at ECEF magnitudes of millions of meters is a few tenths of a
+// millimeter, and the error grows with longitude.
+double Geometry::to_radians(double degrees) { return degrees * (3.14159265358979323846 / 180.0); }
 
 double Geometry::get_longitude(const Bathymetry& bathymetry, size_t x) {
-  return bathymetry.longitude_min() + bathymetry.longitude_spacing() * (double)x;
+  return bathymetry.longitude(x);
 }
 
 double Geometry::get_latitude(const Bathymetry& bathymetry, size_t y) {
-  return bathymetry.latitude_max() - bathymetry.latitude_spacing() * (double)y;
+  return bathymetry.latitude(y);
 }
 
 Geometry::EcefPosition Geometry::get_ecef_position(double longitude, double latitude, double altitude) {
@@ -160,6 +174,7 @@ Vertex Geometry::get_earth_centered_vertex(double longitude, double latitude, do
 }
 
 Matrix<Vertex> Geometry::get_vertices(const Bathymetry& bathymetry, double vertical_exaggeration,
+                                       double reference_altitude,
                                        double geoorigin_x, double geoorigin_y, double geoorigin_z) {
   Matrix<Vertex> out(bathymetry.size_x(), bathymetry.size_y());
   const auto& altitudes = bathymetry.altitudes();
@@ -174,7 +189,9 @@ Matrix<Vertex> Geometry::get_vertices(const Bathymetry& bathymetry, double verti
       if (!std::isnan(altitude)) {
         double longitude = get_longitude(bathymetry, x);
         double latitude = get_latitude(bathymetry, y);
-        double adjusted_altitude = (double)altitude * vertical_exaggeration;
+        double adjusted_altitude = (double)altitude;
+        if (vertical_exaggeration != 1.0)
+          adjusted_altitude = reference_altitude + (adjusted_altitude - reference_altitude) * vertical_exaggeration;
 
         // Keep the ECEF position in double and subtract the GeoOrigin in double.
         // Only the small remainder, within a few kilometers of the GeoOrigin, is
@@ -196,7 +213,7 @@ Matrix<Vertex> Geometry::get_vertices(const Bathymetry& bathymetry, double verti
         out.at(x, y) = Vertex(static_cast<float>(ecef.x - geoorigin_x), 
                               static_cast<float>(ecef.y - geoorigin_y), 
                               static_cast<float>(ecef.z - geoorigin_z), 
-                              this_id - 1);  // same numbering as before: Vertex::index() of the id
+                              this_id);  // ids start at 1; 0 marks "no vertex" (see Vertex::is_valid)
         
         if (!printed_first) {
           if (geoorigin_x != 0.0 || geoorigin_y != 0.0 || geoorigin_z != 0.0) {

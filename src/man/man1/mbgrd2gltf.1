@@ -28,6 +28,8 @@ is a tool designed to convert grid data files (GRD) to Graphics Library Transmis
 .PP
 The output mesh vertices are positioned in an Earth-Centered, Earth-Fixed (ECEF) Cartesian coordinate system with units in meters. ECEF is a 3D right-handed coordinate system with its origin at Earth's center of mass, the Z-axis pointing toward the North Pole, the X-axis intersecting the equator at the prime meridian, and the Y-axis completing the right-handed system at 90 degrees east longitude.
 .PP
+Grid node positions follow GMT conventions: for a gridline-registered grid the nodes lie on the edges of the region and are spaced (max - min) / (N - 1) apart, and for a pixel-registered grid (node_offset = 1) the nodes are at the cell centers. Both the old GMT netCDF layout and netCDF CF grids with x and y coordinate variables are read, with rows running either north to south or south to north.
+.PP
 For improved rendering precision in localized areas, the \fB\-\-geoorigin\fP option allows vertices to be expressed as offsets from a local origin point rather than from Earth's center. ECEF coordinates typically have magnitudes on the order of millions of meters, which can cause precision loss when using GPU single-precision floating point arithmetic. By specifying a GeoOrigin near the area of interest, coordinate magnitudes are reduced to thousands of meters, significantly improving rendering quality. The GeoOrigin can be explicitly specified with longitude, latitude, and elevation values, or automatically computed from the grid's geographic center and mean altitude. When no GeoOrigin is specified, vertices use the full ECEF coordinates.
 
 .SH MB-SYSTEM AUTHORSHIP
@@ -85,7 +87,7 @@ Specify the output file root. The appropriate file extension (.gltf or .glb) wil
 .B \-\-exaggeration, \-E
 \fINUM\fP
 .br
-Specify the vertical exaggeration factor as a decimal number, which multiplies the vertex altitudes. This can enhance the visibility of topographic features. Default: 1.0 (no exaggeration).
+Specify the vertical exaggeration factor as a decimal number. The relief is scaled about the mean altitude of the grid, so the model stays in place and each altitude's distance from the mean is multiplied by the factor. This can enhance the visibility of topographic features. The result does not depend on the GeoOrigin. Default: 1.0 (no exaggeration).
 
 .TP
 .B \-\-geoorigin, \-G

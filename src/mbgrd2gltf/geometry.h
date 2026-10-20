@@ -79,6 +79,7 @@ private: // methods
   static Vertex get_earth_centered_vertex(double longitude, double latitude, double altitude,
                                           uint32_t id);
   static Matrix<Vertex> get_vertices(const Bathymetry& bathymetry, double vertical_exaggeration,
+                                     double reference_altitude,
                                      double geoorigin_x, double geoorigin_y, double geoorigin_z);
 
 public: // methods

@@ -101,6 +101,18 @@ target_link_libraries(mbgrd2gltf
 	PRIVATE ${CMAKE_DL_LIBS}
 )
 
+# Regression test for the vertex geometry (no Draco or glTF code is needed).
+if(buildTests)
+	add_executable(mbgrd2gltf_test_geometry
+		tests/test_geometry.cpp bathymetry.cpp geometry.cpp logger.cpp options.cpp)
+	target_include_directories(mbgrd2gltf_test_geometry
+		PRIVATE ${NetCDF_INCLUDE_DIRS}
+		PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	target_link_libraries(mbgrd2gltf_test_geometry PRIVATE ${NetCDF_LIBRARIES})
+	add_test(NAME mbgrd2gltf_geometry COMMAND mbgrd2gltf_test_geometry)
+endif()
+
 install(TARGETS mbgrd2gltf
 	DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

@@ -115,7 +115,7 @@ void print_help() {
   std::cout << "  --input, -I FILE              Input GMT GRD format bathymetry grid file (required)\n";
   std::cout << "  --binary, -B                  Output in binary glTF (GLB) format\n";
   std::cout << "  --output, -O ROOT             Output file root [default: input file basename]\n";
-  std::cout << "  --exaggeration, -E NUM        Vertical exaggeration factor [default: 1.0]\n";
+  std::cout << "  --exaggeration, -E NUM        Vertical exaggeration factor, applied about the grid's mean altitude [default: 1.0]\n";
   std::cout << "  --geoorigin, -G [LON,LAT,EL]  GeoOrigin for high-precision local coordinates\n";
   std::cout << "                                  With values: use specified lon,lat,elev\n";
   std::cout << "                                  Without values: use grid center and mean altitude\n";

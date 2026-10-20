@@ -41,6 +41,7 @@
 // standard library
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace mbgrd2gltf {
 class Bathymetry {
@@ -73,6 +74,15 @@ private: // members
   unsigned int _dimension[2];
   size_t _length[2];
 
+  // Where each grid node is: the longitude of column c is _first_longitude +
+  // c * _longitude_step, and the latitude of row r is _first_latitude + r *
+  // _latitude_step. The steps are signed, so rows may run south to north or the
+  // other way. _spacing is their magnitude.
+  double _first_longitude;
+  double _longitude_step;
+  double _first_latitude;
+  double _latitude_step;
+
 private: // methods
   static int get_netcdf_id(const char* filepath);
   static int get_variable_id(int netcdf_id, const char* name);
@@ -86,6 +96,9 @@ private: // methods
                                        size_t* length);
   static void get_variable_uint_array(int netcdf_id, const char* name, unsigned int* out,
                                       size_t* start, size_t* length);
+  static int get_node_offset(int netcdf_id, const char* z_name);
+  void set_node_positions(bool old_gmt_layout, bool has_spacing_variable, int node_offset, size_t columns, size_t rows,
+                          const std::vector<double>& x_values, const std::vector<double>& y_values);
 
 public: // methods
   Bathymetry(const Options& options);
@@ -93,6 +106,18 @@ public: // methods
   Bathymetry(const Bathymetry&) = default;
 
   inline const Matrix<float>& altitudes() const { return _z; }
+  // Longitude and latitude of a grid node, in degrees. Row 0 is the first row of
+  // the z array, whichever way the file orders its rows.
+  inline double longitude(size_t column) const {
+    return _first_longitude + _longitude_step * static_cast<double>(column);
+  }
+  inline double latitude(size_t row) const {
+    return _first_latitude + _latitude_step * static_cast<double>(row);
+  }
+
+  // The extent of the grid as GMT reports it (the region): west and east
+  // longitudes, south and north latitudes, with min less than max. For a
+  // pixel-registered grid this is the edges of the outer cells, not the outer nodes.
   inline double longitude_min() const { return _x_range[0]; }
   inline double longitude_max() const { return _x_range[1]; }
   inline double latitude_min() const { return _y_range[0]; }
