@@ -11,6 +11,7 @@
 #include <iostream>
 #include <numeric>
 #include <set>
+#include <unordered_map>
 #include <utility>
 #include <sstream>
 #include <vector>
@@ -34,8 +35,25 @@ constexpr double maximum_auto_chunk_cells = 512.0;
 // never made smaller than this many halos across, to keep the cost of the
 // halo and padding, which every tile reconstructs again, to a modest factor.
 constexpr double target_tiles_per_thread = 2.0;
+
+// When the level of detail is not given, it is the finest the data supports
+// (twice the point spacing), unless that would need more Poisson cells than this
+// across the survey's bounding box, in which case it is coarsened to fit. Work
+// grows as the cube of the resolution, so a dense survey would otherwise ask for
+// a centimeter-scale cell and run for days. This is only a default: -L is
+// honored as given. The budget is about a quarter of an hour on four threads.
+constexpr double automatic_work_budget_cells = 5.0e8;
+
+// An explicitly requested level of detail that needs more cells than this gets a
+// warning that the run may take hours.
+constexpr double large_run_warning_cells = 2.0e9;
 constexpr double minimum_tile_halos = 4.0;
-constexpr std::size_t maximum_spacing_samples = 8192;
+
+// Point spacing is measured inside blocks of consecutive points: each block is
+// searched in full, and several blocks spread through the dataset are used. A
+// dataset up to the product of the two is searched in one piece.
+constexpr std::size_t spacing_block_size = 16384;
+constexpr std::size_t spacing_block_count = 16;
 
 struct PoissonGridEstimate {
     std::size_t nx = 0;
@@ -82,46 +100,58 @@ GeodeticBounds collected_geodetic_bounds(const CollectedPointCloud &points, cons
     return bounds;
 }
 
-std::vector<Vec3> sampled_positions(const CollectedPointCloud &points, std::size_t maximum_samples) {
-    std::vector<Vec3> positions;
-    if (points.empty() || maximum_samples == 0) {
-        return positions;
-    }
-
-    const std::size_t sample_count = std::min(points.size(), maximum_samples);
-    positions.reserve(sample_count);
-    for (std::size_t i = 0; i < sample_count; i++) {
-        const std::size_t point_index =
-            sample_count == 1 ? 0 : i * (points.size() - 1) / (sample_count - 1);
-        positions.push_back(points[point_index].point);
-    }
-    return positions;
-}
-
-SpacingMetadata estimate_point_spacing(const CollectedPointCloud &points) {
+// Estimates the spacing of the soundings from nearest-neighbor distances.
+//
+// Consecutive soundings are spatially adjacent, since they come from consecutive
+// beams of consecutive pings, so a block of consecutive points holds real
+// neighborhoods and its nearest-neighbor distances are the true local spacing.
+// Searching a subsample spread over the whole dataset instead, as this once did
+// with 8192 points, finds neighbors that are far apart and overstates the
+// spacing by about sqrt(N / 8192), so that a dense survey looked sparse and the
+// reconstruction was far coarser than the data. Soundings from other, overlapping
+// lines are not in the same block, so this is the spacing along one line, which
+// is the conservative choice.
+SpacingMetadata estimate_point_spacing_in_blocks(const CollectedPointCloud &points) {
     SpacingMetadata metadata;
-
-    const std::vector<Vec3> positions = sampled_positions(points, maximum_spacing_samples);
-    metadata.sample_count = positions.size();
-    if (positions.size() < 2) {
+    if (points.size() < 2) {
         return metadata;
     }
 
-    const KDTree tree(positions);
-    std::vector<double> distances;
-    distances.reserve(positions.size());
-
-    for (std::size_t i = 0; i < positions.size(); i++) {
-        const std::vector<KDTree::Neighbor> neighbors = tree.k_nearest(positions[i], 1, i);
-        if (neighbors.empty()) {
-            continue;
-        }
-
-        const double distance_squared = neighbors.front().distance_squared;
-        if (distance_squared > vec3_epsilon * vec3_epsilon) {
-            distances.push_back(std::sqrt(distance_squared));
+    // Blocks of consecutive points: the whole dataset if it is small, otherwise
+    // spacing_block_count blocks spread evenly through it.
+    std::vector<std::pair<std::size_t, std::size_t>> blocks;   // first index, count
+    if (points.size() <= spacing_block_size * spacing_block_count) {
+        blocks.push_back({0, points.size()});
+    }
+    else {
+        for (std::size_t b = 0; b < spacing_block_count; b++) {
+            const std::size_t first = b * (points.size() - spacing_block_size) / (spacing_block_count - 1);
+            blocks.push_back({first, spacing_block_size});
         }
     }
+
+    std::vector<double> distances;
+    for (const auto &block : blocks) {
+        std::vector<Vec3> positions;
+        positions.reserve(block.second);
+        for (std::size_t i = 0; i < block.second; i++) {
+            positions.push_back(points[block.first + i].point);
+        }
+
+        const KDTree tree(positions);
+        for (std::size_t i = 0; i < positions.size(); i++) {
+            const std::vector<KDTree::Neighbor> neighbors = tree.k_nearest(positions[i], 1, i);
+            if (neighbors.empty()) {
+                continue;
+            }
+
+            const double distance_squared = neighbors.front().distance_squared;
+            if (distance_squared > vec3_epsilon * vec3_epsilon) {
+                distances.push_back(std::sqrt(distance_squared));
+            }
+        }
+    }
+    metadata.sample_count = distances.size();
 
     if (distances.empty()) {
         return metadata;
@@ -142,6 +172,36 @@ std::size_t tiles_covering(const Bounds3D &bounds, double tile_size) {
     const double tiles_x = std::floor(bounds.max.x / tile_size) - std::floor(bounds.min.x / tile_size) + 1.0;
     const double tiles_y = std::floor(bounds.max.y / tile_size) - std::floor(bounds.min.y / tile_size) + 1.0;
     return static_cast<std::size_t>(tiles_x * tiles_y);
+}
+
+// The largest vertical extent of the points within any one tile of this size. A
+// tile's Poisson grid is as tall as the relief inside it, not as tall as the whole
+// survey's relief, so using the survey's full depth range makes tiles needlessly
+// small on a sloping seafloor. A sample of the points is enough.
+double tallest_tile(const CollectedPointCloud &points, double tile_size) {
+    constexpr std::size_t maximum_samples = 1000000;
+    const std::size_t stride = std::max<std::size_t>(1, points.size() / maximum_samples);
+
+    std::unordered_map<long long, std::pair<double, double>> extent;
+    for (std::size_t n = 0; n < points.size(); n += stride) {
+        const long long i = static_cast<long long>(std::floor(points[n].point.x / tile_size));
+        const long long j = static_cast<long long>(std::floor(points[n].point.y / tile_size));
+        const long long key = (i << 32) ^ (j & 0xffffffffLL);
+        const double z = points[n].point.z;
+        auto found = extent.find(key);
+        if (found == extent.end()) {
+            extent.emplace(key, std::make_pair(z, z));
+        } else {
+            found->second.first = std::min(found->second.first, z);
+            found->second.second = std::max(found->second.second, z);
+        }
+    }
+
+    double tallest = 0.0;
+    for (const auto &entry : extent) {
+        tallest = std::max(tallest, entry.second.second - entry.second.first);
+    }
+    return tallest;
 }
 
 // Number of tiles of this size that contain points. A survey along a diagonal
@@ -187,6 +247,20 @@ void apply_cell_size_dependent_defaults(Options &options, double cell_size, doub
 }
 
 void print_warnings(const Options &options, const DatalistMetadata &metadata) {
+    if (metadata.automatic_lod_before_limit > 0.0) {
+        LOG_INFO("automatic level of detail raised from", metadata.automatic_lod_before_limit, "m to", options.level_of_detail,
+                 "m to keep the reconstruction within about", automatic_work_budget_cells,
+                 "Poisson cells; use -L to choose the level of detail");
+    }
+
+    if (options.level_of_detail_requested) {
+        const PoissonGridEstimate grid = estimate_poisson_grid(metadata.bounds, options.poisson.cell_size, options.poisson.padding);
+        if (grid.cell_count > large_run_warning_cells) {
+            LOG_WARN("level of detail", options.level_of_detail, "m needs a Poisson cell of", options.poisson.cell_size,
+                     "m, about", grid.cell_count, "cells across the survey; this may take hours, so consider a larger -L");
+        }
+    }
+
     if (!metadata.lod_supported_by_spacing) {
         LOG_WARN("resolved level_of_detail", options.level_of_detail,
                  "m is not supported by the estimated average point spacing", metadata.spacing.average,
@@ -202,18 +276,43 @@ void print_warnings(const Options &options, const DatalistMetadata &metadata) {
 
 } // namespace
 
+SpacingMetadata estimate_point_spacing(const CollectedPointCloud &points) {
+    return estimate_point_spacing_in_blocks(points);
+}
+
 void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata) {
     const double fallback_feature_size =
         options.level_of_detail > vec3_epsilon ? options.level_of_detail : minimum_feature_size;
     const double average_spacing =
         metadata->spacing.average > vec3_epsilon ? metadata->spacing.average : fallback_feature_size;
-    const double desired_feature_size =
+    double desired_feature_size =
         std::clamp(
             options.level_of_detail_requested
                 ? options.level_of_detail
                 : automatic_feature_size_spacing_scale * average_spacing,
             minimum_feature_size,
             maximum_feature_size);
+
+    // The Poisson cell is a quarter of the level of detail, but no finer than half
+    // the point spacing, since the data cannot support more. It is deliberately
+    // not capped at the spacing: oversampled data should be reconstructed at the
+    // level of detail that was asked for, not at the finest scale in the data.
+    const auto cell_for = [&](double feature_size) {
+        return std::max(feature_size / 4.0, average_spacing / 2.0);
+    };
+    const auto grid_cells_for = [&](double feature_size) {
+        const double cell = std::max(cell_for(feature_size), minimum_feature_size * 0.05);
+        const double padding = std::clamp(4.0 * cell, 2.0 * cell, 5.0);
+        return estimate_poisson_grid(metadata->bounds, cell, padding).cell_count;
+    };
+
+    metadata->automatic_lod_before_limit = 0.0;
+    if (!options.level_of_detail_requested && grid_cells_for(desired_feature_size) > automatic_work_budget_cells) {
+        metadata->automatic_lod_before_limit = desired_feature_size;
+        while (grid_cells_for(desired_feature_size) > automatic_work_budget_cells && desired_feature_size < maximum_feature_size) {
+            desired_feature_size = std::min(maximum_feature_size, desired_feature_size * 1.1);
+        }
+    }
 
     options.level_of_detail = desired_feature_size;
 
@@ -222,8 +321,7 @@ void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata)
         options.decimation.cell_size = std::max(0.5 * desired_feature_size, 0.5 * average_spacing);
     }
 
-    const double poisson_cell_size =
-        std::clamp(desired_feature_size / 4.0, average_spacing / 2.0, average_spacing);
+    const double poisson_cell_size = cell_for(desired_feature_size);
     apply_cell_size_dependent_defaults(options, poisson_cell_size, average_spacing);
 
     const double normal_radius =
@@ -297,15 +395,22 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
         tile_size = round_to_cells(options.chunk_size, cell);
     }
     else {
-        // Pick the tile edge so a tile's grid, including its halo and padding,
-        // holds about target_chunk_grid_cells. The survey's full depth range is
-        // used for the vertical extent, which is the worst case for any tile.
-        const double depth_cells = std::ceil((metadata.bounds.size().z + 2.0 * options.poisson.padding) / cell) + 1.0;
-        const double columns = target_chunk_grid_cells / std::max(1.0, depth_cells);
-        const double side_cells = std::floor(std::sqrt(columns));
-        const double margin_cells = 2.0 * (halo + options.poisson.padding) / cell;
-        const double tile_cells = std::clamp(side_cells - margin_cells, minimum_auto_chunk_cells, maximum_auto_chunk_cells);
-        tile_size = tile_cells * cell;
+        // Pick the largest tile whose grid, including its halo and padding, holds
+        // no more than about target_chunk_grid_cells. The grid is as tall as the
+        // tallest relief inside one tile of that size, measured from the points
+        // (or the survey's full depth range if no points are given).
+        const double margin = 2.0 * (halo + options.poisson.padding);
+        const double smallest_tile = minimum_auto_chunk_cells * cell;
+        tile_size = maximum_auto_chunk_cells * cell;
+        while (tile_size > smallest_tile) {
+            const double depth = points != nullptr ? tallest_tile(*points, tile_size) : metadata.bounds.size().z;
+            const double side = (tile_size + margin) / cell + 1.0;
+            const double depth_cells = (depth + 2.0 * options.poisson.padding) / cell + 1.0;
+            if (side * side * depth_cells <= target_chunk_grid_cells) {
+                break;
+            }
+            tile_size = std::max(smallest_tile, round_to_cells(0.85 * tile_size, cell));
+        }
 
         // The memory budget alone can give a few huge tiles, which leaves most
         // threads idle. Shrink the tile until there are enough tiles to keep
@@ -415,7 +520,7 @@ void print_datalist_metadata(const PreprocessedDatalist &preprocessed, const Opt
         estimate_poisson_grid(bounds, options.poisson.cell_size, options.poisson.padding);
 
     std::cout << std::setprecision(10);
-    std::cout << "mbmesh dataset metadata\n";
+    std::cout << "mbmesh dataset information and reconstruction plan\n";
     std::cout << "input:\n";
     std::cout << "  files_read: " << stats.files_read << '\n';
     std::cout << "  soundings_read: " << stats.soundings_read << '\n';

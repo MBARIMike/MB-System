@@ -95,6 +95,10 @@ struct DatalistMetadata {
     std::size_t point_count = 0;
     bool lod_supported_by_spacing = true;
     bool normal_radius_exceeds_feature_limit = false;
+
+    // Set when the automatic level of detail was coarsened to fit the work
+    // budget: the level of detail the data alone would have given, in meters.
+    double automatic_lod_before_limit = 0.0;
 };
 
 struct PreprocessedDatalist {
@@ -114,6 +118,10 @@ ReconstructionOptions reconstruction_options(const Options &options);
 // If points is given, the tile count is taken from the tiles that contain
 // points; otherwise from the survey's bounding box.
 bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const CollectedPointCloud *points = nullptr, std::string *error = nullptr);
+
+// Spacing of the soundings, from nearest-neighbor distances inside blocks of
+// consecutive points (see settings.cpp). Exposed for testing.
+SpacingMetadata estimate_point_spacing(const CollectedPointCloud &points);
 
 void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata);
 bool adjust_poisson_grid_to_budget(Options &options, const DatalistMetadata &metadata, std::string *error = nullptr);

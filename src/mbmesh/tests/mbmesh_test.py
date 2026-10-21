@@ -42,6 +42,32 @@ class MbmeshTest(unittest.TestCase):
     for option in ('--chunk-size', '--chunk <i,j>', '--max-chunks', '--threads'):
       self.assertIn(option, output)
 
+  def testInfoOptionIsDocumented(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--info', output)
+    self.assertNotIn('--metadata', output)
+
+  def testOldMetadataOptionIsRefusedNotIgnored(self):
+    # --metadata was renamed --info. It must not be silently ignored, which
+    # would start a full reconstruction.
+    for option in ('--metadata', '-metadata'):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', option],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+      self.assertNotEqual(proc.returncode, 0, option)
+      output = proc.stdout.decode()
+      self.assertIn('renamed --info', output, option)
+      # it stopped before reading any data
+      self.assertNotIn('reading datalist', output, option)
+
+  def testUnknownOptionsAreRefused(self):
+    proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--bogus'],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+    self.assertNotEqual(proc.returncode, 0)
+    self.assertIn('unrecognized', proc.stdout.decode())
+
   def testHelpDocumentsGeoOrigin(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

@@ -182,6 +182,122 @@ int main() {
         }
     }
 
+    // The point spacing estimate must not depend on how many points there are. It
+    // once used 8192 points spread over the whole dataset, which overstated the
+    // spacing by about sqrt(N / 8192): a million points on a 0.1 m grid looked
+    // like 1.1 m. Points are in ping order, as they are read: rows of beams.
+    for (const int side : {100, 1000}) {
+        CollectedPointCloud grid_points;
+        grid_points.reserve(static_cast<std::size_t>(side) * side);
+        for (int row = 0; row < side; row++) {
+            for (int column = 0; column < side; column++) {
+                grid_points.push_back({Vec3(0.1 * column, 0.1 * row, 0.0), Vec3(0.1 * column, 0.1 * row, 10.0)});
+            }
+        }
+        const SpacingMetadata spacing = estimate_point_spacing(grid_points);
+        std::printf("  %d x %d points on a 0.1 m grid: estimated spacing median %.4f m, average %.4f m\n", side, side, spacing.median, spacing.average);
+        if (!check(spacing.median > 0.095 && spacing.median < 0.105,
+                   "Point spacing should be the true 0.1 m whatever the number of points")) {
+            return 1;
+        }
+    }
+
+    // The Poisson cell follows the requested level of detail. It is no finer than
+    // half the point spacing, but it is not capped at the spacing, so dense data
+    // can still be reconstructed at a coarser level of detail.
+    {
+        DatalistMetadata dense;
+        dense.spacing.average = 0.02;
+        dense.bounds = Bounds3D(Vec3(0.0, 0.0, -1.0), Vec3(20.0, 20.0, 1.0));
+
+        Options coarse;
+        coarse.level_of_detail_requested = true;
+        coarse.level_of_detail = 0.25;
+        apply_spacing_driven_defaults(coarse, &dense);
+        if (!check(nearly_equal(coarse.poisson.cell_size, 0.0625),
+                   "A requested level of detail of 0.25 m should give a 0.0625 m cell even when the points are 0.02 m apart")) {
+            return 1;
+        }
+
+        Options fine;
+        fine.level_of_detail_requested = true;
+        fine.level_of_detail = 0.01;
+        apply_spacing_driven_defaults(fine, &dense);
+        if (!check(nearly_equal(fine.poisson.cell_size, 0.01),
+                   "The cell should not be finer than half the point spacing")) {
+            return 1;
+        }
+    }
+
+    // With no level of detail given, a dense survey is coarsened to a feasible
+    // amount of work; a requested level of detail is honored as given.
+    {
+        DatalistMetadata dense;
+        dense.spacing.average = 0.01;
+        dense.bounds = Bounds3D(Vec3(0.0, 0.0, -30.0), Vec3(150.0, 150.0, 0.0));
+
+        Options automatic;
+        apply_spacing_driven_defaults(automatic, &dense);
+        const double cell = automatic.poisson.cell_size;
+        const double cells = (150.0 / cell + 1.0) * (150.0 / cell + 1.0) * (30.0 / cell + 1.0);
+        std::printf("  dense survey, automatic: level of detail %.3f m, cell %.4f m, about %.2e cells\n", automatic.level_of_detail, cell, cells);
+        if (!check(dense.automatic_lod_before_limit > 0.0 && nearly_equal(dense.automatic_lod_before_limit, 0.02),
+                   "The automatic level of detail should record that it was limited, from twice the spacing") ||
+            !check(automatic.level_of_detail > 0.02, "A dense survey should get a coarser automatic level of detail") ||
+            !check(cells < 6.0e8, "The automatic level of detail should keep the work within the budget")) {
+            return 1;
+        }
+
+        DatalistMetadata dense_requested = dense;
+        Options requested;
+        requested.level_of_detail_requested = true;
+        requested.level_of_detail = 0.05;
+        apply_spacing_driven_defaults(requested, &dense_requested);
+        if (!check(dense_requested.automatic_lod_before_limit == 0.0 && nearly_equal(requested.level_of_detail, 0.05) &&
+                       nearly_equal(requested.poisson.cell_size, 0.0125),
+                   "A requested level of detail should not be limited")) {
+            return 1;
+        }
+    }
+
+    // Tiles are sized from the relief inside a tile, not the survey's full depth
+    // range: on a slope the survey is tall but any one tile is not.
+    {
+        // A 3 km by 200 m survey on a 1:10 slope: 300 m of relief overall, but only
+        // about 10 m in a tile 100 m long.
+        CollectedPointCloud slope;
+        for (int row = 0; row < 100; row++) {
+            for (int column = 0; column < 1500; column++) {
+                const double x = 2.0 * column, y = 2.0 * row;
+                slope.push_back({Vec3(x, y, 0.1 * x), Vec3(x, y, 0.1 * x + 10.0)});
+            }
+        }
+        DatalistMetadata metadata;
+        metadata.spacing.average = 2.0;
+        metadata.bounds = Bounds3D(Vec3(0.0, 0.0, 0.0), Vec3(2998.0, 198.0, 299.8));
+
+        Options options;
+        options.level_of_detail_requested = true;
+        options.level_of_detail = 0.2;
+        apply_spacing_driven_defaults(options, &metadata);
+        options.max_chunks = 1000000;   // force chunking on
+        options.threads = 1;            // so the tile size is set by memory, not by the thread count
+
+        Options from_bounds = options;
+        Options from_points = options;
+        std::string chunk_error;
+        if (!check(resolve_chunking(from_bounds, metadata, nullptr, &chunk_error), "Chunking should resolve from the bounds") ||
+            !check(resolve_chunking(from_points, metadata, &slope, &chunk_error), "Chunking should resolve from the points")) {
+            return 1;
+        }
+        std::printf("  sloping survey: tile %.0f m from the whole depth range, %.0f m from the relief in each tile\n",
+                    from_bounds.chunking.tile_size, from_points.chunking.tile_size);
+        if (!check(from_points.chunking.tile_size > from_bounds.chunking.tile_size,
+                   "Measuring the relief inside tiles should allow larger tiles on a slope")) {
+            return 1;
+        }
+    }
+
     std::printf("Settings defaults and Poisson budget checks passed\n");
     return 0;
 }

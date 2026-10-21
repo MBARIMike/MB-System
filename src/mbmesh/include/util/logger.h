@@ -11,7 +11,7 @@
  *
  * Differences from mbgrd2gltf's logger, on purpose:
  *   - Every level goes to stderr, because mbmesh writes data, such as the
- *     --metadata report, to stdout.
+ *     --info report, to stdout.
  *   - Output is serialized with a mutex, because tiles are reconstructed on
  *     several threads at once.
  *   - There is no capture of messages for an HTML page; mbmesh does not need one.

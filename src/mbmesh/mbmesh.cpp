@@ -395,13 +395,21 @@ Options parse_options(int argc, char **argv) {
         }
     }
 
+    // --metadata was renamed --info. Say so, rather than ignoring an unknown
+    // option and starting a full reconstruction, which can run for hours.
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "--metadata") == 0 || std::strcmp(argv[i], "-metadata") == 0) {
+            LOG_ERROR("the --metadata option has been renamed --info");
+            std::exit(1);
+        }
+    }
+
     static const struct option long_options[] = {
         {"input", required_argument, nullptr, 'I'},
         {"output", required_argument, nullptr, 'O'},
         {"bounds", required_argument, nullptr, 'R'},
         {"lod", required_argument, nullptr, 'L'},
         {"level-of-detail", required_argument, nullptr, 'L'},
-        {"metadata", no_argument, nullptr, 1000},
         {"info", no_argument, nullptr, 1000},
         {"html", no_argument, nullptr, 1001},
         {"local-xyz", no_argument, nullptr, 1002},
@@ -579,7 +587,10 @@ Options parse_options(int argc, char **argv) {
             break;
 
         default:
-            break;
+            // getopt has already named the option. An unknown option must not be
+            // ignored: it could be a mistyped option that changes the result.
+            LOG_ERROR("unrecognized or incomplete option; use -H for usage");
+            std::exit(1);
         }
     }
 
@@ -616,7 +627,7 @@ void print_usage() {
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
     std::cout << "      --max-chunks <n>         Stop after n tiles (for testing)\n";
     std::cout << "      --threads <n>            Tiles reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
-    std::cout << "      --metadata, --info       Print dataset metadata and exit\n";
+    std::cout << "      --info                   Print dataset information and the reconstruction plan, then exit\n";
     std::cout << "  -V, --verbose                Enable progress and diagnostic logging\n";
     std::cout << "  -H, -h, --help               Print this help message\n\n";
     std::cout << "Output options:\n";

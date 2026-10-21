@@ -4,7 +4,7 @@ mbmesh \- reconstruct triangle meshes from swath bathymetry data
 .SH SYNOPSIS
 \fBmbmesh\fR \fB-I\fI datalist\fR [\fB-O\fI outputdir\fR]
 [\fB-R\fI west/east/south/north\fR] [\fB-L\fI meters\fR]
-[\fB--metadata\fR] [\fIoutput options\fR] [\fB-V\fR] [\fB-H\fR]
+[\fB--info\fR] [\fIoutput options\fR] [\fB-V\fR] [\fB-H\fR]
 .SH DESCRIPTION
 .LP
 \fBmbmesh\fR reads swath sonar data through the MB-System datalist
@@ -55,10 +55,17 @@ Restrict accepted soundings to a geographic bounding box in degrees longitude
 and latitude.
 .TP
 .B \-L\fI meters\fR, \fB--lod\fR \fImeters\fR, \fB--level-of-detail\fR \fImeters\fR
-Requested smallest feature size in local meters. If omitted, \fBmbmesh\fR
-derives level of detail from estimated point spacing. The implementation clamps
-the resolved value to a supported range and uses it to derive default
-normal-estimation, Poisson, and trimming parameters.
+Requested smallest feature size in local meters. The Poisson cell is a quarter
+of it, but no finer than half the point spacing, so \fB-L 0.2\fR gives a 5 cm
+cell even where the soundings are much denser. If omitted, \fBmbmesh\fR
+derives level of detail from the measured point spacing (twice the spacing),
+raised if needed to keep the reconstruction within about 500 million Poisson
+cells across the survey, and logs that it did so. A level of detail given here is
+never limited, but a warning is printed when it needs more than about 2 billion
+cells, which may take hours. The implementation clamps the resolved value to a
+supported range and uses it to derive default normal-estimation, Poisson, and
+trimming parameters. Use \fB--info\fR to see the resulting cell size and
+tile plan before running.
 .TP
 .B \--geoorigin [\fIlon,lat,elev\fR], \-G[\fIlon,lat,elev\fR]
 Write vertices as ECEF offsets from a GeoOrigin, with the same syntax and meaning
@@ -98,9 +105,12 @@ output does not depend on it.
 Enable voxel-grid point decimation with the specified cell size in local meters.
 The legacy single-dash form \fB-decimate\fR is also accepted.
 .TP
-.B \--metadata, \--info
-Print dataset metadata and exit before mesh reconstruction. The metadata
-includes input counts, geodetic bounds, and estimated point spacing.
+.B \--info
+Print dataset information and the reconstruction plan, and exit before mesh
+reconstruction. This includes input counts, geodetic bounds, the estimated point
+spacing, and the resulting Poisson cell size, tile plan and cell count. This
+option was called \fB--metadata\fR in earlier versions; \fB--metadata\fR is no
+longer accepted.
 .TP
 .B \-V, \--verbose
 Enable progress and diagnostic logging. Messages use the same line format as
@@ -179,9 +189,9 @@ detail:
 .B mbmesh -Idatalist.mb-1 -R-122.5/-121.8/36.5/37.2 -L 0.5 -V
 .RE
 .LP
-Print dataset metadata without reconstructing a mesh:
+Print dataset information and the reconstruction plan without reconstructing a mesh:
 .RS
-.B mbmesh -Idatalist.mb-1 --metadata
+.B mbmesh -Idatalist.mb-1 --info
 .RE
 .SH OUTPUT FILES
 .LP
@@ -252,7 +262,8 @@ welded, so small steps or cracks can occur where tiles meet.
 .LP
 .B Automatic settings
 .br
-The program estimates point spacing from accepted soundings and derives
+The program estimates point spacing from nearest-neighbor distances inside blocks
+of consecutive soundings, which does not depend on the number of soundings, and derives
 default normal-estimation, screened-Poisson, marching-cubes, and support
 trimming settings from the data and requested level of detail.
 .LP

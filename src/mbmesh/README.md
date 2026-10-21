@@ -60,7 +60,7 @@ Run with a custom output directory, requested level of detail, raw mesh output, 
 Inspect metadata before running the full reconstruction:
 
 ```bash
-./build/src/mbmesh/mbmesh -I datalist.mb-1 --metadata
+./build/src/mbmesh/mbmesh -I datalist.mb-1 --info
 ```
 
 Generate an HTML viewer:
@@ -87,13 +87,13 @@ The page has to be served over HTTP because browsers will not load `mesh.glb` fr
 | `-O`, `--output` | `outputdir` | Output directory. Defaults to `mbmesh_output`. |
 | `-R`, `--bounds` | `west/east/south/north` | Geographic subset bounds in degrees. Use `--bounds=-122.5/-121.8/36.5/37.2` when the west value is negative. |
 | `-G`, `--geoorigin` | `[lon,lat,elev]` | Write GLB vertices as ECEF offsets from a GeoOrigin, as in `mbgrd2gltf`. With a value, all three of lon, lat, elev (degrees, degrees, meters above the ellipsoid) are required. With no value, uses the data-bounds center and mean elevation. Without the option, vertices are absolute ECEF. The value must be attached, as in `mbgrd2gltf`: `--geoorigin=-122.4,36.6,0` or `-G-122.4,36.6,0`. |
-| `-L`, `--lod`, `--level-of-detail` | `meters` | Requested smallest feature size in local meters. If omitted, `mbmesh` derives LOD from estimated point spacing. |
+| `-L`, `--lod`, `--level-of-detail` | `meters` | Requested smallest feature size in local meters; the Poisson cell is a quarter of it, but no finer than half the point spacing. If omitted, `mbmesh` derives LOD from the measured point spacing, coarsened if needed to keep the run within about 500 million cells. |
 | `--chunk-size` | `meters` | Reconstruct in square tiles of about this size (rounded up to whole Poisson cells) instead of one pass. Chunking turns on automatically when a single Poisson grid would exceed about 8 million cells. |
-| `--chunk` | `i,j` | Reconstruct only tile (i,j), for fast testing. Tile (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--metadata` and a verbose run to see tile indices. |
+| `--chunk` | `i,j` | Reconstruct only tile (i,j), for fast testing. Tile (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--info` and a verbose run to see tile indices. |
 | `--max-chunks` | `n` | Stop after n tiles (for testing). |
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
-| `--metadata`, `--info` | none | Read the datalist, print dataset metadata, and exit before mesh reconstruction. |
+| `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
 | `--html`, `-html` | none | Write `mesh.html`, an X3DOM viewer page, and print the command to serve and view it. |
 | `--xyz`, `-xyz` | none | Write both `pointcloud-local.xyz` and `pointcloud-ecef.xyz`. |
 | `--local-xyz`, `-local-xyz` | none | Write `pointcloud-local.xyz`. |
@@ -110,7 +110,7 @@ The page has to be served over HTTP because browsers will not load `mesh.glb` fr
 
 Notes:
 
-- The final `mesh.glb` is always written for successful non-metadata runs.
+- The final `mesh.glb` is always written for successful runs without `--info`.
 - `--xyz` overlaps with `--local-xyz` and `--ecef-xyz`.
 - `--diagnostics` overlaps with `--pointcloud-glb`, `--normal-glb`, and `--origin-glb`.
 - Point decimation is disabled by default and enabled only with `--decimate <meters>`.
@@ -223,12 +223,12 @@ Implemented in:
 - Accepted point count
 - Local 3D bounds
 - Geodetic longitude/latitude bounds
-- Nearest-neighbor spacing statistics
+- Nearest-neighbor spacing statistics. Consecutive soundings are spatially adjacent (consecutive beams of consecutive pings), so spacing is measured inside blocks of consecutive points, 16 blocks of 16,384 points spread through the dataset (the whole dataset if it has fewer than 262,144 points). This is the spacing along a survey line, and it does not depend on how many points there are. An earlier version searched a subsample of 8,192 points spread over the whole dataset, which overstated the spacing by about the square root of the number of points divided by 8,192, so dense surveys looked sparse and were reconstructed far too coarsely.
 
 Use metadata mode to inspect a dataset before reconstruction:
 
 ```bash
-./build/src/mbmesh/mbmesh -I datalist.mb-1 --metadata
+./build/src/mbmesh/mbmesh -I datalist.mb-1 --info
 ```
 
 ### 3. Level of Detail and Automatic Defaults
@@ -239,6 +239,10 @@ Implemented in:
 - `settings.h`
 
 The `-L`, `--lod`, or `--level-of-detail` option is the main user-facing reconstruction control. It represents the requested smallest feature size in local meters. If it is omitted, `mbmesh` derives an automatic LOD from the estimated average point spacing.
+
+The Poisson cell size is a quarter of the level of detail, but no finer than half the point spacing, since the data cannot support more: `cell = max(L / 4, spacing / 2)`. It is not capped at the spacing, so `-L` is honored even when the points are much denser than the level of detail asked for. To match a 5 cm grid, ask for `-L 0.2`.
+
+The automatic level of detail is the finest the data supports, twice the point spacing, unless that would need more than about 500 million Poisson cells across the survey's bounding box, in which case it is raised to fit and an `INFO` message says so. Work grows as the cube of the resolution, so a dense survey would otherwise ask for a centimeter-scale cell and run for days. A level of detail given with `-L` is never limited, but a `WARN` message is printed when it needs more than about 2 billion cells, since that may take hours. `--info` shows the resulting cell size, tile plan and cell count before you commit to a run.
 
 `settings.cpp` clamps the resolved level of detail to the supported range and derives:
 
@@ -403,10 +407,10 @@ How it works:
 - **Shared grid lattice.** Every tile's Poisson grid is snapped to the same global lattice of cell-size steps, so neighboring tiles share grid nodes and their surfaces nearly coincide where they overlap.
 - **Halo.** A tile reads its own points plus a ring of neighboring points, so that points near the tile edge see the neighborhoods a single run would give them. The halo covers the reach of normal splatting or support trimming plus the normal-estimation radius plus a few cells.
 - **Ownership.** After trimming, a tile keeps only triangles whose centroid lies inside its half-open square, so each triangle belongs to exactly one tile and the merged mesh has no overlap.
-- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the tile size so each tile's grid, including halo and padding, is about that size. The survey's full depth range is used for the vertical extent, which is the worst case for any tile. The memory budget alone can give only a few huge tiles, which leaves most threads idle, so the tile is then made smaller until at least two tiles per thread contain points, down to a floor of four halos across (so that the halo and padding, which every tile reconstructs again, stay a modest cost). Asking for more threads therefore gives smaller tiles. An explicit `--chunk-size` is used as given. `--metadata` prints the resulting tile size, halo, grid size, number of tiles with points and thread count.
+- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the tile size so each tile's grid, including halo and padding, is about that size. A tile's grid is as tall as the relief inside it, so the vertical extent is measured from a sample of the points as the tallest relief in any one tile of that size, not the survey's full depth range, which would make tiles needlessly small on a sloping seafloor. The memory budget alone can give only a few huge tiles, which leaves most threads idle, so the tile is then made smaller until at least two tiles per thread contain points, down to a floor of four halos across (so that the halo and padding, which every tile reconstructs again, stay a modest cost). Asking for more threads therefore gives smaller tiles. An explicit `--chunk-size` is used as given. `--info` prints the resulting tile size, halo, grid size, number of tiles with points and thread count.
 - **Threads.** Tiles are independent, so several are reconstructed at once (`--threads`). The tiles with the most points are started first, so the last tiles to start are the small ones and the threads finish together. Results are delivered in tile order, so the output does not depend on the thread count or the start order.
 
-Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 m) at `-L 2`, a single run took 207 s and 1.4 GB. Tiled with 10 m tiles, it took 254 s on one thread and 69 s on four threads at a peak of 0.76 GB, with 151,057 triangles against 151,148 for the single run. The median distance from a tiled vertex to the nearest single-run vertex was 4.9 cm, about the vertex spacing. At the default level of detail (a 0.098 m cell, about 102 million cells for the whole survey, which a single run refuses to attempt) automatic chunking produced 20 tiles of about 8.3 m and 528,208 triangles in 232 s at a peak of 1.8 GB on four threads. Three survey-edge tiles with fewer than 32 owned points were skipped.
+Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 m) at `-L 2`, a single run took 207 s and 1.4 GB. Tiled with 10 m tiles, it took 254 s on one thread and 69 s on four threads at a peak of 0.76 GB, with 151,057 triangles against 151,148 for the single run. The median distance from a tiled vertex to the nearest single-run vertex was 4.9 cm, about the vertex spacing. At what was then the default level of detail (a 0.098 m cell from a spacing estimate that was too large, about 102 million cells for the whole survey, which a single run refuses to attempt) automatic chunking produced 20 tiles of about 8.3 m and 528,208 triangles in 232 s at a peak of 1.8 GB on four threads. Three survey-edge tiles with fewer than 32 owned points were skipped.
 
 On the same file at `-L 2` with automatic tiling, 4 threads took 66 s for 8 tiles with points, 8 threads 45 s for 16 tiles, and 12 threads 48 s for 20 tiles, so beyond about 8 threads the gain stops.
 
@@ -563,7 +567,7 @@ DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chun
 
 A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s`, `[reconstruction] completed in 1 min 7.5 s on 4 threads`, `[complete] ..., total 1 min 9.0 s`). With `-V` each stage of each tile also reports its own time, which shows where the time goes.
 
-By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each tile (the tile name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--metadata` report. Output is serialized, so lines from tiles reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
+By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each tile (the tile name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--info` report. Output is serialized, so lines from tiles reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
 
 ## Development Notes
 
