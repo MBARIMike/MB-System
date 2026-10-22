@@ -90,8 +90,7 @@ Specify the output file root. The appropriate file extension (.gltf or .glb) wil
 Specify the vertical exaggeration factor as a decimal number. The relief is scaled about the mean altitude of the grid, so the model stays in place and each altitude's distance from the mean is multiplied by the factor. This can enhance the visibility of topographic features. The result does not depend on the GeoOrigin. Default: 1.0 (no exaggeration).
 
 .TP
-.B \-\-geoorigin, \-G
-[\fB=\fP\fILON,LAT,ELEV\fP]
+.B \-\-geoorigin[=\fILON,LAT,ELEV\fP], \-G[\fILON,LAT,ELEV\fP]
 .br
 Specify a GeoOrigin point for high-precision local coordinates. All vertex coordinates will be expressed as offsets from this origin point in the ECEF coordinate system. This improves rendering precision for localized areas by reducing the magnitude of coordinate values, which helps overcome GPU single-precision floating point limitations.
 .br
@@ -100,6 +99,8 @@ With values (e.g., --geoorigin=-122.0,36.8,-1000): use specified GeoOrigin.
 Without values: automatically compute and use grid center and mean altitude.
 .br
 Not specified: vertices use original ECEF coordinates from Earth's center (default).
+.br
+The value must be attached to the option. For the long form write an equals sign and no spaces, as in --geoorigin=-122.0,36.8,-1000; for the short form put the value directly after -G, as in -G-122.0,36.8,-1000. A value given as a separate argument, such as --geoorigin -122.0,36.8,-1000, is not accepted, and neither is a value with spaces unless it is quoted so that the shell passes it as one argument.
 .br
 GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about 6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to preserve sub-meter detail.
 

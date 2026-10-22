@@ -116,10 +116,14 @@ void print_help() {
   std::cout << "  --binary, -B                  Output in binary glTF (GLB) format\n";
   std::cout << "  --output, -O ROOT             Output file root [default: input file basename]\n";
   std::cout << "  --exaggeration, -E NUM        Vertical exaggeration factor, applied about the grid's mean altitude [default: 1.0]\n";
-  std::cout << "  --geoorigin, -G [LON,LAT,EL]  GeoOrigin for high-precision local coordinates\n";
+  std::cout << "  --geoorigin[=LON,LAT,EL]      GeoOrigin for high-precision local coordinates\n";
+  std::cout << "  -G[LON,LAT,EL]                Short form; the value follows -G with no space\n";
   std::cout << "                                  With values: use specified lon,lat,elev\n";
   std::cout << "                                  Without values: use grid center and mean altitude\n";
   std::cout << "                                  Not specified: original ECEF coordinates (default)\n";
+  std::cout << "                                The value must be attached to the option, with an equals sign and\n";
+  std::cout << "                                no spaces: --geoorigin=-122.0,36.8,-1000 or -G-122.0,36.8,-1000.\n";
+  std::cout << "                                A value in a separate argument is not accepted.\n";
   std::cout << "                                GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about\n";
   std::cout << "                                6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to\n";
   std::cout << "                                preserve sub-meter detail\n";

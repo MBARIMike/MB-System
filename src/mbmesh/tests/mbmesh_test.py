@@ -61,6 +61,18 @@ class MbmeshTest(unittest.TestCase):
       # it stopped before reading any data
       self.assertNotIn('reading datalist', output, option)
 
+  def testGeoOriginValueMustBeAttached(self):
+    # "--geoorigin VALUE" is the option with no value plus a stray argument, which
+    # used to be ignored and gave the automatic GeoOrigin without a word.
+    for value in ('122.4,36.6,0', '-122.4,36.6,0'):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--geoorigin', value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+      self.assertNotEqual(proc.returncode, 0, value)
+      output = proc.stdout.decode()
+      self.assertNotIn('reading datalist', output, value)
+      self.assertTrue('unexpected argument' in output or 'unrecognized' in output, value)
+
   def testUnknownOptionsAreRefused(self):
     proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--bogus'],
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

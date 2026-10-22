@@ -595,7 +595,16 @@ Options parse_options(int argc, char **argv) {
     }
 
     if (options.input_datalist.empty() && optind < argc) {
-        options.input_datalist = argv[optind];
+        options.input_datalist = argv[optind++];
+    }
+
+    // Anything left over was not understood. Ignoring it can silently change the
+    // result: "--geoorigin 122.4,36.6,0" is --geoorigin with no value (the
+    // automatic GeoOrigin) followed by a stray argument.
+    if (optind < argc) {
+        LOG_ERROR("unexpected argument", argv[optind],
+                  "- an option value must be attached to its option, for example --geoorigin=lon,lat,elev or -Glon,lat,elev; use -H for usage");
+        std::exit(1);
     }
 
     return options;
@@ -611,7 +620,7 @@ void print_usage() {
     std::cout << "  -R, --bounds <w/e/s/n>       Geographic bounds in degrees\n";
     std::cout << "  -L, --lod <meters>           Requested smallest feature size; auto if omitted\n";
     std::cout << "      --decimate <meters>      Enable voxel-grid point decimation\n";
-    std::cout << "  -G, --geoorigin [lon,lat,elev]\n";
+    std::cout << "  -G, --geoorigin[=lon,lat,elev]\n";
     std::cout << "                               Write vertices as ECEF offsets from a GeoOrigin, as in mbgrd2gltf\n";
     std::cout << "                                 With values: use the specified lon,lat,elev\n";
     std::cout << "                                 Without values: use the data center and mean elevation\n";
@@ -619,7 +628,9 @@ void print_usage() {
     std::cout << "                               GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about\n";
     std::cout << "                               6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to\n";
     std::cout << "                               preserve sub-meter detail\n";
-    std::cout << "                               The value must be attached: --geoorigin=lon,lat,elev or -Glon,lat,elev\n";
+    std::cout << "                               The value must be attached to the option, with an equals sign and no\n";
+    std::cout << "                               spaces: --geoorigin=-122.4,36.6,0 or -G-122.4,36.6,0. A value in a\n";
+    std::cout << "                               separate argument is not accepted\n";
     std::cout << "      --chunk-size <meters>    Reconstruct in square tiles of about this size, writing tiles/tile_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";

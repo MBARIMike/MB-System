@@ -67,7 +67,7 @@ supported range and uses it to derive default normal-estimation, Poisson, and
 trimming parameters. Use \fB--info\fR to see the resulting cell size and
 tile plan before running.
 .TP
-.B \--geoorigin [\fIlon,lat,elev\fR], \-G[\fIlon,lat,elev\fR]
+.B \--geoorigin[=\fIlon,lat,elev\fR], \-G[\fIlon,lat,elev\fR]
 Write vertices as ECEF offsets from a GeoOrigin, with the same syntax and meaning
 as in \fBmbgrd2gltf\fR. With a value, longitude and latitude in decimal degrees
 and elevation in meters above the WGS84 ellipsoid are all required. With no
@@ -76,8 +76,12 @@ elevation. If the option is not given, vertices are absolute ECEF coordinates.
 GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about 6.4
 million meters) resolves only about 0.5 m; use a GeoOrigin to preserve
 sub-meter detail.
-As in \fBmbgrd2gltf\fR the value must be attached to the option, for example
-\fB--geoorigin=-122.4,36.6,0\fR or \fB-G-122.4,36.6,0\fR. With
+As in \fBmbgrd2gltf\fR the value must be attached to the option: for the long
+form write an equals sign and no spaces, as in \fB--geoorigin=-122.4,36.6,0\fR;
+for the short form put the value directly after \fB-G\fR, as in
+\fB-G-122.4,36.6,0\fR. A value given as a separate argument, such as
+\fB--geoorigin -122.4,36.6,0\fR, is not accepted, and neither is a value with
+spaces unless it is quoted so that the shell passes it as one argument. With
 \fB--html\fR, the viewer page positions the model with GeoOrigin and
 GeoViewpoint nodes.
 .TP
