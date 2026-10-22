@@ -20,6 +20,7 @@
 #include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
 #include "io/glb_writer.h"
+#include "io/track.h"
 #include "io/x3dom_writer.h"
 
 #include "algorithms/point_decimation.h"
@@ -121,6 +122,7 @@ bool write_outputs(
     const CollectedPointCloud &collected_points,
     const CoordinateFrame &frame,
     const OutputPlacement &placement,
+    const std::vector<TrackPoint> &track,
     const Options &options,
     std::string *error);
 
@@ -329,6 +331,7 @@ int main(int argc, char **argv) {
                         << ", pointcloud_glb=" << (options.write_pointcloud_glb ? "enabled" : "disabled")
                         << ", normal_glb=" << (options.write_normal_glb ? "enabled" : "disabled")
                         << ", origin_glb=" << (options.write_origin_glb ? "enabled" : "disabled")
+                        << ", track_glb=" << (options.write_track_glb ? "enabled" : "disabled")
                         << ", raw_mesh_glb=" << (options.write_raw_mesh_glb ? "enabled" : "disabled");
         LOG_DEBUG("[output]", verbose_message.str());
     }
@@ -341,7 +344,7 @@ int main(int argc, char **argv) {
 
     LOG_INFO("[reconstruction]", "completed in " + reconstruction_timer.text() + (options.use_chunking ? " on " + std::to_string(options.chunking.threads) + " threads" : std::string(", single pass")));
 
-    if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, options, &error)) {
+    if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, preprocessed.read_result.track, options, &error)) {
         LOG_ERROR(error);
         return 1;
     }
@@ -380,6 +383,7 @@ Options parse_options(int argc, char **argv) {
         {"-pointcloud-glb", "--pointcloud-glb"},
         {"-normal-glb", "--normal-glb"},
         {"-origin-glb", "--origin-glb"},
+        {"-track-glb", "--track-glb"},
         {"-raw-mesh-glb", "--raw-mesh-glb"},
         {"-decimate", "--decimate"},
         {"-diagnostics", "--diagnostics"},
@@ -426,6 +430,7 @@ Options parse_options(int argc, char **argv) {
         {"chunk", required_argument, nullptr, 1014},
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
+        {"track-glb", no_argument, nullptr, 1017},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -560,6 +565,10 @@ Options parse_options(int argc, char **argv) {
             options.max_chunks = static_cast<std::size_t>(std::strtoull(optarg, nullptr, 10));
             break;
 
+        case 1017:
+            options.write_track_glb = true;
+            break;
+
         case 1016:
             options.threads = static_cast<std::size_t>(std::strtoull(optarg, nullptr, 10));
             break;
@@ -578,6 +587,7 @@ Options parse_options(int argc, char **argv) {
             options.write_pointcloud_glb = true;
             options.write_normal_glb = true;
             options.write_origin_glb = true;
+            options.write_track_glb = true;
             options.write_raw_mesh_glb = true;
             break;
 
@@ -650,6 +660,7 @@ void print_usage() {
     std::cout << "      --pointcloud-glb         Also write pointcloud.glb\n";
     std::cout << "      --normal-glb             Also write normals.glb\n";
     std::cout << "      --origin-glb             Also write origins.glb\n";
+    std::cout << "      --track-glb              Also write track.glb, the sensor track as a 3D line\n";
     std::cout << "      --raw-mesh-glb           Also write raw_mesh.glb before support trimming\n";
     std::cout << "      --diagnostics            Also write pointcloud, normal, and origin GLBs\n";
     std::cout << "      --all-outputs            Write all optional outputs\n\n";
@@ -686,6 +697,7 @@ bool write_outputs(
     const CollectedPointCloud &collected_points,
     const CoordinateFrame &frame,
     const OutputPlacement &placement,
+    const std::vector<TrackPoint> &track,
     const Options &options,
     std::string *error)
 {
@@ -754,6 +766,27 @@ bool write_outputs(
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + origins_glb_path.string());
+    }
+
+    if (options.write_track_glb) {
+        const auto track_glb_path = options.output_directory / "track.glb";
+        // The track must be in exactly the coordinates of mesh.glb, so that the two
+        // overlay: it goes through the same output_position(), with the same frame
+        // and the same GeoOrigin offset (computed once, above), as every mesh.
+        std::vector<std::vector<Vec3>> polylines = split_track(track);
+        std::size_t track_points = 0;
+        for (std::vector<Vec3> &polyline : polylines) {
+            track_points += polyline.size();
+            for (Vec3 &position : polyline) {
+                position = output_position(position, frame, offset);
+            }
+        }
+        if (!write_track_glb_file(track_glb_path, polylines, error)) {
+            return false;
+        }
+        LOG_DEBUG("[output]", "wrote " + track_glb_path.string() + ": " + std::to_string(track.size()) + " pings in " +
+                                  std::to_string(polylines.size()) + " polylines, " +
+                                  std::to_string(track_points) + " points drawn");
     }
 
     if (options.write_raw_mesh_glb) {

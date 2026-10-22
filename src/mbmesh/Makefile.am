@@ -12,6 +12,7 @@ mbmesh_SOURCES = \
 	src/io/coordinate_frame.cpp \
 	src/io/datalist_reader.cpp \
 	src/io/xyz_writer.cpp \
+	src/io/track.cpp \
 	src/io/glb_writer.cpp \
 	src/io/x3dom_writer.cpp \
 	src/algorithms/point_decimation.cpp \

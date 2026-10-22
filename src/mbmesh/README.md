@@ -29,6 +29,7 @@ Optional command-line flags can also write:
 - **`pointcloud.glb`** - diagnostic point-cloud GLB
 - **`normals.glb`** - diagnostic normal-vector GLB
 - **`origins.glb`** - diagnostic sensor-origin ray GLB
+- **`track.glb`** - the sensor track as a 3D line
 - **`mesh.html`** - X3DOM viewer page for `mesh.glb`
 
 ## Quick Start
@@ -102,6 +103,7 @@ The page has to be served over HTTP because browsers will not load `mesh.glb` fr
 | `--pointcloud-glb`, `-pointcloud-glb` | none | Write `pointcloud.glb`. |
 | `--normal-glb`, `-normal-glb` | none | Write `normals.glb`. |
 | `--origin-glb`, `-origin-glb` | none | Write `origins.glb`. |
+| `--track-glb`, `-track-glb` | none | Write `track.glb`, the sensor track as a 3D line. |
 | `--raw-mesh-glb`, `-raw-mesh-glb` | none | Write `raw_mesh.glb`, the untrimmed mesh before support trimming. |
 | `--diagnostics`, `-diagnostics` | none | Write `pointcloud.glb`, `normals.glb`, and `origins.glb`. |
 | `--all-outputs`, `-all-outputs` | none | Write every optional output currently supported. |
@@ -160,6 +162,14 @@ When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is sti
 
 9. **`origins.glb`** - Diagnostic sensor-origin ray GLB
    - Written with `--origin-glb`, `--diagnostics`, or `--all-outputs`
+
+10. **`track.glb`** - The sensor track as a 3D line
+    - Written with `--track-glb` or `--all-outputs`
+    - One position per ping, taken from the navigation and sensor depth that MBIO supplies for the datalist (so processed files and alternate navigation files are used as the datalist specifies), drawn as line segments in the same coordinates as `mesh.glb`, including any `--geoorigin` offset, so the two overlay directly
+    - Only pings that contribute at least one accepted sounding are drawn, so `-R` bounds trim the track to the area of the mesh
+    - The track is broken wherever the swath file changes, the time runs backwards, or the time between two pings is more than ten times the median ping interval of that file, so the lines do not run straight across the turns between survey lines or across gaps in the data
+    - Checked against `mbnavlist` for 1,372 pings of one file: the position and sensor depth of every ping agree to better than 0.1 mm
+    - Checked against `mesh.glb` with an explicit GeoOrigin, the automatic GeoOrigin and none: the track keeps the same position relative to the mesh in all three (identical to 0.1 mm with a GeoOrigin, within 32-bit float resolution, about 0.3 m, without one), and adding each run's GeoOrigin back gives the same absolute ECEF coordinates
 
 ## Pipeline Summary
 
@@ -507,6 +517,7 @@ High-value future work:
 - **include/io/coordinate_frame.h** and **src/io/coordinate_frame.cpp** - Geodetic, ECEF, and local east-north-up conversions
 - **include/io/datalist_reader.h** and **src/io/datalist_reader.cpp** - MB-System datalist and swath reading
 - **include/io/glb_writer.h** and **src/io/glb_writer.cpp** - Mesh, point, normal, and origin-ray GLB writers
+- **include/io/track.h** and **src/io/track.cpp** - Splits the sensor track into lines, breaking it at file changes and gaps
 - **include/io/xyz_writer.h** and **src/io/xyz_writer.cpp** - Local XYZ, ECEF XYZ, and oriented PLY writers
 - **include/io/x3dom_writer.h** and **src/io/x3dom_writer.cpp** - HTML/X3DOM viewer writer
 
@@ -516,6 +527,7 @@ High-value future work:
 - **tests/test_normal_estimation.cpp** - Normal-estimation test program
 - **tests/test_support_trimming.cpp** - Support-trimming test program
 - **tests/test_chunking.cpp** - Chunked reconstruction test (accuracy, coverage, ownership, thread-count independence) on a synthetic surface
+- **tests/test_track.cpp** - Track splitting and track GLB writer tests
 - **tests/test_coordinate_frame.cpp** - Geodetic/ECEF/local frame conversion tests
 - **tests/synthetic_data.h** and **tests/perlin_noise.h** - Synthetic test data helpers
 

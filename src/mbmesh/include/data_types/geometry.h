@@ -9,6 +9,14 @@ struct CollectedPoint {
     Vec3 origin;
 };
 
+// The sensor position of one ping, for drawing the track. Only pings that
+// contribute at least one accepted sounding are recorded.
+struct TrackPoint {
+    double time = 0.0;          // seconds, as MBIO reports it
+    Vec3 position;              // sensor position; local frame once reading is complete
+    std::size_t segment = 0;    // index of the swath file the ping came from
+};
+
 struct OrientedPoint {
     Vec3 point;
     Vec3 normal;

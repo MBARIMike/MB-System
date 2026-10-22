@@ -532,3 +532,42 @@ bool write_origin_ray_lines_glb_file(
         "origin-ray lines",
         error);
 }
+
+bool write_track_glb_file(
+    const std::filesystem::path &path,
+    const std::vector<std::vector<Vec3>> &polylines,
+    std::string *error) {
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    // Each polyline becomes a run of line segments (pairs of vertices).
+    std::vector<Vec3> line_vertices;
+    for (const std::vector<Vec3> &polyline : polylines) {
+        for (std::size_t i = 0; i + 1 < polyline.size(); i++) {
+            line_vertices.push_back(polyline[i]);
+            line_vertices.push_back(polyline[i + 1]);
+        }
+    }
+
+    if (line_vertices.empty()) {
+        set_error(error, "The track has no segments to draw");
+        return false;
+    }
+
+    for (std::size_t i = 0; i < line_vertices.size(); i++) {
+        if (!fits_float_vec3(line_vertices[i])) {
+            set_error(error, "Track position is outside the GLB float range at index " + std::to_string(i));
+            return false;
+        }
+    }
+
+    return write_single_primitive_glb_file(
+        path,
+        line_vertices,
+        TINYGLTF_MODE_LINE,
+        "sensor_track",
+        {1.0, 0.8, 0.0, 1.0},
+        "sensor track",
+        error);
+}

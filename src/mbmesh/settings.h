@@ -32,6 +32,7 @@ struct Options {
     bool write_pointcloud_glb = false;
     bool write_normal_glb = false;
     bool write_origin_glb = false;
+    bool write_track_glb = false;
     bool write_raw_mesh_glb = false;
 
     std::filesystem::path input_datalist;

@@ -15,6 +15,7 @@ set(MBMESH_SOURCES
   src/io/coordinate_frame.cpp
   src/io/datalist_reader.cpp
   src/io/xyz_writer.cpp
+  src/io/track.cpp
   src/io/glb_writer.cpp
   src/io/x3dom_writer.cpp
   src/algorithms/point_decimation.cpp
@@ -92,6 +93,16 @@ if(buildTests)
   target_include_directories(mbmesh_test_chunking PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME mbmesh_chunking COMMAND mbmesh_test_chunking)
+
+  add_executable(mbmesh_test_track
+    tests/test_track.cpp
+    src/io/track.cpp
+    src/io/glb_writer.cpp)
+  target_compile_features(mbmesh_test_track PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_track PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
+  add_test(NAME mbmesh_track COMMAND mbmesh_test_track)
 
   add_executable(mbmesh_test_marching_cubes
     tests/test_marching_cubes.cpp

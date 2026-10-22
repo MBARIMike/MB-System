@@ -27,6 +27,7 @@ struct DatalistReaderStats {
 
 struct DatalistReadResult {
     CollectedPointCloud points;
+    std::vector<TrackPoint> track;   // one per ping that has an accepted sounding, in read order
     CoordinateFrame frame;
     DatalistReaderStats stats;
 };

@@ -166,6 +166,11 @@ Also write \fBnormals.glb\fR, diagnostic normal vectors for smaller datasets.
 Also write \fBorigins.glb\fR, diagnostic sensor-origin rays for smaller
 datasets.
 .TP
+.B \--track-glb
+Also write \fBtrack.glb\fR, the sensor track as a 3D line, with one position per
+ping. The positions are in the same coordinates as \fBmesh.glb\fR, including any
+\fB--geoorigin\fR offset, so the two overlay directly.
+.TP
 .B \--raw-mesh-glb
 Also write \fBraw_mesh.glb\fR, the untrimmed triangle mesh produced by marching
 cubes before support trimming.
@@ -237,6 +242,13 @@ Optional diagnostic normal-vector GLB.
 .TP
 .B origins.glb
 Optional diagnostic sensor-origin-ray GLB.
+.TP
+.B track.glb
+Optional sensor track, drawn as line segments through the sensor position of each
+ping that contributes an accepted sounding. The track is broken where the swath
+file changes, where the time runs backwards, and where the time between two pings
+is more than ten times the median ping interval of the file, so that it does not
+run straight across the turns between survey lines or across gaps in the data.
 .SH PROCESSING NOTES
 .LP
 .B Sounding filtering

@@ -31,6 +31,10 @@ struct ReadContext {
     // Soundings are held as absolute ECEF until the frame origin is known.
     // The centroid is accumulated relative to the first point to keep the
     // sum well conditioned.
+    // Track: the file being read, and whether the current ping is recorded yet.
+    std::size_t file_index = 0;
+    bool ping_recorded = false;
+
     bool has_reference = false;
     Vec3 reference_ecef;
     Vec3 offset_sum;
@@ -91,6 +95,11 @@ bool append_sounding_to_pointcloud(const Ping &ping, const Sounding &sounding, R
     }
 
     const CollectedPoint collected_point = make_collected_point(ping, sounding);
+    if (!context->ping_recorded) {
+        // Held as absolute ECEF, like the points, until the frame is chosen.
+        context->result.track.push_back({ping.timestamp, collected_point.origin, context->file_index});
+        context->ping_recorded = true;
+    }
     if (!context->has_reference) {
         context->reference_ecef = collected_point.point;
         context->has_reference = true;
@@ -140,6 +149,8 @@ bool process_ping(int verbose, double timestamp, double navigation_longitude, do
     constexpr double degrees_to_radians = pi / 180.0;
     const double heading_x = std::sin(heading * degrees_to_radians);
     const double heading_y = std::cos(heading * degrees_to_radians);
+
+    context->ping_recorded = false;
 
     Ping ping;
     ping.timestamp = timestamp;
@@ -380,6 +391,7 @@ bool read_datalist(const std::filesystem::path &path, const DatalistReaderOption
         ++read_result.stats.files_seen;
         char *file = processed_status == MB_PROCESSED_USE ? processed_path : raw_path;
 
+        context.file_index = read_result.stats.files_read;
         if (!read_swath_file(file, format, alternate_navigation_status, alternate_navigation_path, &context, error)) {
             success = false;
             break;
@@ -420,6 +432,10 @@ bool read_datalist(const std::filesystem::path &path, const DatalistReaderOption
     for (CollectedPoint &collected_point : read_result.points) {
         collected_point.point = ecef_to_local(collected_point.point, read_result.frame);
         collected_point.origin = ecef_to_local(collected_point.origin, read_result.frame);
+    }
+
+    for (TrackPoint &track_point : read_result.track) {
+        track_point.position = ecef_to_local(track_point.position, read_result.frame);
     }
 
     *result = std::move(read_result);
