@@ -133,11 +133,16 @@ Every long option in this section also accepts a legacy single-dash form
 compatibility.
 .TP
 .B \--html
-Also write \fBmesh.html\fR, an X3DOM viewer page that references
-\fBmesh.glb\fR, and print the command to serve and view it. \fBmbmesh\fR does
-not start a web server or a browser; run the printed command
-(\fBpython3 -m http.server 8000 --bind 127.0.0.1 --directory\fR \fIoutputdir\fR)
-in a terminal, press Ctrl-C to stop it, and open the printed URL.
+Also write an X3DOM viewer page, in the parent of the output directory and named
+after it (for example \fBmbmesh_output.html\fR beside \fBmbmesh_output\fR), and
+print the command to serve and view it. The page is laid out like the one
+\fBmbgrd2gltf\fR writes: a heads-up display with the navigation mode, the debug
+displays and the view controls, a check box for each GLB, and a panel with the
+processing log of the run (see \fBOUTPUT FILES\fR). \fBmbmesh\fR does not start
+a web server or a browser; run the printed command
+(\fBpython3 -m http.server 8000 --bind 127.0.0.1 --directory\fR \fIwebroot\fR,
+where the web root is the parent of the output directory) in a terminal, press
+Ctrl-C to stop it, and open the printed URL.
 .TP
 .B \--xyz
 Also write both local and ECEF XYZ point cloud files.
@@ -211,6 +216,20 @@ their corresponding output options are supplied.
 Final trimmed triangle mesh in binary glTF format. Vertex positions are ECEF
 coordinates, or ECEF offsets from the GeoOrigin when \fB--geoorigin\fR is
 used. When reconstruction is chunked this is the merged mesh of all tiles.
+.IP
+Every GLB records where it is and how it was made in its glTF \fBasset.extras\fR, in
+three blocks. \fBgeoreference\fR gives the coordinate reference system
+(\fBEPSG:4978\fR), whether the vertices are \fBabsolute\fR or \fBrelativeToCenter\fR,
+the \fBcenter\fR (the GeoOrigin as ECEF meters, with absolute = vertex + center), the same
+point as \fBgeodeticCenter\fR (longitude, latitude, height), the \fBheightReference\fR
+(the ellipsoid) and the \fBextent\fR of the data. \fBprovenance\fR gives the software and
+version, the time of execution (UTC), the command line, working directory, user and host,
+and the input datalist, formats and swath files. \fBMB-System\fR gives what the file holds
+(mesh, tile, track, and so on), the sounding counts, the reconstruction settings and the
+vertical reference. The page written by \fB--html\fR holds the same in X3D
+\fBGeoMetadata\fR and \fBWorldInfo\fR nodes. See \fBsrc/mbmesh/GEOREFERENCE.md\fR for the
+names. The vertical reference has no geoid correction: a sounding's depth, negated, is used
+as a height above the WGS 84 ellipsoid.
 .TP
 .B tiles/tile_I_J.glb
 Written only when reconstruction is chunked: one file per tile, with vertices
@@ -219,10 +238,27 @@ placed exactly as in \fBmesh.glb\fR.
 .B raw_mesh.glb
 Optional untrimmed triangle mesh before support trimming.
 .TP
-.B mesh.html
-Optional X3DOM preview page referencing \fBmesh.glb\fR. When \fB--html\fR is
-used, \fBmbmesh\fR prints the command to serve this page from the output
-directory; browsers will not load \fBmesh.glb\fR from a file URL.
+.B <outputdir>.html
+Optional X3DOM viewer page, written in the parent of the output directory and named
+after it, for example \fBmbmesh_output.html\fR. The parent is the root of the web
+server, so the page refers to its models by paths relative to it, such as
+\fBmbmesh_output/mesh.glb\fR. It is titled with the last three directories of the
+web root, which identify the survey, for example
+\fBOceanImaging2018/20180923d1/multibeam\fR. It is laid out in the style of the page
+\fBmbgrd2gltf\fR writes, with a heads-up display and a Processing Log panel,
+opened with the button at the bottom left, which shows every message of the run
+up to DEBUG level, whether or not \fB-V\fR was used: the command line, the
+settings, the timing of each stage and, when chunking, of each tile. At most
+20,000 messages are kept, and the page says how many were left out. The page is
+written last so that the log is complete.
+.IP
+The page has a check box for every GLB it can show: the .glb files in the output
+directory, with \fBmesh.glb\fR and \fBtrack.glb\fR first, and then the .glb files in the
+web root beside the output directory, such as the product of \fBmbgrd2gltf\fR.
+\fBmesh.glb\fR and \fBtrack.glb\fR are shown when the page opens; the others are
+loaded when first switched on. The tile files are not listed. GLBs from the web
+root line up with the mesh only if they use the same GeoOrigin. Browsers will not
+load GLB files from a file URL, so the page must be served.
 .TP
 .B pointcloud-local.xyz
 Optional XYZ point cloud in the same local Cartesian coordinate frame as

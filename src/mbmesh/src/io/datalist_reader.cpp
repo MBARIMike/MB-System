@@ -1,6 +1,9 @@
 #include "io/datalist_reader.h"
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <system_error>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -319,6 +322,10 @@ bool GeographicBounds::contains(double lon, double lat) const {
     return latitude_in_bounds && longitude_in_bounds;
 }
 
+std::string mbsystem_version() {
+    return MB_VERSION;
+}
+
 bool read_datalist(const std::filesystem::path &path, const DatalistReaderOptions &options, DatalistReadResult *result, std::string *error) {
     if (error != nullptr) {
         error->clear();
@@ -397,6 +404,15 @@ bool read_datalist(const std::filesystem::path &path, const DatalistReaderOption
             break;
         }
 
+        {
+            std::error_code path_error;
+            const std::filesystem::path absolute_file = std::filesystem::absolute(file, path_error);
+            read_result.files.push_back(path_error ? std::string(file) : absolute_file.lexically_normal().string());
+            if (std::find(read_result.formats.begin(), read_result.formats.end(), format) == read_result.formats.end()) {
+                read_result.formats.push_back(format);
+            }
+        }
+
         ++read_result.stats.files_read;
     }
 
@@ -437,6 +453,8 @@ bool read_datalist(const std::filesystem::path &path, const DatalistReaderOption
     for (TrackPoint &track_point : read_result.track) {
         track_point.position = ecef_to_local(track_point.position, read_result.frame);
     }
+
+    std::sort(read_result.formats.begin(), read_result.formats.end());
 
     *result = std::move(read_result);
     return true;

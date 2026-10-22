@@ -412,7 +412,34 @@ bool dracoCompressed(tinygltf::Model& model, const Geometry& geometry, const Opt
 		* @param geometry : The geometry to write
 		* @param options : The options to use for writing the file
 		*/
-void write_gltf(const Geometry& geometry, const Options& options) {
+// The run metadata as glTF extras. Whole numbers are written as integers (1, not 1.0).
+static tinygltf::Value to_gltf_value(const MetaValue& value) {
+  switch (value.type) {
+  case MetaValue::Type::String:
+    return tinygltf::Value(value.text);
+  case MetaValue::Type::Number:
+    if (value.number == std::floor(value.number) && std::fabs(value.number) < 2147483647.0)
+      return tinygltf::Value(static_cast<int>(value.number));
+    return tinygltf::Value(value.number);
+  case MetaValue::Type::Bool:
+    return tinygltf::Value(value.flag);
+  case MetaValue::Type::Array: {
+    tinygltf::Value::Array array;
+    for (const MetaValue& item : value.items)
+      array.push_back(to_gltf_value(item));
+    return tinygltf::Value(array);
+  }
+  case MetaValue::Type::Object: {
+    tinygltf::Value::Object object;
+    for (const auto& member : value.members)
+      object[member.first] = to_gltf_value(member.second);
+    return tinygltf::Value(object);
+  }
+  }
+  return tinygltf::Value();
+}
+
+void write_gltf(const Geometry& geometry, const Options& options, const GridRunInfo& run) {
   // Create vertex buffer and ID-to-offset mapping
   std::unordered_map<uint32_t, size_t> id_to_offset;
   const std::vector<float> master_vertex_buffer = get_vertex_buffer(geometry.vertices(), &id_to_offset);
@@ -546,7 +573,8 @@ void write_gltf(const Geometry& geometry, const Options& options) {
         model.defaultScene = 0;
 
         model.asset.version = "2.0";
-        model.asset.generator = "tinygltf";
+        model.asset.generator = "MB-System mbgrd2gltf";
+        model.asset.extras = to_gltf_value(grid_run_metadata(run));
         model.extensionsUsed.push_back("KHR_draco_mesh_compression");
         model.extensionsRequired.push_back("KHR_draco_mesh_compression");
 
@@ -685,7 +713,8 @@ void write_gltf(const Geometry& geometry, const Options& options) {
   model.scenes.push_back(scene);
   model.defaultScene = 0;
   model.asset.version = "2.0";
-  model.asset.generator = "tinygltf";
+  model.asset.generator = "MB-System mbgrd2gltf";
+  model.asset.extras = to_gltf_value(grid_run_metadata(run));
 
   std::string output_filepath =
       options.output_filepath() + (options.is_binary_output() ? ".glb" : ".gltf");
@@ -709,7 +738,7 @@ void write_gltf(const Geometry& geometry, const Options& options) {
  */
 void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Options& options,
                 const std::string& command_line, const std::string& timestamp,
-                const std::vector<std::string>& log_messages) {
+                const std::vector<std::string>& log_messages, const GridRunInfo& run) {
   
   // Determine the glTF/GLB filename (same as output root + extension)
   std::string model_filename = options.output_filepath();
@@ -942,6 +971,10 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   }
   
   html_file << " geoSystem='\"GD\" \"WE\"'></GeoViewpoint>\n";
+
+  // Documentation of the scene, from the same metadata that is in the glTF extras.
+  write_x3d_metadata(html_file, run.title.empty() ? model_filename : run.title, grid_run_metadata(run),
+                     geo_metadata_summary(run), "        ");
   html_file << "        <transform>\n";
   html_file << "          <Inline id='inline' url='" << model_filename << "' nameSpaceName='gltf' mapDEFToID='true'></Inline>\n";
   html_file << "        </transform>\n";

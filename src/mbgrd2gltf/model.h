@@ -38,16 +38,17 @@
 #include "geometry.h"
 #include "options.h"
 #include "bathymetry.h"
+#include "provenance.h"
 
 #include <vector>
 #include <string>
 
 namespace mbgrd2gltf {
 namespace model {
-void write_gltf(const Geometry& geometry, const Options& options);
+void write_gltf(const Geometry& geometry, const Options& options, const GridRunInfo& run);
 void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Options& options, 
                 const std::string& command_line, const std::string& timestamp,
-                const std::vector<std::string>& log_messages);
+                const std::vector<std::string>& log_messages, const GridRunInfo& run);
 }
 } // namespace mbgrd2gltf
 

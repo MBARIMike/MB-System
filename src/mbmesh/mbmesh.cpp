@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <cstdio>
+#include <ctime>
+#include <unistd.h>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -133,6 +136,7 @@ void print_html_viewer_command(
 // ========================================================================================================
 
 int main(int argc, char **argv) {
+    const std::time_t started_at = std::time(nullptr);
 
     using mbmesh::LogLevel;
     using mbmesh::Logger;
@@ -152,6 +156,23 @@ int main(int argc, char **argv) {
     if (options.help_requested) {
         print_usage();
         return 0;
+    }
+
+    // Keep the log for the processing log in the HTML page.
+    if (options.write_html) {
+        Logger::start_capture();
+    }
+
+    {
+        std::string command_line;
+        for (int i = 0; i < argc; i++) {
+            const std::string argument = argv[i];
+            if (i > 0) {
+                command_line += ' ';
+            }
+            command_line += argument.find(' ') == std::string::npos ? argument : "'" + argument + "'";
+        }
+        LOG_INFO("[command]", command_line);
     }
 
     LOG_INFO("[startup]", "input=" + options.input_datalist.string() + " output=" + options.output_directory.string());
@@ -190,6 +211,17 @@ int main(int argc, char **argv) {
         const GeodeticBounds &bounds = preprocessed.metadata.geodetic_bounds;
         placement.use_geoorigin = resolve_geoorigin(options, preprocessed.metadata, &placement.geoorigin);
 
+        // Viewpoint values follow mbgrd2gltf: center of the bounds, framed to fill a 45 degree view.
+        X3DomGeoOrigin &view = placement.view;
+        view.center_lat = (bounds.min_lat + bounds.max_lat) / 2.0;
+        view.center_lon = (bounds.min_lon + bounds.max_lon) / 2.0;
+        view.mean_elevation = preprocessed.metadata.mean_elevation;
+        constexpr double pi = 3.14159265358979323846;
+        const double lat_extent_m = (bounds.max_lat - bounds.min_lat) * 111000.0;
+        const double lon_extent_m = (bounds.max_lon - bounds.min_lon) * 111000.0 * std::cos(view.center_lat * pi / 180.0);
+        constexpr double field_of_view = 0.785398;
+        view.view_altitude = (std::max(lat_extent_m, lon_extent_m) / 2.0) / std::tan(field_of_view / 2.0);
+
         if (placement.use_geoorigin) {
             std::ostringstream message;
             message << std::fixed << std::setprecision(6)
@@ -197,26 +229,112 @@ int main(int argc, char **argv) {
                                                                        : "using user-specified GeoOrigin: ")
                     << placement.geoorigin.longitude << "," << placement.geoorigin.latitude << ","
                     << std::setprecision(2) << placement.geoorigin.elevation;
-            LOG_DEBUG("[output]", message.str());
+            LOG_INFO("[output]", message.str());
 
-            // Viewpoint values follow mbgrd2gltf: center of the bounds, framed to fill a 45 degree view.
-            X3DomGeoOrigin &view = placement.view;
             view.origin_lat = placement.geoorigin.latitude;
             view.origin_lon = placement.geoorigin.longitude;
             view.origin_elevation = placement.geoorigin.elevation;
-            view.center_lat = (bounds.min_lat + bounds.max_lat) / 2.0;
-            view.center_lon = (bounds.min_lon + bounds.max_lon) / 2.0;
-            view.mean_elevation = preprocessed.metadata.mean_elevation;
-            constexpr double pi = 3.14159265358979323846;
-            const double lat_extent_m = (bounds.max_lat - bounds.min_lat) * 111000.0;
-            const double lon_extent_m = (bounds.max_lon - bounds.min_lon) * 111000.0 * std::cos(view.center_lat * pi / 180.0);
-            constexpr double field_of_view = 0.785398;
-            view.view_altitude = (std::max(lat_extent_m, lon_extent_m) / 2.0) / std::tan(field_of_view / 2.0);
         } else {
             LOG_WARN("no GeoOrigin: GLB vertices are absolute ECEF stored as 32-bit floats (about 0.5 m resolution); "
                         "use --geoorigin to preserve sub-meter detail");
         }
     }
+
+    // The settings the reconstruction will use, for the record.
+    {
+        std::ostringstream settings;
+        settings << std::setprecision(6) << "level of detail " << options.level_of_detail << " m, Poisson cell " << options.poisson.cell_size
+                 << " m, normal radius " << options.normals.search_radius << " m, point spacing " << preprocessed.metadata.spacing.median
+                 << " m (median), " << preprocessed.metadata.point_count << " soundings; ";
+        if (options.use_chunking) {
+            settings << "chunked reconstruction, tile " << options.chunking.tile_size << " m, halo " << options.chunking.halo << " m, "
+                     << options.chunking.threads << " threads";
+        } else {
+            settings << "single-pass reconstruction";
+        }
+        LOG_INFO("[settings]", settings.str());
+    }
+
+    // What is recorded in every GLB and in the HTML page about where the models are
+    // and how they were made. One tree, so that the files cannot disagree.
+    RunInfo run;
+    {
+        const GeodeticBounds &bounds = preprocessed.metadata.geodetic_bounds;
+        const DatalistReadResult &read_result = preprocessed.read_result;
+
+        run.title = viewer_title(viewer_web_root(options.output_directory));
+        run.version = mbsystem_version();
+        {
+            std::string command_line;
+            for (int i = 0; i < argc; i++) {
+                const std::string argument = argv[i];
+                command_line += (i > 0 ? " " : "") + (argument.find(' ') == std::string::npos ? argument : "'" + argument + "'");
+            }
+            run.command_line = command_line;
+        }
+        std::error_code cwd_error;
+        run.working_directory = std::filesystem::current_path(cwd_error).string();
+        run.started_at = iso_utc_time(static_cast<double>(started_at));
+        if (const char *user = std::getenv("USER")) {
+            run.user = user;
+        } else if (const char *user_name = std::getenv("LOGNAME")) {
+            run.user = user_name;
+        }
+        char host[256] = "";
+        if (gethostname(host, sizeof(host) - 1) == 0) {
+            run.host = host;
+        }
+
+        std::error_code absolute_error;
+        const std::filesystem::path datalist = std::filesystem::absolute(options.input_datalist, absolute_error);
+        run.datalist = absolute_error ? options.input_datalist.string() : datalist.lexically_normal().string();
+        run.formats = read_result.formats;
+        run.file_count = read_result.files.size();
+        run.files.assign(read_result.files.begin(), read_result.files.begin() + std::min(read_result.files.size(), maximum_listed_files));
+        run.pings = read_result.stats.pings_read;
+        run.soundings_read = read_result.stats.soundings_read;
+        run.soundings_accepted = read_result.stats.soundings_accepted;
+        run.soundings_flagged = read_result.stats.soundings_flagged;
+        run.soundings_out_of_bounds = read_result.stats.soundings_out_of_bounds;
+        run.bounds_applied = options.use_bounds;
+        run.bounds_west = options.bounds.degrees_W;
+        run.bounds_east = options.bounds.degrees_E;
+        run.bounds_south = options.bounds.degrees_S;
+        run.bounds_north = options.bounds.degrees_N;
+        if (!read_result.track.empty()) {
+            const auto times = std::minmax_element(read_result.track.begin(), read_result.track.end(),
+                                                   [](const TrackPoint &a, const TrackPoint &b) { return a.time < b.time; });
+            run.first_time = iso_utc_time(times.first->time);
+            run.last_time = iso_utc_time(times.second->time);
+        }
+
+        run.geoorigin_mode = !placement.use_geoorigin ? "none" : (options.geoorigin_mode == GeoOriginMode::Auto ? "automatic" : "specified");
+        if (placement.use_geoorigin) {
+            const Vec3 center = geodetic_to_ecef(placement.geoorigin);
+            run.has_center = true;
+            run.center_x = center.x;
+            run.center_y = center.y;
+            run.center_z = center.z;
+            run.center_longitude = placement.geoorigin.longitude;
+            run.center_latitude = placement.geoorigin.latitude;
+            run.center_height = placement.geoorigin.elevation;
+        }
+        run.extent_west = bounds.min_lon;
+        run.extent_south = bounds.min_lat;
+        run.extent_east = bounds.max_lon;
+        run.extent_north = bounds.max_lat;
+        run.mean_elevation = preprocessed.metadata.mean_elevation;
+
+        run.level_of_detail = options.level_of_detail;
+        run.poisson_cell_size = options.poisson.cell_size;
+        run.normal_search_radius = options.normals.search_radius;
+        run.point_spacing = preprocessed.metadata.spacing.median;
+        run.chunked = options.use_chunking;
+        run.tile_size = options.chunking.tile_size;
+        run.halo = options.chunking.halo;
+        run.threads = options.use_chunking ? static_cast<std::size_t>(options.chunking.threads) : 1;
+    }
+    set_glb_run_metadata(run_metadata(run));
 
     CollectedPointCloud collected_points = std::move(preprocessed.read_result.points);
 
@@ -285,7 +403,8 @@ int main(int argc, char **argv) {
         const TileCallback on_tile = [&](TileResult &tile) {
             const std::string tile_name = "tile_" + std::to_string(tile.i) + "_" + std::to_string(tile.j) + ".glb";
             std::string tile_error;
-            if (!write_mesh_glb_file(tiles_directory / tile_name, output_mesh(tile.result.mesh, tile_frame, tile_offset), &tile_error)) {
+            if (!write_mesh_glb_file(tiles_directory / tile_name, output_mesh(tile.result.mesh, tile_frame, tile_offset), &tile_error,
+                                     GlbContent{"tile", "Surface of one reconstruction tile; the tiles together make mesh.glb", true, tile.i, tile.j})) {
                 LOG_WARN(tile_error);
             }
 
@@ -357,7 +476,28 @@ int main(int argc, char **argv) {
     // ====================================================================================================
 
     if (options.write_html) {
-        print_html_viewer_command(options.output_directory, "mesh.html");
+        // Written last so that the processing log in the page holds the whole run.
+        // The page is in the parent of the output directory, so that the parent is the
+        // root of the web server and GLBs beside the output directory can be shown too.
+        const std::filesystem::path web_root = viewer_web_root(options.output_directory);
+        const std::filesystem::path html_path = viewer_page_path(options.output_directory);
+
+        X3DomWriterOptions html_options;
+        html_options.title = viewer_title(web_root);
+        html_options.use_geoorigin = placement.use_geoorigin;
+        html_options.geo = placement.view;
+        html_options.metadata = run_metadata(run);
+        html_options.geo_summary = geo_metadata_summary(run);
+        html_options.models = find_viewer_models(web_root, options.output_directory);
+        html_options.log_messages = Logger::captured_messages();
+        html_options.log_messages_omitted = Logger::captured_omitted();
+        if (!write_glb_x3dom_file(html_path, html_options, &error)) {
+            LOG_ERROR(error);
+            return 1;
+        }
+        LOG_INFO("[html]", "wrote " + html_path.string() + ", showing " + std::to_string(html_options.models.size()) + " GLB files");
+
+        print_html_viewer_command(web_root, html_path.filename().string());
     }
 
     return 0;
@@ -652,7 +792,9 @@ void print_usage() {
     std::cout << "  -V, --verbose                Enable progress and diagnostic logging\n";
     std::cout << "  -H, -h, --help               Print this help message\n\n";
     std::cout << "Output options:\n";
-    std::cout << "      --html                   Also write mesh.html, an X3DOM viewer page, and print the command to view it\n";
+    std::cout << "      --html                   Also write an X3DOM viewer page, with a check box for each GLB and the\n";
+    std::cout << "                               processing log, in the parent of the output directory (for example\n";
+    std::cout << "                               mbmesh_output.html), and print the command to view it\n";
     std::cout << "      --xyz                    Also write local and ECEF XYZ point clouds\n";
     std::cout << "      --local-xyz              Also write pointcloud-local.xyz\n";
     std::cout << "      --ecef-xyz               Also write pointcloud-ecef.xyz\n";
@@ -746,7 +888,8 @@ bool write_outputs(
 
     if (options.write_pointcloud_glb) {
         const auto pointcloud_glb_path = options.output_directory / "pointcloud.glb";
-        if (!write_pointcloud_glb_file(pointcloud_glb_path, output_points(points, frame, offset), error)) {
+        if (!write_pointcloud_glb_file(pointcloud_glb_path, output_points(points, frame, offset), error,
+                                         GlbContent{"pointcloud", "The soundings used for the reconstruction, as points"})) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + pointcloud_glb_path.string());
@@ -754,7 +897,8 @@ bool write_outputs(
 
     if (options.write_normal_glb) {
         const auto normals_glb_path = options.output_directory / "normals.glb";
-        if (!write_normal_lines_glb_file(normals_glb_path, output_oriented_points(oriented_points, frame, offset), 0.25, error)) {
+        if (!write_normal_lines_glb_file(normals_glb_path, output_oriented_points(oriented_points, frame, offset), 0.25, error,
+                                         GlbContent{"normals", "The estimated surface normal at each sounding, as short lines"})) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + normals_glb_path.string());
@@ -762,7 +906,8 @@ bool write_outputs(
 
     if (options.write_origin_glb) {
         const auto origins_glb_path = options.output_directory / "origins.glb";
-        if (!write_origin_ray_lines_glb_file(origins_glb_path, output_collected_points(collected_points, frame, offset), 0.25, error)) {
+        if (!write_origin_ray_lines_glb_file(origins_glb_path, output_collected_points(collected_points, frame, offset), 0.25, error,
+                                         GlbContent{"origin_rays", "A short line from each sounding toward the sensor that measured it"})) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + origins_glb_path.string());
@@ -781,7 +926,8 @@ bool write_outputs(
                 position = output_position(position, frame, offset);
             }
         }
-        if (!write_track_glb_file(track_glb_path, polylines, error)) {
+        if (!write_track_glb_file(track_glb_path, polylines, error,
+                                  GlbContent{"track", "The sensor track, one line per continuous run of pings, in the same coordinates as mesh.glb"})) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + track_glb_path.string() + ": " + std::to_string(track.size()) + " pings in " +
@@ -791,28 +937,19 @@ bool write_outputs(
 
     if (options.write_raw_mesh_glb) {
         const auto raw_mesh_glb_path = options.output_directory / "raw_mesh.glb";
-        if (!write_mesh_glb_file(raw_mesh_glb_path, output_mesh(raw_mesh, frame, offset), error)) {
+        if (!write_mesh_glb_file(raw_mesh_glb_path, output_mesh(raw_mesh, frame, offset), error,
+                                  GlbContent{"raw_mesh", "The reconstructed surface before support trimming"})) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + raw_mesh_glb_path.string());
     }
 
     const auto clean_mesh_glb_path = options.output_directory / "mesh.glb";
-    if (!write_mesh_glb_file(clean_mesh_glb_path, output_mesh(mesh, frame, offset), error)) {
+    if (!write_mesh_glb_file(clean_mesh_glb_path, output_mesh(mesh, frame, offset), error,
+                              GlbContent{"mesh", "The reconstructed seafloor surface"})) {
         return false;
     }
     LOG_DEBUG("[output]", "wrote " + clean_mesh_glb_path.string());
-
-    if (options.write_html) {
-        const auto html_path = options.output_directory / "mesh.html";
-        X3DomWriterOptions html_options;
-        html_options.use_geoorigin = placement.use_geoorigin;
-        html_options.geo = placement.view;
-        if (!write_glb_x3dom_file(html_path, "mesh.glb", html_options, error)) {
-            return false;
-        }
-        LOG_DEBUG("[output]", "wrote " + html_path.string());
-    }
 
     return true;
 }
@@ -823,8 +960,8 @@ void print_html_viewer_command(
     const std::filesystem::path &directory,
     const std::string &html_filename)
 {
-    // The viewer page loads mesh.glb over HTTP, which browsers require for local
-    // files. Rather than starting a server and a browser, which would leave a
+    // The viewer page loads its GLBs over HTTP, which browsers require for local
+    // files. The directory is the web root, the parent of the output directory. Rather than starting a server and a browser, which would leave a
     // process running and hold the port, log the command to run.
     constexpr int port = 8000;
 

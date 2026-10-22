@@ -187,6 +187,7 @@ Bathymetry::Bathymetry(const Options& options) {
   // Follow GMT: the number of columns and rows, the registration (gridline or
   // pixel) and the range or the coordinate variables fix where every node is.
   const int node_offset = get_node_offset(netcdf_id, z_name.c_str());
+  _pixel_registered = node_offset == 1;
   const size_t columns = _dimension[0];
   const size_t rows = _dimension[1];
 

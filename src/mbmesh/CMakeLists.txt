@@ -16,6 +16,7 @@ set(MBMESH_SOURCES
   src/io/datalist_reader.cpp
   src/io/xyz_writer.cpp
   src/io/track.cpp
+  src/io/provenance.cpp
   src/io/glb_writer.cpp
   src/io/x3dom_writer.cpp
   src/algorithms/point_decimation.cpp
@@ -46,6 +47,7 @@ if(buildTests)
     src/algorithms/support_trimming.cpp
     src/algorithms/screened_poisson.cpp
     src/algorithms/marching_cubes.cpp
+    src/io/provenance.cpp
     src/io/glb_writer.cpp)
   target_compile_features(mbmesh_test_support_trimming PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_support_trimming PRIVATE
@@ -97,6 +99,7 @@ if(buildTests)
   add_executable(mbmesh_test_track
     tests/test_track.cpp
     src/io/track.cpp
+    src/io/provenance.cpp
     src/io/glb_writer.cpp)
   target_compile_features(mbmesh_test_track PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_track PRIVATE
@@ -104,9 +107,30 @@ if(buildTests)
     ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
   add_test(NAME mbmesh_track COMMAND mbmesh_test_track)
 
+  add_executable(mbmesh_test_x3dom_writer
+    tests/test_x3dom_writer.cpp
+    src/io/provenance.cpp
+    src/io/x3dom_writer.cpp)
+  target_compile_features(mbmesh_test_x3dom_writer PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_x3dom_writer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mbmesh_x3dom_writer COMMAND mbmesh_test_x3dom_writer)
+
+  add_executable(mbmesh_test_provenance
+    tests/test_provenance.cpp
+    src/io/provenance.cpp
+    src/io/glb_writer.cpp
+    src/io/x3dom_writer.cpp)
+  target_compile_features(mbmesh_test_provenance PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_provenance PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
+  add_test(NAME mbmesh_provenance COMMAND mbmesh_test_provenance)
+
   add_executable(mbmesh_test_marching_cubes
     tests/test_marching_cubes.cpp
     src/algorithms/marching_cubes.cpp
+    src/io/provenance.cpp
     src/io/glb_writer.cpp)
   target_compile_features(mbmesh_test_marching_cubes PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_marching_cubes PRIVATE
@@ -117,6 +141,7 @@ if(buildTests)
   add_executable(mbmesh_test_normal_estimation
     tests/test_normal_estimation.cpp
     src/algorithms/normal_estimation.cpp
+    src/io/provenance.cpp
     src/io/glb_writer.cpp)
   target_compile_features(mbmesh_test_normal_estimation PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_normal_estimation PRIVATE

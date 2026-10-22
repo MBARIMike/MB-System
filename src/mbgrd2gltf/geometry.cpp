@@ -77,6 +77,7 @@ Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
   // the whole model by (exaggeration - 1) times its depth, away from the GeoOrigin
   // and from the viewpoint, which is set from the unexaggerated mean altitude.
   const double reference_altitude = mean_altitude(bathymetry);
+  _reference_altitude = reference_altitude;
 
   // Apply GeoOrigin offset
   if (options.is_geoorigin_auto()) {

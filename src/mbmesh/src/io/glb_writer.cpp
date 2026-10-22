@@ -280,6 +280,65 @@ int add_index_accessor(tinygltf::Model *model, int buffer_view_index, std::size_
     return material;
 }
 
+MetaValue &run_metadata_storage() {
+    static MetaValue metadata;
+    return metadata;
+}
+
+bool &has_run_metadata() {
+    static bool has = false;
+    return has;
+}
+
+[[nodiscard]] tinygltf::Value to_gltf_value(const MetaValue &value) {
+    switch (value.type) {
+    case MetaValue::Type::String:
+        return tinygltf::Value(value.text);
+    case MetaValue::Type::Number:
+        // Whole numbers are written as integers (1, not 1.0), so counts read as counts.
+        if (value.number == std::floor(value.number) && std::fabs(value.number) < 2147483647.0) {
+            return tinygltf::Value(static_cast<int>(value.number));
+        }
+        return tinygltf::Value(value.number);
+    case MetaValue::Type::Bool:
+        return tinygltf::Value(value.flag);
+    case MetaValue::Type::Array: {
+        tinygltf::Value::Array array;
+        for (const MetaValue &item : value.items) {
+            array.push_back(to_gltf_value(item));
+        }
+        return tinygltf::Value(array);
+    }
+    case MetaValue::Type::Object: {
+        tinygltf::Value::Object object;
+        for (const auto &member : value.members) {
+            object[member.first] = to_gltf_value(member.second);
+        }
+        return tinygltf::Value(object);
+    }
+    }
+    return tinygltf::Value();
+}
+
+// Puts the run's georeferencing and provenance, and what this file holds, in asset.extras.
+void apply_asset_extras(tinygltf::Model *model, const GlbContent &content) {
+    if (!has_run_metadata()) {
+        return;
+    }
+
+    MetaValue extras = run_metadata_storage();
+    MetaValue *program = nullptr;
+    for (auto &member : extras.members) {
+        if (member.first == "MB-System") {
+            program = &member.second;
+        }
+    }
+    if (program != nullptr && !content.role.empty()) {
+        program->set("content", content_metadata(content));
+    }
+    model->asset.extras = to_gltf_value(extras);
+}
+
 [[nodiscard]] bool write_single_primitive_glb_file(
     const std::filesystem::path &path,
     const std::vector<Vec3> &vertices,
@@ -287,7 +346,8 @@ int add_index_accessor(tinygltf::Model *model, int buffer_view_index, std::size_
     const std::string &mesh_name,
     const std::array<double, 4> &base_color,
     const std::string &error_context,
-    std::string *error) {
+    std::string *error,
+    const GlbContent &content) {
     if (path.empty()) {
         set_error(error, "GLB output path is empty");
         return false;
@@ -307,6 +367,7 @@ int add_index_accessor(tinygltf::Model *model, int buffer_view_index, std::size_
     tinygltf::Model model;
     model.asset.version = "2.0";
     model.asset.generator = "MB-System mbmesh";
+    apply_asset_extras(&model, content);
 
     tinygltf::Buffer buffer;
     buffer.data = std::move(binary_buffer);
@@ -348,7 +409,17 @@ int add_index_accessor(tinygltf::Model *model, int buffer_view_index, std::size_
 
 } // namespace
 
-bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, std::string *error) {
+void set_glb_run_metadata(const MetaValue &run_metadata) {
+    run_metadata_storage() = run_metadata;
+    has_run_metadata() = true;
+}
+
+void clear_glb_run_metadata() {
+    run_metadata_storage() = MetaValue();
+    has_run_metadata() = false;
+}
+
+bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, std::string *error, const GlbContent &content) {
     if (error != nullptr) {
         error->clear();
     }
@@ -389,6 +460,7 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
     tinygltf::Model model;
     model.asset.version = "2.0";
     model.asset.generator = "MB-System mbmesh";
+    apply_asset_extras(&model, content);
 
     tinygltf::Buffer buffer;
     buffer.data = std::move(binary_buffer);
@@ -446,7 +518,7 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
     return true;
 }
 
-bool write_pointcloud_glb_file(const std::filesystem::path &path, const PointCloud &pointcloud, std::string *error) {
+bool write_pointcloud_glb_file(const std::filesystem::path &path, const PointCloud &pointcloud, std::string *error, const GlbContent &content) {
     if (error != nullptr) {
         error->clear();
     }
@@ -458,14 +530,16 @@ bool write_pointcloud_glb_file(const std::filesystem::path &path, const PointClo
         "point_cloud",
         {1.0, 0.45, 0.0, 1.0},
         "point cloud",
-        error);
+        error,
+        content);
 }
 
 bool write_normal_lines_glb_file(
     const std::filesystem::path &path,
     const OrientedPointCloud &pointcloud,
     double line_length,
-    std::string *error) {
+    std::string *error,
+    const GlbContent &content) {
     if (error != nullptr) {
         error->clear();
     }
@@ -494,14 +568,16 @@ bool write_normal_lines_glb_file(
         "normal_lines",
         {0.0, 0.75, 1.0, 1.0},
         "normal lines",
-        error);
+        error,
+        content);
 }
 
 bool write_origin_ray_lines_glb_file(
     const std::filesystem::path &path,
     const CollectedPointCloud &pointcloud,
     double line_length,
-    std::string *error) {
+    std::string *error,
+    const GlbContent &content) {
     if (error != nullptr) {
         error->clear();
     }
@@ -530,13 +606,15 @@ bool write_origin_ray_lines_glb_file(
         "origin_ray_lines",
         {1.0, 0.0, 0.85, 1.0},
         "origin-ray lines",
-        error);
+        error,
+        content);
 }
 
 bool write_track_glb_file(
     const std::filesystem::path &path,
     const std::vector<std::vector<Vec3>> &polylines,
-    std::string *error) {
+    std::string *error,
+    const GlbContent &content) {
     if (error != nullptr) {
         error->clear();
     }
@@ -569,5 +647,6 @@ bool write_track_glb_file(
         "sensor_track",
         {1.0, 0.8, 0.0, 1.0},
         "sensor track",
-        error);
+        error,
+        content);
 }

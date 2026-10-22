@@ -30,7 +30,7 @@ Optional command-line flags can also write:
 - **`normals.glb`** - diagnostic normal-vector GLB
 - **`origins.glb`** - diagnostic sensor-origin ray GLB
 - **`track.glb`** - the sensor track as a 3D line
-- **`mesh.html`** - X3DOM viewer page for `mesh.glb`
+- **`<outputdir>.html`** (for example `mbmesh_output.html`) - X3DOM viewer page for the GLB files, written in the parent of the output directory
 
 ## Quick Start
 
@@ -70,15 +70,15 @@ Generate an HTML viewer:
 ./build/src/mbmesh/mbmesh -I datalist.mb-1 -O ./mbmesh_output --html
 ```
 
-When `--html` is used, `mbmesh` writes `mesh.html` and prints, as a log message, the command to view it. It does not start a server or a browser, so no process is left running and no port is held. Run the printed command in a terminal (Ctrl-C stops it) and open the printed URL:
+When `--html` is used, `mbmesh` writes a viewer page and prints, as a log message, the command to view it. The page is written in the **parent** of the output directory and named after the output directory, for example `mbmesh_output.html` next to `mbmesh_output/`, so that the parent is the root of the web server. It does not start a server or a browser, so no process is left running and no port is held. Run the printed command in a terminal (Ctrl-C stops it) and open the printed URL:
 
 ```text
-mbmesh: [html] to view mesh.html, run this command in a terminal (Ctrl-C stops it), then open the URL:
-mbmesh: [html]   python3 -m http.server 8000 --bind 127.0.0.1 --directory '/path/to/mbmesh_output'
-mbmesh: [html]   http://127.0.0.1:8000/mesh.html
+mbmesh: [html] to view mbmesh_output.html, run this command in a terminal (Ctrl-C stops it), then open the URL:
+mbmesh: [html]   python3 -m http.server 8000 --bind 127.0.0.1 --directory '/path/to/OceanImaging2018/20180923d1/multibeam'
+mbmesh: [html]   http://127.0.0.1:8000/mbmesh_output.html
 ```
 
-The page has to be served over HTTP because browsers will not load `mesh.glb` from a `file://` URL.
+The page has to be served over HTTP because browsers will not load the GLB files from a `file://` URL.
 
 ## Command-Line Interface
 
@@ -95,7 +95,7 @@ The page has to be served over HTTP because browsers will not load `mesh.glb` fr
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
-| `--html`, `-html` | none | Write `mesh.html`, an X3DOM viewer page, and print the command to serve and view it. |
+| `--html`, `-html` | none | Write an X3DOM viewer page, with a heads-up display, a check box for each GLB and the processing log, in the parent of the output directory (`mbmesh_output.html`), and print the command to serve and view it. |
 | `--xyz`, `-xyz` | none | Write both `pointcloud-local.xyz` and `pointcloud-ecef.xyz`. |
 | `--local-xyz`, `-local-xyz` | none | Write `pointcloud-local.xyz`. |
 | `--ecef-xyz`, `-ecef-xyz` | none | Write `pointcloud-ecef.xyz`. |
@@ -127,6 +127,16 @@ Notes:
    - Vertices are ECEF, or ECEF offsets from the GeoOrigin with `--geoorigin`, matching `mbgrd2gltf`
    - Intended for web and desktop GLB viewers
 
+### Georeference and provenance metadata
+
+Every GLB records where it is on the Earth and how it was made in `asset.extras`, in three blocks:
+
+- `georeference` - the coordinate reference system (`EPSG:4978`), whether the vertices are `absolute` or `relativeToCenter`, the `center` (the GeoOrigin as ECEF meters; absolute = vertex + center), the same point as `geodeticCenter` (longitude, latitude, height), the `heightReference` (`ellipsoid`) and the `extent` of the data
+- `provenance` - the software and its version, the time of execution (`startedAtTime`, UTC; linked to W3C PROV-O through a JSON-LD `@context`), the command line, working directory, user and host, and the inputs (datalist, MBIO formats, swath files, first and last ping time)
+- `MB-System` - what this file holds (`content.role`: `mesh`, `tile`, `raw_mesh`, `pointcloud`, `normals`, `origin_rays` or `track`), the sounding counts, the reconstruction settings, and the vertical reference
+
+The viewer page (`--html`) carries the same tree in a `GeoMetadata` node (the `summary` keywords, and the full tree as a `MetadataSet` named `extras`) and a `WorldInfo` node. All are written from one tree, so they cannot disagree. The names are a proposal for other software to adopt, described in [GEOREFERENCE.md](GEOREFERENCE.md), which also lists where each name comes from and what the files do not say (the vertical reference has no geoid correction). `mbgrd2gltf` writes the same blocks.
+
 ### Chunked Output
 
 When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is still written as the merged mesh, and each tile is also written as `tiles/tile_I_J.glb`, with vertices placed exactly as in `mesh.glb`.
@@ -137,10 +147,15 @@ When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is sti
    - Written with `--raw-mesh-glb` or `--all-outputs`
    - Useful for comparing the mesh before and after support trimming
 
-3. **`mesh.html`** - X3DOM viewer page
-   - Written with `--html` or `--all-outputs`
-   - References `mesh.glb`; with `--geoorigin` it places the model with `GeoOrigin` and `GeoViewpoint` nodes as `mbgrd2gltf` does
-   - The command to serve it locally is printed when it is generated; mbmesh does not start a server or browser
+3. **`<outputdir>.html`** - X3DOM viewer page
+   - Written with `--html` or `--all-outputs`, in the parent of the output directory and named after it (`mbmesh_output.html` for `mbmesh_output`). The parent is the web root, so the page refers to its models by paths relative to it (`mbmesh_output/mesh.glb`)
+   - Titled with the last three directories of the web root, which identify the survey, for example `OceanImaging2018/20180923d1/multibeam`
+   - Laid out like the page `mbgrd2gltf` writes: a heads-up display with the navigation mode, the Stats and Log debug displays, and the Show Everything and Reset View buttons, and a **Processing Log** panel, opened with the button at the bottom left, that shows the log of the run
+   - Has a check box, grouped under headings, for every GLB the page can show: first the `.glb` files in the output directory (`mesh.glb`, then `track.glb`, then the others such as `pointcloud.glb`, `normals.glb` or `raw_mesh.glb`), then the `.glb` files in the web root beside the output directory, such as the product of `mbgrd2gltf`. `mesh.glb` and `track.glb` are on when the page opens; the others are off and are not loaded until they are first switched on, so a large file costs nothing until it is wanted. The tile files in `tiles/` are not listed, since they repeat `mesh.glb`. At most 200 models are listed
+   - GLB files from the web root line up with the mesh only if they use the same coordinates: the same GeoOrigin, for `mbgrd2gltf` the same `--geoorigin` value as `mbmesh`. The page says so under that heading
+   - Always has a `GeoViewpoint` over the center of the data; with `--geoorigin` it also declares the `GeoOrigin` that the viewpoint and the vertices are relative to, as `mbgrd2gltf` does
+   - The processing log holds every message of the run, up to `DEBUG` level, whether or not `-V` was used: the command line, the settings (level of detail, Poisson cell size, point spacing, tiling), the timing of each stage and of the whole run, and, per tile when chunking, each stage of each tile. It is capped at 20,000 messages, and the page says how many were left out. The page is written last so that the log is complete
+   - The command to serve the web root is printed when the page is generated; mbmesh does not start a server or browser
 
 4. **`pointcloud-local.xyz`** - Local Cartesian point cloud
    - Written with `--local-xyz`, `--xyz`, or `--all-outputs`
@@ -185,7 +200,7 @@ The current pipeline is orchestrated by `src/mbmesh/mbmesh.cpp`:
    - 5c. Extract a raw mesh with marching cubes.
    - 5d. Trim unsupported mesh regions.
 6. Write `mesh.glb`, per-tile GLBs when chunked, and requested optional outputs.
-7. Print the command to view `mesh.html` if `--html` was requested.
+7. Write the viewer page and print the command to view it if `--html` was requested.
 
 ## Pipeline Details
 
@@ -398,9 +413,9 @@ Implemented in:
 
 `write_outputs()` always writes the final mesh as `mesh.glb`. Other output writers run only when their CLI flags are set.
 
-Local XYZ output writes local reconstruction coordinates. ECEF XYZ and oriented PLY outputs convert local points back through the coordinate frame and then into WGS84 ECEF coordinates. The HTML writer creates a minimal X3DOM page titled `MB-System mbmesh Mesh Viewer`.
+Local XYZ output writes local reconstruction coordinates. ECEF XYZ and oriented PLY outputs convert local points back through the coordinate frame and then into WGS84 ECEF coordinates. The HTML writer creates an X3DOM page in the style of the one `mbgrd2gltf` writes, with the processing log captured from the logger (see "Log Messages").
 
-When `--html` is used, `print_html_viewer_command()` logs the command to serve the output directory (`python3 -m http.server 8000 --bind 127.0.0.1 --directory <absolute outputdir>`) and the URL to open (`http://127.0.0.1:8000/mesh.html`). It does not start the server.
+When `--html` is used, `print_html_viewer_command()` logs the command to serve the web root, the parent of the output directory (`python3 -m http.server 8000 --bind 127.0.0.1 --directory <absolute web root>`), and the URL to open (`http://127.0.0.1:8000/<outputdir>.html`). It does not start the server.
 
 ## Chunked Reconstruction
 
@@ -461,7 +476,7 @@ Important limitations:
 - Normal estimation is sensitive to sparse data, sharp edges, and inconsistent spacing.
 - Support trimming can over-trim when normals or thresholds are poor.
 - Boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
-- Viewing `mesh.html` needs `python3` (or any local web server) and a browser; mbmesh only prints the command.
+- Viewing the page needs `python3` (or any local web server) and a browser; mbmesh only prints the command.
 
 High-value future work:
 
@@ -517,9 +532,10 @@ High-value future work:
 - **include/io/coordinate_frame.h** and **src/io/coordinate_frame.cpp** - Geodetic, ECEF, and local east-north-up conversions
 - **include/io/datalist_reader.h** and **src/io/datalist_reader.cpp** - MB-System datalist and swath reading
 - **include/io/glb_writer.h** and **src/io/glb_writer.cpp** - Mesh, point, normal, and origin-ray GLB writers
+- **include/io/provenance.h** and **src/io/provenance.cpp** - The georeference and provenance metadata tree written to GLB extras and to the page's GeoMetadata and WorldInfo nodes
 - **include/io/track.h** and **src/io/track.cpp** - Splits the sensor track into lines, breaking it at file changes and gaps
 - **include/io/xyz_writer.h** and **src/io/xyz_writer.cpp** - Local XYZ, ECEF XYZ, and oriented PLY writers
-- **include/io/x3dom_writer.h** and **src/io/x3dom_writer.cpp** - HTML/X3DOM viewer writer
+- **include/io/x3dom_writer.h** and **src/io/x3dom_writer.cpp** - HTML/X3DOM viewer writer, in the style of the `mbgrd2gltf` page, with the processing log
 
 ### Tests
 
@@ -527,6 +543,8 @@ High-value future work:
 - **tests/test_normal_estimation.cpp** - Normal-estimation test program
 - **tests/test_support_trimming.cpp** - Support-trimming test program
 - **tests/test_chunking.cpp** - Chunked reconstruction test (accuracy, coverage, ownership, thread-count independence) on a synthetic surface
+- **tests/test_x3dom_writer.cpp** - Viewer page writer tests (controls, GeoOrigin, track checkbox, log escaping)
+- **tests/test_provenance.cpp** - Metadata tests: GLB extras equal the metadata tree, absolute = vertex + center, the page says the same
 - **tests/test_track.cpp** - Track splitting and track GLB writer tests
 - **tests/test_coordinate_frame.cpp** - Geodetic/ECEF/local frame conversion tests
 - **tests/synthetic_data.h** and **tests/perlin_noise.h** - Synthetic test data helpers

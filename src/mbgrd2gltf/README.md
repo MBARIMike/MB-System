@@ -35,6 +35,10 @@ The original gltf-generator program was created for STOQS by a CSUMB Capstone te
 * Jonathan Ramirez-Fausto
 * Tanmay Zende
 
+# Georeference and provenance metadata
+
+The glTF file records where the model is and how it was made in `asset.extras`, in the blocks `georeference` (coordinate reference system `EPSG:4978`, absolute or relative-to-center vertices, the `center` = GeoOrigin as ECEF meters, the same point as `geodeticCenter`, the `heightReference` and the `extent`), `provenance` (linked to W3C PROV-O through a JSON-LD `@context`: software and version, time of execution, command line, working directory, user, host and the input grid) and `MB-System` (grid size, spacing and registration, vertical exaggeration, Draco quantization and the vertical reference). The `--html` page holds the same tree in X3D `GeoMetadata` and `WorldInfo` nodes. The code is in `provenance.h` and `provenance.cpp` and is tested by `tests/test_provenance.cpp`. The names are shared with `mbmesh` and are described in [../mbmesh/GEOREFERENCE.md](../mbmesh/GEOREFERENCE.md). The grid value is used as a height above the WGS 84 ellipsoid, with no geoid correction.
+
 # Dependencies
 
 * netCDF

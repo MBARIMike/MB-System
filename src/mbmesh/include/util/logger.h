@@ -14,7 +14,9 @@
  *     --info report, to stdout.
  *   - Output is serialized with a mutex, because tiles are reconstructed on
  *     several threads at once.
- *   - There is no capture of messages for an HTML page; mbmesh does not need one.
+ *   - Capture, for the processing log in the HTML page, keeps every message up to
+ *     DEBUG whatever the console level is, so the page documents the whole run
+ *     even without -V. It is capped, and says how many messages it left out.
  *
  * It is header-only, using C++17 inline variables.
  */
@@ -27,6 +29,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace mbmesh {
 
@@ -42,9 +45,36 @@ public:
         return level <= current_level();
     }
 
+    // Keep a copy of every message, at any level up to DEBUG, from now on. At most
+    // maximum_messages are kept; the rest are counted and left out.
+    static void start_capture(std::size_t maximum_messages = 20000) {
+        std::lock_guard<std::mutex> lock(output_mutex());
+        capture_state().enabled = true;
+        capture_state().maximum = maximum_messages;
+        capture_state().messages.clear();
+        capture_state().omitted = 0;
+    }
+
+    static std::vector<std::string> captured_messages() {
+        std::lock_guard<std::mutex> lock(output_mutex());
+        return capture_state().messages;
+    }
+
+    // How many messages did not fit under the cap.
+    static std::size_t captured_omitted() {
+        std::lock_guard<std::mutex> lock(output_mutex());
+        return capture_state().omitted;
+    }
+
     template <typename... Args>
     static void log(LogLevel level, const char *file, const char *func, int line, Args &&...args) {
-        if (!should_log(level)) {
+        const bool to_console = should_log(level);
+        bool to_capture = false;
+        {
+            std::lock_guard<std::mutex> lock(output_mutex());
+            to_capture = capture_state().enabled && level != LogLevel::OFF;
+        }
+        if (!to_console && !to_capture) {
             return;
         }
 
@@ -58,7 +88,16 @@ public:
         // One lock and one write per message, so lines from different threads
         // never interleave.
         std::lock_guard<std::mutex> lock(output_mutex());
-        std::cerr << full.str() << std::endl;
+        if (to_console) {
+            std::cerr << full.str() << std::endl;
+        }
+        if (to_capture && capture_state().enabled) {
+            if (capture_state().messages.size() < capture_state().maximum) {
+                capture_state().messages.push_back(full.str());
+            } else {
+                capture_state().omitted++;
+            }
+        }
     }
 
     template <typename... Args>
@@ -85,6 +124,18 @@ private:
     static LogLevel &current_level() {
         static LogLevel level = LogLevel::OFF;
         return level;
+    }
+
+    struct CaptureState {
+        bool enabled = false;
+        std::size_t maximum = 0;
+        std::size_t omitted = 0;
+        std::vector<std::string> messages;
+    };
+
+    static CaptureState &capture_state() {
+        static CaptureState state;
+        return state;
     }
 
     static std::mutex &output_mutex() {

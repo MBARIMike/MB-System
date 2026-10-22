@@ -28,9 +28,14 @@ struct DatalistReaderStats {
 struct DatalistReadResult {
     CollectedPointCloud points;
     std::vector<TrackPoint> track;   // one per ping that has an accepted sounding, in read order
+    std::vector<std::string> files;  // the swath files read, as absolute paths, in read order
+    std::vector<int> formats;        // the MBIO formats of those files, each once, ascending
     CoordinateFrame frame;
     DatalistReaderStats stats;
 };
+
+// The MB-System version these programs were built with, for example "5.8.3beta25".
+[[nodiscard]] std::string mbsystem_version();
 
 [[nodiscard]] bool read_datalist(
     const std::filesystem::path &path,

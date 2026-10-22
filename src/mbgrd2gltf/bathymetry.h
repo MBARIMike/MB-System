@@ -82,6 +82,7 @@ private: // members
   double _longitude_step;
   double _first_latitude;
   double _latitude_step;
+  bool _pixel_registered = false;
 
 private: // methods
   static int get_netcdf_id(const char* filepath);
@@ -124,6 +125,9 @@ public: // methods
   inline double latitude_max() const { return _y_range[1]; }
   inline double longitude_spacing() const { return _spacing[0]; }
   inline double latitude_spacing() const { return _spacing[1]; }
+  // GMT registration: false for gridline (nodes at the grid lines, outer nodes on the region edges),
+  // true for pixel (nodes at the cell centers).
+  inline bool pixel_registered() const { return _pixel_registered; }
   inline size_t size_x() const { return _dimension[0]; }
   inline size_t size_y() const { return _dimension[1]; }
 };

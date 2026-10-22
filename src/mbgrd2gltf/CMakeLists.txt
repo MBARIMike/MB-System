@@ -41,7 +41,7 @@ set(DRACO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/draco")
 set(INCLUDE_DIRS "")
 
 # Set the sources for the executable
-set(SOURCES bathymetry.cpp geometry.cpp logger.cpp main.cpp model.cpp options.cpp)
+set(SOURCES bathymetry.cpp geometry.cpp logger.cpp main.cpp model.cpp options.cpp provenance.cpp)
 
 # Manually set the include directories for Draco and other components
 include_directories(
@@ -111,6 +111,10 @@ if(buildTests)
 	)
 	target_link_libraries(mbgrd2gltf_test_geometry PRIVATE ${NetCDF_LIBRARIES})
 	add_test(NAME mbgrd2gltf_geometry COMMAND mbgrd2gltf_test_geometry)
+
+	add_executable(mbgrd2gltf_test_provenance tests/test_provenance.cpp provenance.cpp)
+	target_include_directories(mbgrd2gltf_test_provenance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+	add_test(NAME mbgrd2gltf_provenance COMMAND mbgrd2gltf_test_provenance)
 endif()
 
 install(TARGETS mbgrd2gltf

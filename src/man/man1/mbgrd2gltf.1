@@ -144,6 +144,20 @@ Enable verbose output showing NetCDF reading details and memory allocation infor
 .B \-\-help, \-H
 Display help message and exit.
 
+.SH GEOREFERENCE AND PROVENANCE METADATA
+The glTF file records where the model is on the Earth and how it was made in its
+\fBasset.extras\fR, in three blocks. \fBgeoreference\fR gives the coordinate reference
+system (\fBEPSG:4978\fR), whether the vertices are \fBabsolute\fR or \fBrelativeToCenter\fR,
+the \fBcenter\fR (the GeoOrigin as ECEF meters, with absolute = vertex + center), the same
+point as \fBgeodeticCenter\fR (longitude, latitude, height), the \fBheightReference\fR (the
+ellipsoid) and the \fBextent\fR of the grid. \fBprovenance\fR gives the software and
+version, the time of execution (UTC), the command line, working directory, user and host,
+and the input grid file. \fBMB-System\fR gives the grid size, spacing and registration, the
+vertical exaggeration, the Draco quantization and the vertical reference. The page written
+by \fB\-\-html\fR holds the same in X3D \fBGeoMetadata\fR and \fBWorldInfo\fR nodes. The
+names are shared with mbmesh(1) and are described in \fBsrc/mbmesh/GEOREFERENCE.md\fR.
+The grid value is used as a height above the WGS 84 ellipsoid, with no geoid correction.
+
 .SH EXAMPLES
 Convert a GMT GRD file to a GLTF file with default settings:
 .RS

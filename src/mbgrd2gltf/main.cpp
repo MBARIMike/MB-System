@@ -49,6 +49,8 @@
 #include "bathymetry.h"
 #include "geometry.h"
 #include "model.h"
+#include "provenance.h"
+#include "mb_define.h"
 
 using namespace mbgrd2gltf;
 
@@ -129,7 +131,79 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    model::write_gltf(geometry, options);
+    // What is recorded in the glTF file and in the page about where the model is and
+    // how it was made. One tree, so that the two cannot disagree.
+    GridRunInfo run;
+    run.program = "mbgrd2gltf";
+    run.version = MB_VERSION;
+    run.command_line = command_line;
+    run.started_at = iso_utc_time(static_cast<double>(std::time(nullptr)));
+    {
+      char cwd[PATH_MAX];
+#ifndef _WIN32
+      if (getcwd(cwd, sizeof(cwd)) != nullptr)
+        run.working_directory = cwd;
+      if (const char* user = std::getenv("USER"))
+        run.user = user;
+      else if (const char* logname = std::getenv("LOGNAME"))
+        run.user = logname;
+      char host[256] = "";
+      if (gethostname(host, sizeof(host) - 1) == 0)
+        run.host = host;
+#else
+      if (const char* user = std::getenv("USERNAME"))
+        run.user = user;
+      if (const char* host = std::getenv("COMPUTERNAME"))
+        run.host = host;
+      (void)cwd;
+#endif
+    }
+    {
+      std::string grid_file = options.input_filepath();
+#ifndef _WIN32
+      char grid_path[PATH_MAX];
+      if (realpath(grid_file.c_str(), grid_path) != nullptr)
+        grid_file = grid_path;
+#endif
+      run.grid_file = grid_file;
+      const size_t slash = grid_file.find_last_of("/\\");
+      run.title = slash == std::string::npos ? grid_file : grid_file.substr(slash + 1);
+    }
+    run.grid_columns = bathymetry.size_x();
+    run.grid_rows = bathymetry.size_y();
+    run.longitude_spacing = bathymetry.longitude_spacing();
+    run.latitude_spacing = bathymetry.latitude_spacing();
+    run.pixel_registered = bathymetry.pixel_registered();
+    run.extent_west = bathymetry.longitude_min();
+    run.extent_east = bathymetry.longitude_max();
+    run.extent_south = bathymetry.latitude_min();
+    run.extent_north = bathymetry.latitude_max();
+    run.mean_altitude = geometry.reference_altitude();
+    if (options.is_geoorigin_auto() || options.is_geoorigin_set()) {
+      run.geoorigin_mode = options.is_geoorigin_set() ? "specified" : "automatic";
+      run.has_center = true;
+      run.center_x = geometry.geoorigin_x();
+      run.center_y = geometry.geoorigin_y();
+      run.center_z = geometry.geoorigin_z();
+      if (options.is_geoorigin_set()) {
+        run.center_longitude = options.geoorigin_lon();
+        run.center_latitude = options.geoorigin_lat();
+        run.center_height = options.geoorigin_elev();
+      } else {
+        run.center_longitude = (bathymetry.longitude_min() + bathymetry.longitude_max()) / 2.0;
+        run.center_latitude = (bathymetry.latitude_min() + bathymetry.latitude_max()) / 2.0;
+        run.center_height = geometry.reference_altitude();
+      }
+    }
+    run.exaggeration = options.exaggeration();
+    run.binary = options.is_binary_output();
+    run.draco = options.is_draco_compressed();
+    run.draco_position_bits = options.draco_quantization(0);
+    run.draco_normal_bits = options.draco_quantization(1);
+    run.draco_texcoord_bits = options.draco_quantization(2);
+    run.draco_color_bits = options.draco_quantization(3);
+
+    model::write_gltf(geometry, options, run);
     
     // Get output file size
     struct stat output_st;
@@ -155,7 +229,7 @@ int main(int argc, char* argv[]) {
       // Get captured log messages for provenance
       const std::vector<std::string>& log_messages = Logger::get_captured_logs();
       
-      model::write_html(bathymetry, geometry, options, command_line, timestamp, log_messages);
+      model::write_html(bathymetry, geometry, options, command_line, timestamp, log_messages, run);
       
       // The viewer page loads the model over HTTP, which browsers require for
       // local files. Log the command to run rather than starting a server, so

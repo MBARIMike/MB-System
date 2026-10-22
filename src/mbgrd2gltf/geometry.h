@@ -70,6 +70,7 @@ private: // members
   double _geoorigin_x = 0.0;
   double _geoorigin_y = 0.0;
   double _geoorigin_z = 0.0;
+  double _reference_altitude = 0.0;
 
 private: // methods
   static double to_radians(double degrees);
@@ -89,6 +90,9 @@ public: // methods
   double geoorigin_x() const { return _geoorigin_x; }
   double geoorigin_y() const { return _geoorigin_y; }
   double geoorigin_z() const { return _geoorigin_z; }
+  // The mean altitude of the valid grid values: the automatic GeoOrigin's height, and the
+  // level that vertical exaggeration is applied about.
+  double reference_altitude() const { return _reference_altitude; }
 };
 } // namespace mbgrd2gltf
 
