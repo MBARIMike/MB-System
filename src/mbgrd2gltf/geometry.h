@@ -76,7 +76,6 @@ private: // methods
   static double to_radians(double degrees);
   static double get_longitude(const Bathymetry& bathymetry, size_t x);
   static double get_latitude(const Bathymetry& bathymetry, size_t y);
-  static EcefPosition get_ecef_position(double longitude, double latitude, double altitude);
   static Vertex get_earth_centered_vertex(double longitude, double latitude, double altitude,
                                           uint32_t id);
   static Matrix<Vertex> get_vertices(const Bathymetry& bathymetry, double vertical_exaggeration,
@@ -84,6 +83,8 @@ private: // methods
                                      double geoorigin_x, double geoorigin_y, double geoorigin_z);
 
 public: // methods
+  // The WGS84 ECEF position of a longitude and latitude in degrees and a height above the ellipsoid in meters.
+  static EcefPosition get_ecef_position(double longitude, double latitude, double altitude);
   Geometry(const Bathymetry& bathymetry, const Options& options);
   const Matrix<Vertex>& vertices() const { return _vertices; }
   const std::vector<Tile>& tiles() const { return _tiles; }

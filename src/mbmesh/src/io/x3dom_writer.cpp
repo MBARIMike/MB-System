@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -265,6 +266,14 @@ constexpr const char *page_script = R"JS(
         document.getElementById('switch_' + index).setAttribute('whichChoice', on ? 0 : -1);
       }
 
+      // Makes one of the page's viewpoints the one in use.
+      function bindViewpoint(id) {
+        var viewpoint = document.getElementById(id);
+        if (viewpoint) {
+          viewpoint.setAttribute('set_bind', 'true');
+        }
+      }
+
       function toggleLogPanel() {
         var panel = document.getElementById('log-panel');
         var btn = document.getElementById('toggle-log-btn');
@@ -346,6 +355,45 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
     return models;
 }
 
+void set_local_viewpoint(X3DomGeoOrigin *geo, const double center_ecef[3], const double origin_ecef[3]) {
+    constexpr double pi = 3.14159265358979323846;
+    const double phi = geo->center_lat * pi / 180.0;
+    const double lambda = geo->center_lon * pi / 180.0;
+
+    // The local east, north and up axes at the center, in ECEF.
+    const double east[3] = {-std::sin(lambda), std::cos(lambda), 0.0};
+    const double north[3] = {-std::sin(phi) * std::cos(lambda), -std::sin(phi) * std::sin(lambda), std::cos(phi)};
+    const double up[3] = {std::cos(phi) * std::cos(lambda), std::cos(phi) * std::sin(lambda), std::sin(phi)};
+
+    for (int i = 0; i < 3; i++) {
+        geo->view_center[i] = center_ecef[i] - origin_ecef[i];
+        geo->view_position[i] = geo->view_center[i] + up[i] * geo->view_altitude;
+    }
+
+    // A viewpoint looks along its -Z with +Y at the top. Making its X east, Y north and
+    // Z up looks straight down with north at the top. The rotation that does that has
+    // east, north and up as its columns; X3D wants it as an axis and an angle.
+    const double r[3][3] = {{east[0], north[0], up[0]}, {east[1], north[1], up[1]}, {east[2], north[2], up[2]}};
+    const double trace = r[0][0] + r[1][1] + r[2][2];
+    const double cosine = std::max(-1.0, std::min(1.0, (trace - 1.0) / 2.0));
+    double angle = std::acos(cosine);
+    double axis[3] = {r[2][1] - r[1][2], r[0][2] - r[2][0], r[1][0] - r[0][1]};
+    double length = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+    if (length < 1.0e-9) {
+        // No rotation, which is not the case at any real location; keep the answer defined.
+        axis[0] = 0.0;
+        axis[1] = 0.0;
+        axis[2] = 1.0;
+        length = 1.0;
+        angle = 0.0;
+    }
+    for (int i = 0; i < 3; i++) {
+        geo->view_axis[i] = axis[i] / length;
+    }
+    geo->view_angle = angle;
+    geo->has_local_view = true;
+}
+
 bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWriterOptions &options, std::string *error) {
     if (error != nullptr) {
         error->clear();
@@ -421,6 +469,17 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "              </select>\n"
            << "            </td>\n"
            << "          </tr>\n"
+           << (geo.has_local_view ? "          <tr>\n"
+                                    "            <td>Viewpoint:\n"
+                                    "            </td>\n"
+                                    "            <td align='right'>\n"
+                                    "              <select style='float:right;' onchange='bindViewpoint(this.value)'>\n"
+                                    "                <option value='OVERVIEW_LOCAL'>Viewpoint (model coordinates)\n                </option>\n"
+                                    "                <option value='OVERVIEW_GEO'>GeoViewpoint (with GeoOrigin)\n                </option>\n"
+                                    "              </select>\n"
+                                    "            </td>\n"
+                                    "          </tr>\n"
+                                  : "")
            << "          <tr>\n"
            << "            <td>Debug Display:\n"
            << "            </td>\n"
@@ -474,13 +533,29 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "    <x3d id='x3dElement' showStat='false' showLog='false' style='width:100%; height:100%; border:0; margin:0; padding:0;'>\n"
            << "      <scene DEF='scene'>\n";
 
-    if (options.use_geoorigin) {
-        output << "        <GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='" << origin_coordinates.str() << "'></GeoOrigin>\n";
+    // Two overview viewpoints, which are meant to show the same view, so that each can be checked
+    // against the other. The first is bound when the page opens. The Viewpoint is in the coordinates
+    // of the models, ECEF minus the GeoOrigin's ECEF position. The GeoViewpoint gives the same place
+    // as a latitude, longitude and elevation, and the GeoOrigin it is relative to is a child node:
+    // geoOrigin is an SFNode field, so X3DOM takes it from a child element and ignores an attribute
+    // that names a DEF, in which case the GeoViewpoint is placed in absolute ECEF, millions of meters
+    // from models that are relative to the GeoOrigin. Page Down steps from one viewpoint to the other.
+    if (geo.has_local_view) {
+        output << std::fixed << std::setprecision(3)
+               << "        <Viewpoint DEF='OVERVIEW_LOCAL' id='OVERVIEW_LOCAL' description='Overview, Viewpoint in model coordinates' position='"
+               << geo.view_position[0] << " " << geo.view_position[1] << " " << geo.view_position[2] << "' orientation='"
+               << std::setprecision(8) << geo.view_axis[0] << " " << geo.view_axis[1] << " " << geo.view_axis[2] << " " << geo.view_angle
+               << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(3) << geo.view_center[0] << " " << geo.view_center[1]
+               << " " << geo.view_center[2] << "'></Viewpoint>\n";
     }
-
-    output << "        <GeoViewpoint DEF='OVERVIEW' position='" << position.str() << "' orientation='1 0 0 -1.5708' fieldOfView='0.785398' "
-           << "centerOfRotation='" << center.str() << "'" << (options.use_geoorigin ? " geoOrigin='GRID_ORIGIN'" : "")
-           << " geoSystem='\"GD\" \"WE\"'></GeoViewpoint>\n";
+    output << "        <GeoViewpoint DEF='OVERVIEW_GEO' id='OVERVIEW_GEO' description='Overview, GeoViewpoint with geoOrigin' position='"
+           << position.str() << "' orientation='1 0 0 -1.5708' fieldOfView='0.785398' centerOfRotation='" << center.str() << "'"
+           << " geoSystem='\"GD\" \"WE\"'>";
+    if (options.use_geoorigin) {
+        output << "\n          <GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='" << origin_coordinates.str()
+               << "'></GeoOrigin>\n        ";
+    }
+    output << "</GeoViewpoint>\n";
 
     // Documentation of the scene, from the same metadata that is in each GLB. The
     // geospatial facts go in the GeoMetadata summary, which takes only the keywords

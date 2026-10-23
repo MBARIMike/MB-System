@@ -813,6 +813,36 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   
   // Orientation: rotate -90 degrees around X axis to look straight down (north up)
   orientation_str << "1 0 0 -1.5708";
+
+  // The same view as a plain Viewpoint, in the coordinates of the model: ECEF minus the GeoOrigin's
+  // ECEF position (the vertices are written that way), or plain ECEF without a GeoOrigin. Above the
+  // center of the grid by view_altitude, looking straight down with north at the top: the rotation
+  // whose columns are the local east, north and up axes, as an axis and an angle.
+  double local_position[3], local_center[3], local_axis[3] = {0.0, 0.0, 1.0}, local_angle = 0.0;
+  {
+    const double phi = center_lat * M_PI / 180.0;
+    const double lambda = center_lon * M_PI / 180.0;
+    const double east[3] = {-std::sin(lambda), std::cos(lambda), 0.0};
+    const double north[3] = {-std::sin(phi) * std::cos(lambda), -std::sin(phi) * std::sin(lambda), std::cos(phi)};
+    const double up[3] = {std::cos(phi) * std::cos(lambda), std::cos(phi) * std::sin(lambda), std::sin(phi)};
+    const Geometry::EcefPosition middle = Geometry::get_ecef_position(center_lon, center_lat, mean_depth);
+    const double origin[3] = {geometry.geoorigin_x(), geometry.geoorigin_y(), geometry.geoorigin_z()};
+    const double middle_ecef[3] = {middle.x, middle.y, middle.z};
+    for (int i = 0; i < 3; i++) {
+      local_center[i] = middle_ecef[i] - origin[i];
+      local_position[i] = local_center[i] + up[i] * view_altitude;
+    }
+    const double trace = east[0] + north[1] + up[2];
+    local_angle = std::acos(std::max(-1.0, std::min(1.0, (trace - 1.0) / 2.0)));
+    double axis[3] = {north[2] - up[1], up[0] - east[2], east[1] - north[0]};
+    const double length = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+    if (length > 1.0e-9) {
+      for (int i = 0; i < 3; i++)
+        local_axis[i] = axis[i] / length;
+    } else {
+      local_angle = 0.0;
+    }
+  }
   
   // Write HTML content
   html_file << "<!DOCTYPE html>\n";
@@ -919,6 +949,18 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "            </td>\n";
   html_file << "          </tr>\n";
   html_file << "          <tr>\n";
+  html_file << "            <td>Viewpoint:\n";
+  html_file << "            </td>\n";
+  html_file << "            <td align='right'>\n";
+  html_file << "              <select style='float:right;' onchange='bindViewpoint(this.value)'>\n";
+  html_file << "                <option value='OVERVIEW_LOCAL'>Viewpoint (model coordinates)\n";
+  html_file << "                </option>\n";
+  html_file << "                <option value='OVERVIEW_GEO'>GeoViewpoint (with GeoOrigin)\n";
+  html_file << "                </option>\n";
+  html_file << "              </select>\n";
+  html_file << "            </td>\n";
+  html_file << "          </tr>\n";
+  html_file << "          <tr>\n";
   html_file << "            <td>Debug Display:\n";
   html_file << "            </td>\n";
   html_file << "            <td align='right'>\n";
@@ -944,33 +986,42 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "    <x3d id='x3dElement' showStat='false' showLog='false' style='width:100%; height:100%; border:0; margin:0; padding:0;'>\n";
   html_file << "      <scene DEF='scene'>\n";
   
-  // Add GeoOrigin if one is being used
+  // Two overview viewpoints, which are meant to show the same view, so that each can be checked
+  // against the other. The first is bound when the page opens. The Viewpoint is in the coordinates
+  // of the model. The GeoViewpoint gives the same place as a latitude, longitude and elevation, and
+  // the GeoOrigin it is relative to is a child node: geoOrigin is an SFNode field, so X3DOM takes it
+  // from a child element and ignores an attribute that names a DEF, in which case the GeoViewpoint
+  // is placed in absolute ECEF, millions of meters from a model that is relative to the GeoOrigin.
+  // Page Down steps from one viewpoint to the other.
+  html_file << std::fixed << std::setprecision(3)
+            << "        <Viewpoint DEF='OVERVIEW_LOCAL' id='OVERVIEW_LOCAL' description='Overview, Viewpoint in model coordinates' position='"
+            << local_position[0] << " " << local_position[1] << " " << local_position[2] << "' orientation='" << std::setprecision(8)
+            << local_axis[0] << " " << local_axis[1] << " " << local_axis[2] << " " << local_angle
+            << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(3) << local_center[0] << " " << local_center[1] << " "
+            << local_center[2] << "'></Viewpoint>\n";
+  html_file << "        <GeoViewpoint DEF='OVERVIEW_GEO' id='OVERVIEW_GEO' description='Overview, GeoViewpoint with geoOrigin' position='" << geoposition_str.str() 
+            << "' orientation='" << orientation_str.str() 
+            << "' fieldOfView='0.785398' centerOfRotation='" 
+            << std::fixed << std::setprecision(6) << center_lat << " " << center_lon << " " 
+            << std::setprecision(2) << mean_depth << "'";
+  
+  html_file << " geoSystem='\"GD\" \"WE\"'>";
+
+  // The GeoOrigin, as the child node of the GeoViewpoint that the field takes.
   if (options.is_geoorigin_auto() || options.is_geoorigin_set()) {
-    html_file << "        <GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='";
+    html_file << "\n          <GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='";
     if (options.is_geoorigin_set()) {
       html_file << std::fixed << std::setprecision(6)
-                << options.geoorigin_lat() << " " << options.geoorigin_lon() << " " 
+                << options.geoorigin_lat() << " " << options.geoorigin_lon() << " "
                 << std::setprecision(2) << options.geoorigin_elev();
     } else {
       // Use grid center and mean elevation for auto mode
       html_file << std::fixed << std::setprecision(6)
                 << center_lat << " " << center_lon << " " << std::setprecision(2) << mean_elevation;
     }
-    html_file << "'></GeoOrigin>\n";
+    html_file << "'></GeoOrigin>\n        ";
   }
-  
-  html_file << "        <GeoViewpoint DEF='OVERVIEW' position='" << geoposition_str.str() 
-            << "' orientation='" << orientation_str.str() 
-            << "' fieldOfView='0.785398' centerOfRotation='" 
-            << std::fixed << std::setprecision(6) << center_lat << " " << center_lon << " " 
-            << std::setprecision(2) << mean_depth << "'";
-  
-  // Reference GeoOrigin if one exists
-  if (options.is_geoorigin_auto() || options.is_geoorigin_set()) {
-    html_file << " geoOrigin='GRID_ORIGIN'";
-  }
-  
-  html_file << " geoSystem='\"GD\" \"WE\"'></GeoViewpoint>\n";
+  html_file << "</GeoViewpoint>\n";
 
   // Documentation of the scene, from the same metadata that is in the glTF extras.
   write_x3d_metadata(html_file, run.title.empty() ? model_filename : run.title, grid_run_metadata(run),
@@ -1017,6 +1068,13 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "    </div>\n";
   html_file << "    \n";
   html_file << "    <script>\n";
+  html_file << "      // Makes one of the page's viewpoints the one in use.\n";
+  html_file << "      function bindViewpoint(id) {\n";
+  html_file << "        var viewpoint = document.getElementById(id);\n";
+  html_file << "        if (viewpoint) {\n";
+  html_file << "          viewpoint.setAttribute('set_bind', 'true');\n";
+  html_file << "        }\n";
+  html_file << "      }\n\n";
   html_file << "      function toggleLogPanel() {\n";
   html_file << "        var panel = document.getElementById('log-panel');\n";
   html_file << "        var btn = document.getElementById('toggle-log-btn');\n";

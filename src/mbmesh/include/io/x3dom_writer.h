@@ -16,7 +16,25 @@ struct X3DomGeoOrigin {
     double center_lon = 0.0;
     double mean_elevation = 0.0;
     double view_altitude = 0.0;
+
+    // The overview viewpoint in the coordinates of the models themselves (ECEF meters
+    // minus the GeoOrigin's ECEF position, or plain ECEF without a GeoOrigin), set by
+    // set_local_viewpoint(). X3DOM places a GeoViewpoint in absolute ECEF whatever its
+    // geoOrigin says, which is millions of meters from models that are relative to
+    // the GeoOrigin, so the page uses a plain Viewpoint in the models' coordinates
+    // when this is set, and the GeoViewpoint above otherwise.
+    bool has_local_view = false;
+    double view_position[3] = {0.0, 0.0, 0.0};
+    double view_center[3] = {0.0, 0.0, 0.0};
+    double view_axis[3] = {0.0, 0.0, 1.0};   // orientation, as axis and angle
+    double view_angle = 0.0;
 };
+
+// Sets the local viewpoint: above center_ecef, the ECEF position of the middle of
+// the data, by view_altitude, looking straight down with north at the top of the
+// view, in coordinates relative to origin_ecef (zeros if the models are absolute).
+// Uses center_lat, center_lon and view_altitude of the structure.
+void set_local_viewpoint(X3DomGeoOrigin *geo, const double center_ecef[3], const double origin_ecef[3]);
 
 // One GLB the page can show, with a checkbox to switch it on and off.
 struct X3DomModel {

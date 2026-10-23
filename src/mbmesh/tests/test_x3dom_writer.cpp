@@ -1,5 +1,6 @@
 #include "io/x3dom_writer.h"
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -85,9 +86,65 @@ int main() {
                     "the log shows each message and their number");
 
         // No GeoOrigin: no GeoOrigin node, and the viewpoint does not refer to one.
-        ok &= check(!contains(page, "<GeoOrigin") && !contains(page, "geoOrigin='GRID_ORIGIN'"), "without a GeoOrigin the page declares none");
-        ok &= check(contains(page, "<GeoViewpoint DEF='OVERVIEW' position='36.610000 -122.390000 50.0'"),
+        ok &= check(!contains(page, "<GeoOrigin") && !contains(page, "GRID_ORIGIN"), "without a GeoOrigin the page declares none");
+        ok &= check(contains(page, "<GeoViewpoint DEF='OVERVIEW_GEO' id='OVERVIEW_GEO' description='Overview, GeoViewpoint with geoOrigin' position='36.610000 -122.390000 50.0'") &&
+                        !contains(page, "<Viewpoint") && !contains(page, "bindViewpoint(this.value)"),
                     "the viewpoint is above the center of the data (latitude, longitude, elevation)");
+    }
+
+    // ---- the local viewpoint: in the coordinates of the models, looking straight down
+    {
+        // A viewpoint 100 m above a point on the equator at longitude 0, models relative to
+        // an origin 1000 m east of it. ECEF there: x is up, y is east, z is north.
+        X3DomGeoOrigin view;
+        view.center_lat = 0.0;
+        view.center_lon = 0.0;
+        view.view_altitude = 100.0;
+        const double center[3] = {6378137.0, 0.0, 0.0};
+        const double origin[3] = {6378137.0, 1000.0, 0.0};
+        set_local_viewpoint(&view, center, origin);
+        ok &= check(view.has_local_view, "the local viewpoint is set");
+        ok &= check(std::fabs(view.view_center[0]) < 1e-9 && std::fabs(view.view_center[1] + 1000.0) < 1e-9 && std::fabs(view.view_center[2]) < 1e-9,
+                    "the center of rotation is the data center relative to the origin");
+        ok &= check(std::fabs(view.view_position[0] - 100.0) < 1e-9 && std::fabs(view.view_position[1] + 1000.0) < 1e-9,
+                    "the viewpoint is the altitude above the center, along up");
+
+        // The rotation must send the viewpoint's X to east, Y to north and Z to up, so that the
+        // viewing direction -Z is down and +Y, the top of the view, is north.
+        const double c = std::cos(view.view_angle), s = std::sin(view.view_angle);
+        const double *k = view.view_axis;
+        const auto rotate = [&](const double v[3], double out[3]) {
+            const double dot = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+            const double cross[3] = {k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]};
+            for (int i = 0; i < 3; i++) {
+                out[i] = v[i] * c + cross[i] * s + k[i] * dot * (1.0 - c);
+            }
+        };
+        const double x_axis[3] = {1, 0, 0}, y_axis[3] = {0, 1, 0}, z_axis[3] = {0, 0, 1};
+        double x[3], y[3], z[3];
+        rotate(x_axis, x);
+        rotate(y_axis, y);
+        rotate(z_axis, z);
+        ok &= check(std::fabs(x[1] - 1.0) < 1e-9, "the viewpoint's X is east (ECEF y at longitude 0)");
+        ok &= check(std::fabs(y[2] - 1.0) < 1e-9, "the viewpoint's Y is north (ECEF z at the equator)");
+        ok &= check(std::fabs(z[0] - 1.0) < 1e-9, "the viewpoint's Z is up (ECEF x at longitude 0, latitude 0)");
+
+        X3DomWriterOptions options;
+        options.title = "survey";
+        options.use_geoorigin = true;
+        options.geo = view;
+        options.models = {model("mbmesh_output/mesh.glb", "mesh.glb", "mbmesh_output", true)};
+        const std::string page = write_page(options);
+        ok &= check(contains(page, "<Viewpoint DEF='OVERVIEW_LOCAL' id='OVERVIEW_LOCAL' description='Overview, Viewpoint in model coordinates' position='100.000 -1000.000 0.000'"),
+                    "the page has a Viewpoint in the models' coordinates");
+        ok &= check(contains(page, "<GeoViewpoint DEF='OVERVIEW_GEO'") && contains(page, "<GeoOrigin DEF='GRID_ORIGIN'") &&
+                        page.find("<GeoOrigin DEF='GRID_ORIGIN'") > page.find("<GeoViewpoint DEF='OVERVIEW_GEO'") &&
+                        page.find("<GeoOrigin DEF='GRID_ORIGIN'") < page.find("</GeoViewpoint>"),
+                    "the page also has the GeoViewpoint, with the GeoOrigin as its child node");
+        ok &= check(page.find("<Viewpoint DEF='OVERVIEW_LOCAL'") < page.find("<GeoViewpoint DEF='OVERVIEW_GEO'"),
+                    "the Viewpoint comes first, so it is the one bound when the page opens");
+        ok &= check(contains(page, "<option value='OVERVIEW_LOCAL'>") && contains(page, "<option value='OVERVIEW_GEO'>") && contains(page, "function bindViewpoint(id)"),
+                    "the page has a menu to choose between the two");
     }
 
     // ---- a check box for every model; models that start switched off load when first wanted
@@ -137,7 +194,7 @@ int main() {
 
         ok &= check(contains(page, "<GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='36.600000 -122.400000 -10.00'>"),
                     "the GeoOrigin is declared, latitude first, as mbgrd2gltf does");
-        ok &= check(contains(page, "geoOrigin='GRID_ORIGIN'"), "the viewpoint refers to the GeoOrigin");
+        ok &= check(!contains(page, "geoOrigin='GRID_ORIGIN'"), "the viewpoint does not name the GeoOrigin in an attribute, which X3DOM ignores");
     }
 
     // ---- log messages and labels are escaped, and the page says when some were left out

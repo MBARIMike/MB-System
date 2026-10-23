@@ -39,6 +39,10 @@ The original gltf-generator program was created for STOQS by a CSUMB Capstone te
 
 The glTF file records where the model is and how it was made in `asset.extras`, in the blocks `georeference` (coordinate reference system `EPSG:4978`, absolute or relative-to-center vertices, the `center` = GeoOrigin as ECEF meters, the same point as `geodeticCenter`, the `heightReference` and the `extent`), `provenance` (linked to W3C PROV-O through a JSON-LD `@context`: software and version, time of execution, command line, working directory, user, host and the input grid) and `MB-System` (grid size, spacing and registration, vertical exaggeration, Draco quantization and the vertical reference). The `--html` page holds the same tree in X3D `GeoMetadata` and `WorldInfo` nodes. The code is in `provenance.h` and `provenance.cpp` and is tested by `tests/test_provenance.cpp`. The names are shared with `mbmesh` and are described in [../mbmesh/GEOREFERENCE.md](../mbmesh/GEOREFERENCE.md). The grid value is used as a height above the WGS 84 ellipsoid, with no geoid correction.
 
+# Viewpoints in the --html page
+
+The page has two overview viewpoints for the same view, looking straight down from above the middle of the grid with north at the top: `OVERVIEW_LOCAL`, a plain `Viewpoint` in the coordinates of the model (ECEF minus the GeoOrigin's ECEF position), which is bound when the page opens, and `OVERVIEW_GEO`, a `GeoViewpoint` that refers to the GeoOrigin. Choose between them in the Viewpoint menu, or step through them with Page Down. The GeoOrigin is written as a child node of the `GeoViewpoint`, because `geoOrigin` is an SFNode field and X3DOM takes it from a child element: it ignores an attribute naming a DEF, and then places the `GeoViewpoint` in absolute ECEF, millions of meters from a model that is relative to the GeoOrigin. Both viewpoints are written so that each can be checked against the other.
+
 # Dependencies
 
 * netCDF

@@ -222,6 +222,19 @@ int main(int argc, char **argv) {
         constexpr double field_of_view = 0.785398;
         view.view_altitude = (std::max(lat_extent_m, lon_extent_m) / 2.0) / std::tan(field_of_view / 2.0);
 
+        // The viewpoint in the coordinates of the GLBs: ECEF, minus the GeoOrigin's ECEF position if there is one.
+        {
+            GeodeticPosition middle;
+            middle.longitude = view.center_lon;
+            middle.latitude = view.center_lat;
+            middle.elevation = view.mean_elevation;
+            const Vec3 middle_ecef = geodetic_to_ecef(middle);
+            const Vec3 origin_ecef = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
+            const double middle_array[3] = {middle_ecef.x, middle_ecef.y, middle_ecef.z};
+            const double origin_array[3] = {origin_ecef.x, origin_ecef.y, origin_ecef.z};
+            set_local_viewpoint(&view, middle_array, origin_array);
+        }
+
         if (placement.use_geoorigin) {
             std::ostringstream message;
             message << std::fixed << std::setprecision(6)
