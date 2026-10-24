@@ -32,6 +32,7 @@
   *--------------------------------------------------------------------*/
 
 #include "geometry.h"
+#include "wgs84.h"
 #include "logger.h"
 
 // standard library
@@ -40,9 +41,6 @@
 #include <sstream>
 #include <locale>
 #include <iomanip>
-
-#define WGS_84_SEMI_MAJOR_AXIS 6378137.0
-#define WGS_84_INVERSE_FLATTENING 298.257223563
 
 namespace mbgrd2gltf {
 
@@ -130,10 +128,7 @@ Geometry::Geometry(const Bathymetry& bathymetry, const Options& options) {
   LOG_INFO("Created", Logger::format_with_commas(valid_vertices), "vertices");
 }
 
-// Full double-precision pi. A value truncated to 3.1415926535 is off by 3e-11
-// relative, which at ECEF magnitudes of millions of meters is a few tenths of a
-// millimeter, and the error grows with longitude.
-double Geometry::to_radians(double degrees) { return degrees * (3.14159265358979323846 / 180.0); }
+double Geometry::to_radians(double degrees) { return degrees * (pi / 180.0); }
 
 double Geometry::get_longitude(const Bathymetry& bathymetry, size_t x) {
   return bathymetry.longitude(x);
@@ -144,22 +139,9 @@ double Geometry::get_latitude(const Bathymetry& bathymetry, size_t y) {
 }
 
 Geometry::EcefPosition Geometry::get_ecef_position(double longitude, double latitude, double altitude) {
-  // WGS-84 ellipsoid calculations
-  double F = 1.0 / WGS_84_INVERSE_FLATTENING;
-  double e_squared = F * (2.0 - F);
-
-  double sin_lon = sin(to_radians(longitude));
-  double cos_lon = cos(to_radians(longitude));
-  double sin_lat = sin(to_radians(latitude));
-  double cos_lat = cos(to_radians(latitude));
-
-  double N = WGS_84_SEMI_MAJOR_AXIS / sqrt(1.0 - e_squared * sin_lat * sin_lat);
-  double tmp = (N + altitude) * cos_lat;
-  double x = tmp * cos_lon;
-  double y = tmp * sin_lon;
-  double z = (N * (1 - e_squared) + altitude) * sin_lat;
-
-  return EcefPosition{x, y, z};
+  double ecef[3];
+  wgs84_geodetic_to_ecef(longitude, latitude, altitude, ecef);
+  return EcefPosition{ecef[0], ecef[1], ecef[2]};
 }
 
 Vertex Geometry::get_earth_centered_vertex(double longitude, double latitude, double altitude,

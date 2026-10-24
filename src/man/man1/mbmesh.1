@@ -85,6 +85,19 @@ spaces unless it is quoted so that the shell passes it as one argument. With
 \fB--html\fR, the viewer page positions the model with GeoOrigin and
 GeoViewpoint nodes.
 .TP
+.B \-\-geoviewpoint=\fIVALUES\fR
+With \fB\-\-html\fR, add a GeoViewpoint to the page; the option can be repeated, and each
+adds a GeoViewpoint, written with its position as latitude, longitude and elevation and the GeoOrigin used again, named USER_GEOVIEW_1, USER_GEOVIEW_2 and so on, to the Viewpoint menu of the
+page, after the two overview viewpoints, where Page Down also steps through them. The
+values are geodetic, in the order of \fB\-\-geoorigin\fR, longitude first, so they do not depend on the
+GeoOrigin or the data and can be used again in another run: \fIlon,lat,elev,clon,clat,celev\fR, the camera
+position and the point it looks at, or \fIlon,lat,elev,ax,ay,az,angle,clon,clat,celev\fR, with the
+orientation as an axis and an angle, as a GeoViewpoint takes it. Heights are above the
+ellipsoid. Without an orientation the top of the view is toward local up. The
+\fBCopy GeoViewpoint\fR button of the page gives the ten-number form for the view on the screen, on
+the clipboard and in the X3DOM log. The value must be attached to the option, with an
+equals sign and no spaces, for example \fB\-\-geoviewpoint=\-122.4,36.6,\-900,\-122.39,36.61,\-950\fR.
+.TP
 .B \--chunk-size \fImeters\fR
 Reconstruct in square horizontal tiles of about this size (rounded up to a whole
 number of Poisson cells) instead of in one pass. Chunking turns on

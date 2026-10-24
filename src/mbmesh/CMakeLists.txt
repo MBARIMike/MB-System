@@ -109,6 +109,7 @@ if(buildTests)
 
   add_executable(mbmesh_test_x3dom_writer
     tests/test_x3dom_writer.cpp
+    src/io/coordinate_frame.cpp
     src/io/provenance.cpp
     src/io/x3dom_writer.cpp)
   target_compile_features(mbmesh_test_x3dom_writer PRIVATE cxx_std_17)
@@ -118,6 +119,7 @@ if(buildTests)
 
   add_executable(mbmesh_test_provenance
     tests/test_provenance.cpp
+    src/io/coordinate_frame.cpp
     src/io/provenance.cpp
     src/io/glb_writer.cpp
     src/io/x3dom_writer.cpp)

@@ -32,6 +32,7 @@
   *--------------------------------------------------------------------*/
 
 #include "options.h"
+#include "viewpoint.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -133,6 +134,13 @@ void print_help() {
   std::cout << "  --quantize-texcoord NUM       Draco texcoord quantization bits (2-30) [default: 10]\n";
   std::cout << "  --quantize-color NUM          Draco color quantization bits (2-30) [default: 8]\n";
   std::cout << "                      (-Qp, -Qn, -Qt, -Qc for legacy style)\n";
+  std::cout << "  --geoviewpoint=VALUES         With --html, add a GeoViewpoint to the page; can be repeated. The values are\n";
+  std::cout << "                                geodetic, in the order of --geoorigin, so they do not depend on the GeoOrigin\n";
+  std::cout << "                                or the grid and can be used again: lon,lat,elev,clon,clat,celev, the camera\n";
+  std::cout << "                                position and the point it looks at, or lon,lat,elev,ax,ay,az,angle,clon,clat,celev,\n";
+  std::cout << "                                with the orientation as an axis and an angle, as a GeoViewpoint takes it. Heights are\n";
+  std::cout << "                                above the ellipsoid. The Copy GeoViewpoint button of the page gives the ten-number form.\n";
+  std::cout << "                                The value must be attached: --geoviewpoint=-122.0,36.8,-900,...\n";
   std::cout << "  --html, -W                    Generate HTML viewer with inline glTF/GLB model and print the command to view it\n";
   std::cout << "  --verbose, -V                 Enable verbose output\n";
   std::cout << "  --help, -H                    Print this help message\n\n";
@@ -254,6 +262,14 @@ Options::Options(unsigned argc, const char* argv[]) {
         int val = std::atoi(value_ptr);
         if (val < 2 || val > 30) throw std::invalid_argument("Quantization value must be between 2 and 30");
         _draco_quantization[3] = val;
+      }
+      else if (opt_name == "geoviewpoint") {
+        if (!value_ptr) throw std::invalid_argument("--geoviewpoint requires a value, attached: --geoviewpoint=lon,lat,elev,clon,clat,celev");
+        UserViewpoint viewpoint;
+        std::string viewpoint_error;
+        if (!parse_user_viewpoint(value_ptr, &viewpoint, &viewpoint_error))
+          throw std::invalid_argument("Invalid --geoviewpoint: " + viewpoint_error);
+        _geoviewpoints.push_back(value_ptr);
       }
       else if (opt_name == "verbose") {
         _is_verbose = true;
@@ -394,6 +410,10 @@ Options::Options(unsigned argc, const char* argv[]) {
           throw std::invalid_argument(std::string("Unknown option: -") + option);
       }
     }
+  }
+
+  if (!_geoviewpoints.empty() && !_is_html_output) {
+    throw std::invalid_argument("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
   }
 
   // Check required arguments

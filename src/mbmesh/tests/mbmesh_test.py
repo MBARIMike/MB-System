@@ -80,6 +80,29 @@ class MbmeshTest(unittest.TestCase):
     self.assertNotEqual(proc.returncode, 0)
     self.assertIn('unrecognized', proc.stdout.decode())
 
+  def testGeoViewpointIsValidated(self):
+    # --geoviewpoint takes 6 or 10 numbers and needs --html; bad values are refused
+    # before any data are read.
+    cases = (
+      (['--html', '--geoviewpoint=1,2,3,4,5'], '6 numbers'),
+      (['--html', '--geoviewpoint=1,2,3,4,5,x'], "'x'"),
+      (['--html', '--geoviewpoint=1 2 3 4 5 6'], 'not a number'),
+      (['--geoviewpoint=1,2,3,4,5,6'], 'use --html too'),
+    )
+    for args, message in cases:
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent'] + args,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+      self.assertNotEqual(proc.returncode, 0, args)
+      self.assertIn(message, proc.stdout.decode(), args)
+      self.assertNotIn('reading datalist', proc.stdout.decode(), args)
+
+  def testHelpDocumentsGeoViewpoint(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--geoviewpoint', output)
+    self.assertIn('Copy GeoViewpoint', output)
+
   def testHelpDocumentsGeoOrigin(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

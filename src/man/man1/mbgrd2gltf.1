@@ -15,6 +15,7 @@ mbgrd2gltf \- convert bathymetric grid data to GLTF format with optional setting
 [\fB\-\-quantize-texcoord\fP \fINUM\fP]
 [\fB\-\-quantize-color\fP \fINUM\fP]
 [\fB\-\-html\fP]
+[\fB\-\-geoviewpoint\fP=\fIVALUES\fP]
 [\fB\-\-verbose\fP]
 [\fB\-\-help\fP]
 .PP
@@ -135,6 +136,20 @@ Draco color quantization bits (2-30). Affects the compression of vertex colors. 
 .TP
 .B \-\-html, \-W
 Generate an HTML viewer page with inline 3D visualization using X3DOM. The HTML file includes the glTF/GLB model with interactive navigation controls, processing provenance metadata (command line, timestamps, grid parameters, GeoOrigin settings, compression options), and links to MB-System and X3DOM documentation. The viewer requires serving the files via HTTP to avoid browser CORS restrictions when loading local files. The program does not start a web server or a browser; it logs the command to run (python3 -m http.server 8000 --bind 127.0.0.1 --directory <output directory>) and the URL to open. Output file: <output_root>.html
+
+.TP
+.B \-\-geoviewpoint=\fIVALUES\fR
+With \fB\-\-html\fR, add a GeoViewpoint to the page; the option can be repeated, and each
+adds a GeoViewpoint, written with its position as latitude, longitude and elevation and the GeoOrigin used again, named USER_GEOVIEW_1, USER_GEOVIEW_2 and so on, to the Viewpoint menu of the
+page, after the two overview viewpoints, where Page Down also steps through them. The
+values are geodetic, in the order of \fB\-\-geoorigin\fR, longitude first, so they do not depend on the
+GeoOrigin or the data and can be used again in another run: \fIlon,lat,elev,clon,clat,celev\fR, the camera
+position and the point it looks at, or \fIlon,lat,elev,ax,ay,az,angle,clon,clat,celev\fR, with the
+orientation as an axis and an angle, as a GeoViewpoint takes it. Heights are above the
+ellipsoid. Without an orientation the top of the view is toward local up. The
+\fBCopy GeoViewpoint\fR button of the page gives the ten-number form for the view on the screen, on
+the clipboard and in the X3DOM log. The value must be attached to the option, with an
+equals sign and no spaces, for example \fB\-\-geoviewpoint=\-122.4,36.6,\-900,\-122.39,36.61,\-950\fR.
 
 .TP
 .B \-\-verbose, \-V

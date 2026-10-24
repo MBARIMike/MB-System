@@ -36,6 +36,37 @@ struct X3DomGeoOrigin {
 // Uses center_lat, center_lon and view_altitude of the structure.
 void set_local_viewpoint(X3DomGeoOrigin *geo, const double center_ecef[3], const double origin_ecef[3]);
 
+// A GeoViewpoint the user supplies with --geoviewpoint: where the camera is and where it looks, as
+// WGS 84 geodetic coordinates, so that it does not depend on the GeoOrigin, the area or the grid, and can
+// be used again in another run. The orientation, if given, is that of a GeoViewpoint: relative to the
+// local frame at the position, as X3DOM takes it ('1 0 0 -1.5708' looks straight down with north at the
+// top and east on the right, and no rotation looks level to the north). Heights are above the ellipsoid,
+// like the GeoOrigin's elevation.
+struct X3DomUserViewpoint {
+    double longitude = 0.0;
+    double latitude = 0.0;
+    double elevation = 0.0;
+    double center_longitude = 0.0;   // the center of rotation, and the point looked at without an orientation
+    double center_latitude = 0.0;
+    double center_elevation = 0.0;
+    bool has_orientation = false;    // otherwise the camera looks from the position toward the center, with up at the top
+    double axis[3] = {0.0, 0.0, 1.0};
+    double angle = 0.0;
+};
+
+// Parses the value of --geoviewpoint, which is in the order of --geoorigin, longitude first: six numbers,
+// lon,lat,elev,clon,clat,celev, the camera position and the point looked at; or ten,
+// lon,lat,elev,ax,ay,az,angle,clon,clat,celev, with the orientation as an axis and an angle between the
+// position and the center. Commas separate the numbers, with no spaces. The Copy GeoViewpoint button of the
+// page gives the ten-number form. Returns false and says why in error.
+[[nodiscard]] bool parse_user_viewpoint(const std::string &text, X3DomUserViewpoint *viewpoint, std::string *error);
+
+// The orientation of a user viewpoint as a GeoViewpoint takes it, an axis and an angle relative to the local
+// frame at the position: the one given, or, without one, the orientation that looks from the position toward
+// the center with the top of the view toward local up, or toward north when looking straight up or down.
+// Returns false if the position and center are the same point.
+[[nodiscard]] bool geoviewpoint_orientation(const X3DomUserViewpoint &viewpoint, double axis[3], double *angle, std::string *error);
+
 // One GLB the page can show, with a checkbox to switch it on and off.
 struct X3DomModel {
     std::string uri;         // relative to the page, with characters that need it percent-encoded
@@ -54,6 +85,10 @@ struct X3DomWriterOptions {
     // does. The GeoViewpoint is written either way.
     bool use_geoorigin = false;
     X3DomGeoOrigin geo;
+
+    // GeoViewpoints the user supplied (--geoviewpoint), written after the two overview
+    // viewpoints, as USER_GEOVIEW_1, USER_GEOVIEW_2 and so on, each with the GeoOrigin if there is one.
+    std::vector<X3DomUserViewpoint> user_viewpoints;
 
     // The GLBs the page can show.
     std::vector<X3DomModel> models;

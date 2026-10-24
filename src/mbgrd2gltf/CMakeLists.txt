@@ -41,7 +41,7 @@ set(DRACO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/draco")
 set(INCLUDE_DIRS "")
 
 # Set the sources for the executable
-set(SOURCES bathymetry.cpp geometry.cpp logger.cpp main.cpp model.cpp options.cpp provenance.cpp)
+set(SOURCES bathymetry.cpp geometry.cpp logger.cpp main.cpp model.cpp options.cpp provenance.cpp viewpoint.cpp)
 
 # Manually set the include directories for Draco and other components
 include_directories(
@@ -104,7 +104,7 @@ target_link_libraries(mbgrd2gltf
 # Regression test for the vertex geometry (no Draco or glTF code is needed).
 if(buildTests)
 	add_executable(mbgrd2gltf_test_geometry
-		tests/test_geometry.cpp bathymetry.cpp geometry.cpp logger.cpp options.cpp)
+		tests/test_geometry.cpp bathymetry.cpp geometry.cpp logger.cpp options.cpp viewpoint.cpp)
 	target_include_directories(mbgrd2gltf_test_geometry
 		PRIVATE ${NetCDF_INCLUDE_DIRS}
 		PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -115,6 +115,10 @@ if(buildTests)
 	add_executable(mbgrd2gltf_test_provenance tests/test_provenance.cpp provenance.cpp)
 	target_include_directories(mbgrd2gltf_test_provenance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 	add_test(NAME mbgrd2gltf_provenance COMMAND mbgrd2gltf_test_provenance)
+
+	add_executable(mbgrd2gltf_test_viewpoint tests/test_viewpoint.cpp viewpoint.cpp)
+	target_include_directories(mbgrd2gltf_test_viewpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+	add_test(NAME mbgrd2gltf_viewpoint COMMAND mbgrd2gltf_test_viewpoint)
 endif()
 
 install(TARGETS mbgrd2gltf

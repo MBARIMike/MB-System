@@ -33,6 +33,7 @@
 
 #include "model.h"
 #include "logger.h"
+#include "viewpoint.h"
 
 // external libraries
 #define TINYGLTF_IMPLEMENTATION
@@ -727,6 +728,102 @@ void write_gltf(const Geometry& geometry, const Options& options, const GridRunI
   }
 }
 
+// The script of the Copy GeoViewpoint button: the --geoviewpoint option for the current view, geodetic like a
+// GeoViewpoint, so that it does not depend on the GeoOrigin or the grid. The page defines modelOrigin, the
+// WGS 84 ECEF position of the GeoOrigin that the model is relative to (zeros if it is absolute).
+static const char* copy_viewpoint_script = R"JS(
+      // WGS 84 ECEF meters to [longitude, latitude, elevation], in degrees and meters.
+      function ecefToGeodetic(x, y, z) {
+        var f = 1 / 298.257223563, a = 6378137, e2 = f * (2 - f);
+        var longitude = Math.atan2(y, x), r = Math.sqrt(x * x + y * y), latitude = Math.atan2(z, r * (1 - e2)), height = 0;
+        for (var i = 0; i < 10; i++) {
+          var n = a / Math.sqrt(1 - e2 * Math.sin(latitude) * Math.sin(latitude));
+          height = r / Math.cos(latitude) - n;
+          latitude = Math.atan2(z, r * (1 - e2 * n / (n + height)));
+        }
+        return [longitude * 180 / Math.PI, latitude * 180 / Math.PI, height];
+      }
+
+      // Says for a few seconds, under the button, what the Copy GeoViewpoint button did.
+      var copyStatusTimer = null;
+      function showCopyStatus(message) {
+        var status = document.getElementById('copy-status');
+        if (!status) {
+          return;
+        }
+        status.textContent = message;
+        status.style.visibility = 'visible';
+        clearTimeout(copyStatusTimer);
+        copyStatusTimer = setTimeout(function () { status.style.visibility = 'hidden'; }, 5000);
+      }
+
+      // Puts the --geoviewpoint option for the current view on the clipboard and in the X3DOM log. It is
+      // geodetic, like a GeoViewpoint: longitude, latitude and elevation of the camera, its orientation
+      // relative to the local frame there (as a GeoViewpoint takes it), and the center of rotation. It does
+      // not depend on the GeoOrigin, the area or the grid, so it can be used in another run.
+      function copyGeoViewpoint() {
+        var runtime = document.getElementById('x3dElement').runtime;
+        var matrix = runtime.viewMatrix().inverse();
+        var axes = [matrix.e0(), matrix.e1(), matrix.e2()];
+        var camera = matrix.e3();
+        var center = null;
+        try {
+          center = runtime.canvas.doc._scene.getViewpoint().getCenterOfRotation();
+        } catch (e) {
+          center = null;
+        }
+        if (!center) {
+          var box = runtime.getSceneBBox();
+          center = { x: (box.min.x + box.max.x) / 2, y: (box.min.y + box.max.y) / 2, z: (box.min.z + box.max.z) / 2 };
+        }
+        var position = ecefToGeodetic(camera.x + modelOrigin[0], camera.y + modelOrigin[1], camera.z + modelOrigin[2]);
+        var target = ecefToGeodetic(center.x + modelOrigin[0], center.y + modelOrigin[1], center.z + modelOrigin[2]);
+
+        // The local frame at the camera in the form X3DOM uses for a GeoViewpoint: X east, Y up, Z south.
+        var phi = position[1] * Math.PI / 180, lambda = position[0] * Math.PI / 180;
+        var east = [-Math.sin(lambda), Math.cos(lambda), 0];
+        var north = [-Math.sin(phi) * Math.cos(lambda), -Math.sin(phi) * Math.sin(lambda), Math.cos(phi)];
+        var up = [Math.cos(phi) * Math.cos(lambda), Math.cos(phi) * Math.sin(lambda), Math.sin(phi)];
+        var frame = [east, up, [-north[0], -north[1], -north[2]]];
+        var camera_axes = [[axes[0].x, axes[0].y, axes[0].z], [axes[1].x, axes[1].y, axes[1].z], [axes[2].x, axes[2].y, axes[2].z]];
+
+        // The orientation is the frame's transpose times the camera's rotation, as an axis and an angle.
+        var o = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        for (var i = 0; i < 3; i++) {
+          for (var j = 0; j < 3; j++) {
+            for (var k = 0; k < 3; k++) {
+              o[i][j] += frame[i][k] * camera_axes[j][k];
+            }
+          }
+        }
+        var cosine = Math.max(-1, Math.min(1, (o[0][0] + o[1][1] + o[2][2] - 1) / 2));
+        var angle = Math.acos(cosine);
+        var axis = [o[2][1] - o[1][2], o[0][2] - o[2][0], o[1][0] - o[0][1]];
+        var length = Math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+        if (length < 1e-9) {
+          axis = [0, 0, 1];
+          angle = 0;
+        } else {
+          axis = [axis[0] / length, axis[1] / length, axis[2] / length];
+        }
+
+        var numbers = [position[0], position[1], position[2], axis[0], axis[1], axis[2], angle, target[0], target[1], target[2]];
+        var digits = [7, 7, 3, 8, 8, 8, 8, 7, 7, 3];
+        var text = '--geoviewpoint=' + numbers.map(function (value, index) { return value.toFixed(digits[index]); }).join(',');
+        x3dom.debug.logInfo(text);
+        var failed = function () {
+          showCopyStatus('The clipboard is not available here; the option is in the X3DOM log');
+          window.prompt('Copy the option:', text);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(function () {
+            showCopyStatus('The --geoviewpoint option was copied to the clipboard');
+          }, failed);
+        } else {
+          failed();
+        }
+      })JS";
+
 /*
  * Write an HTML viewer page with inline glTF/GLB model using X3DOM
  * @param bathymetry : The bathymetry data (for grid bounds)
@@ -818,6 +915,8 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   // ECEF position (the vertices are written that way), or plain ECEF without a GeoOrigin. Above the
   // center of the grid by view_altitude, looking straight down with north at the top: the rotation
   // whose columns are the local east, north and up axes, as an axis and an angle.
+  // The ECEF position of the GeoOrigin, which the vertices are relative to (zeros without one).
+  const double origin_ecef[3] = {geometry.geoorigin_x(), geometry.geoorigin_y(), geometry.geoorigin_z()};
   double local_position[3], local_center[3], local_axis[3] = {0.0, 0.0, 1.0}, local_angle = 0.0;
   {
     const double phi = center_lat * M_PI / 180.0;
@@ -957,6 +1056,10 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "                </option>\n";
   html_file << "                <option value='OVERVIEW_GEO'>GeoViewpoint (with GeoOrigin)\n";
   html_file << "                </option>\n";
+  for (size_t i = 0; i < options.geoviewpoints().size(); ++i) {
+    html_file << "                <option value='USER_GEOVIEW_" << (i + 1) << "'>User GeoViewpoint " << (i + 1) << "\n";
+    html_file << "                </option>\n";
+  }
   html_file << "              </select>\n";
   html_file << "            </td>\n";
   html_file << "          </tr>\n";
@@ -978,6 +1081,13 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "            <td>\n";
   html_file << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.resetView();'> Reset View\n";
   html_file << "              </button>\n";
+  html_file << "            </td>\n";
+  html_file << "          </tr>\n";
+  html_file << "          <tr>\n";
+  html_file << "            <td colspan='2'>\n";
+  html_file << "              <button onclick='copyGeoViewpoint()' title='Puts the option that gives the current view on the clipboard and in the X3DOM log'> Copy GeoViewpoint\n";
+  html_file << "              </button>\n";
+  html_file << "              <div id='copy-status' style='visibility:hidden; font-size:smaller; max-width:18em; min-height:1.2em;'>&nbsp;</div>\n";
   html_file << "            </td>\n";
   html_file << "          </tr>\n";
   html_file << "        </table>\n";
@@ -1022,6 +1132,27 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
     html_file << "'></GeoOrigin>\n        ";
   }
   html_file << "</GeoViewpoint>\n";
+
+  // GeoViewpoints the user supplied. The GeoOrigin is the one defined in OVERVIEW_GEO, used again.
+  for (size_t i = 0; i < options.geoviewpoints().size(); ++i) {
+    UserViewpoint user;
+    std::string viewpoint_error;
+    double axis[3];
+    double angle = 0.0;
+    if (!parse_user_viewpoint(options.geoviewpoints()[i], &user, &viewpoint_error) ||
+        !geoviewpoint_orientation(user, axis, &angle, &viewpoint_error)) {
+      throw std::runtime_error("GeoViewpoint " + std::to_string(i + 1) + ": " + viewpoint_error);
+    }
+    html_file << std::fixed << "        <GeoViewpoint DEF='USER_GEOVIEW_" << (i + 1) << "' id='USER_GEOVIEW_" << (i + 1)
+              << "' description='User GeoViewpoint " << (i + 1) << "' position='" << std::setprecision(7) << user.latitude << " "
+              << user.longitude << " " << std::setprecision(3) << user.elevation << "' orientation='" << std::setprecision(8) << axis[0] << " "
+              << axis[1] << " " << axis[2] << " " << angle << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(7)
+              << user.center_latitude << " " << user.center_longitude << " " << std::setprecision(3) << user.center_elevation
+              << "' geoSystem='\"GD\" \"WE\"'>";
+    if (options.is_geoorigin_auto() || options.is_geoorigin_set())
+      html_file << "\n          <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n        ";
+    html_file << "</GeoViewpoint>\n";
+  }
 
   // Documentation of the scene, from the same metadata that is in the glTF extras.
   write_x3d_metadata(html_file, run.title.empty() ? model_filename : run.title, grid_run_metadata(run),
@@ -1068,6 +1199,10 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "    </div>\n";
   html_file << "    \n";
   html_file << "    <script>\n";
+  html_file << std::fixed << std::setprecision(3)
+            << "      // The WGS 84 ECEF position of the GeoOrigin that the model is relative to (zeros if it is absolute).\n"
+            << "      var modelOrigin = [" << origin_ecef[0] << ", " << origin_ecef[1] << ", " << origin_ecef[2] << "];\n";
+  html_file << copy_viewpoint_script << "\n";
   html_file << "      // Makes one of the page's viewpoints the one in use.\n";
   html_file << "      function bindViewpoint(id) {\n";
   html_file << "        var viewpoint = document.getElementById(id);\n";

@@ -499,6 +499,15 @@ int main(int argc, char **argv) {
         html_options.title = viewer_title(web_root);
         html_options.use_geoorigin = placement.use_geoorigin;
         html_options.geo = placement.view;
+        for (const std::string &text : options.geoviewpoints) {
+            X3DomUserViewpoint viewpoint;
+            std::string viewpoint_error;
+            if (!parse_user_viewpoint(text, &viewpoint, &viewpoint_error)) {
+                LOG_ERROR(viewpoint_error);
+                return 1;
+            }
+            html_options.user_viewpoints.push_back(viewpoint);
+        }
         html_options.metadata = run_metadata(run);
         html_options.geo_summary = geo_metadata_summary(run);
         html_options.models = find_viewer_models(web_root, options.output_directory);
@@ -584,6 +593,7 @@ Options parse_options(int argc, char **argv) {
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
         {"track-glb", no_argument, nullptr, 1017},
+        {"geoviewpoint", required_argument, nullptr, 1018},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -644,6 +654,17 @@ Options parse_options(int argc, char **argv) {
                 options.geoorigin_mode = GeoOriginMode::Specified;
             }
             break;
+
+        case 1018: {
+            X3DomUserViewpoint parsed;
+            std::string viewpoint_error;
+            if (!parse_user_viewpoint(optarg, &parsed, &viewpoint_error)) {
+                LOG_ERROR("invalid --geoviewpoint:", viewpoint_error);
+                std::exit(1);
+            }
+            options.geoviewpoints.push_back(optarg);
+            break;
+        }
 
         case 'V':
             options.verbose = true;
@@ -757,6 +778,11 @@ Options parse_options(int argc, char **argv) {
         }
     }
 
+    if (!options.geoviewpoints.empty() && !options.write_html) {
+        LOG_ERROR("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
+        std::exit(1);
+    }
+
     if (options.input_datalist.empty() && optind < argc) {
         options.input_datalist = argv[optind++];
     }
@@ -794,6 +820,13 @@ void print_usage() {
     std::cout << "                               The value must be attached to the option, with an equals sign and no\n";
     std::cout << "                               spaces: --geoorigin=-122.4,36.6,0 or -G-122.4,36.6,0. A value in a\n";
     std::cout << "                               separate argument is not accepted\n";
+    std::cout << "      --geoviewpoint=<values>  With --html, add a GeoViewpoint to the page, which can be repeated. The values are\n";
+    std::cout << "                               geodetic, in the order of --geoorigin, so they do not depend on the GeoOrigin, the\n";
+    std::cout << "                               area or the data and can be used again: lon,lat,elev,clon,clat,celev, the camera\n";
+    std::cout << "                               position and the point it looks at, or lon,lat,elev,ax,ay,az,angle,clon,clat,celev,\n";
+    std::cout << "                               with the orientation as an axis and an angle, as a GeoViewpoint takes it. Heights are\n";
+    std::cout << "                               above the ellipsoid. The Copy GeoViewpoint button of the page gives the ten-number form.\n";
+    std::cout << "                               The value must be attached: --geoviewpoint=-122.4,36.6,-900,...\n";
     std::cout << "      --chunk-size <meters>    Reconstruct in square tiles of about this size, writing tiles/tile_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";

@@ -36,6 +36,7 @@
 
 // standard library
 #include <string>
+#include <vector>
 
 namespace mbgrd2gltf {
 class Options {
@@ -56,6 +57,7 @@ private: // members
   bool _is_geoorigin_auto = false;
   bool _is_html_output = false;
   int _draco_quantization[4] = {16, 7, 10, 8}; // [POSITION, NORMAL, TEXCOORD, COLOR]
+  std::vector<std::string> _geoviewpoints;        // --geoviewpoint values, as given
 
 public: // members
   Options(unsigned argc, const char** argv);
@@ -76,6 +78,7 @@ public: // members
   bool is_geoorigin_auto() const { return _is_geoorigin_auto; }
   bool is_html_output() const { return _is_html_output; }
   int draco_quantization(int i) const { return _draco_quantization[i]; }
+  const std::vector<std::string>& geoviewpoints() const { return _geoviewpoints; }
   bool draco_quantization_valid() const;
 };
 } // namespace mbgrd2gltf

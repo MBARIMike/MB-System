@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "algorithms/marching_cubes.h"
 #include "algorithms/normal_estimation.h"
@@ -26,6 +27,9 @@ struct Options {
     bool verbose = false;
 
     bool write_html = false;
+
+    // --geoviewpoint, repeatable: GeoViewpoints for the --html page, as given (see parse_user_viewpoint()).
+    std::vector<std::string> geoviewpoints;
     bool write_local_xyz = false;
     bool write_ecef_xyz = false;
     bool write_oriented_ply = false;
