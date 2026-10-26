@@ -322,11 +322,11 @@ bool &has_run_metadata() {
 
 // Puts the run's georeferencing and provenance, and what this file holds, in asset.extras.
 void apply_asset_extras(tinygltf::Model *model, const GlbContent &content) {
-    if (!has_run_metadata()) {
+    if (content.metadata == nullptr && !has_run_metadata()) {
         return;
     }
 
-    MetaValue extras = run_metadata_storage();
+    MetaValue extras = content.metadata != nullptr ? *content.metadata : run_metadata_storage();
     MetaValue *program = nullptr;
     for (auto &member : extras.members) {
         if (member.first == "MB-System") {

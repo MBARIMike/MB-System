@@ -952,6 +952,14 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "    <link type='text/css' href='https://www.x3dom.org/x3dom/dist/x3dom.css' rel='stylesheet'>\n";
   html_file << "    <script type='text/javascript' src='https://www.x3dom.org/x3dom/dist/x3dom-full.js'></script>\n";
   html_file << "    <style>\n";
+  // The scene fills the window. X3DOM sizes its canvas from the CSS size of the canvas, and sets the width
+  // and height attributes of the canvas, which give it an aspect ratio, from that. With a height that is a
+  // percentage of a parent, the canvas can end up 2:1 whatever the window is, and in Safari the size can
+  // grow until the drawing buffer is too large to allocate. A size in viewport units, which must win over
+  // the style that X3DOM writes, keeps it the size of the window.
+  html_file << "      html, body { overflow: hidden; }\n";
+  html_file << "      x3d { display: block; width: 100vw !important; height: 100vh !important; }\n";
+  html_file << "      x3d canvas { display: block; width: 100% !important; height: 100% !important; }\n";
   html_file << "      .x3dom-logContainer { bottom: 0px; position: absolute; }\n";
   html_file << "      #log-panel {\n";
   html_file << "        position: fixed;\n";

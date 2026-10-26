@@ -128,11 +128,16 @@ constexpr const char *vertex_convention_relative =
 
 constexpr const char *vertex_convention_absolute = "Vertices are absolute WGS 84 ECEF positions in meters.";
 
+constexpr const char *vertex_convention_local_frame =
+    "Vertices are in meters in the east-north-up frame at the center, written Y-up as glTF requires: X is east, "
+    "Y is up and Z is south. absolute = center + east * x + north * -z + up * y, in WGS 84 ECEF. The transform of "
+    "the tileset places them.";
+
 MetaValue georeference_block(const RunInfo &run) {
     MetaValue block = MetaValue::make_object();
     block.set("schemaVersion", MetaValue::from_number(1));
     block.set("crs", MetaValue::from_string("EPSG:4978"));
-    block.set("vertexCoordinates", MetaValue::from_string(run.has_center ? "relativeToCenter" : "absolute"));
+    block.set("vertexCoordinates", MetaValue::from_string(run.local_frame ? "localFrame" : (run.has_center ? "relativeToCenter" : "absolute")));
     if (run.has_center) {
         MetaValue center = MetaValue::make_array();
         center.add(MetaValue::from_number(run.center_x));
@@ -225,7 +230,8 @@ MetaValue program_block(const RunInfo &run) {
     MetaValue block = MetaValue::make_object();
     block.set("schemaVersion", MetaValue::from_number(1));
     block.set("verticalReference", MetaValue::from_string(vertical_reference));
-    block.set("vertexConvention", MetaValue::from_string(run.has_center ? vertex_convention_relative : vertex_convention_absolute));
+    block.set("vertexConvention", MetaValue::from_string(run.local_frame ? vertex_convention_local_frame
+                                                         : (run.has_center ? vertex_convention_relative : vertex_convention_absolute)));
 
     MetaValue geoorigin = MetaValue::make_object();
     geoorigin.set("mode", MetaValue::from_string(run.geoorigin_mode));

@@ -189,6 +189,25 @@ Also write \fBtrack.glb\fR, the sensor track as a 3D line, with one position per
 ping. The positions are in the same coordinates as \fBmesh.glb\fR, including any
 \fB--geoorigin\fR offset, so the two overlay directly.
 .TP
+.B \--tileset
+Also write the surface as an OGC 3D Tiles 1.1 tileset, \fBtileset/tileset.json\fR and
+one \fBtileset/tile_I_J.glb\fR for each reconstruction tile (one tile, \fBtile_0_0.glb\fR, if
+reconstruction is not chunked), so that a viewer can load a part of a survey at a
+time; a browser will not load a GLB of more than 2 GiB. The vertices of a tile are in the
+local east-north-up frame of the reconstruction, written Y-up as glTF requires (X east,
+Y up, Z south), and the transform of the root tile places that frame on the Earth in
+WGS 84 ECEF, so the tileset does not depend on \fB--geoorigin\fR. The root has no content
+and its children are the tiles, each with a box bounding volume and a geometric error of
+0; the geometric error of the root is the diagonal of its box. The \fBgeoreference\fR,
+\fBprovenance\fR and \fBMB-System\fR blocks are written in the extras of the tiles and
+of \fBtileset.json\fR, with \fBvertexCoordinates\fR \fBlocalFrame\fR. With \fB--html\fR the page
+shows the tileset with a GeoTileset node in place of \fBmesh.glb\fR; X3DOM has that node only
+in its master of October 2026, so use \fB--x3dom-url\fR.
+.TP
+.B \--x3dom-url \fIurl\fR
+The X3DOM script that the page written by \fB--html\fR loads, and the stylesheet \fBx3dom.css\fR beside
+it. The default is the build on www.x3dom.org, which has no GeoTileset node.
+.TP
 .B \--raw-mesh-glb
 Also write \fBraw_mesh.glb\fR, the untrimmed triangle mesh produced by marching
 cubes before support trimming.
@@ -247,6 +266,9 @@ as a height above the WGS 84 ellipsoid.
 .B tiles/tile_I_J.glb
 Written only when reconstruction is chunked: one file per tile, with vertices
 placed exactly as in \fBmesh.glb\fR.
+.TP
+.B tileset/tileset.json, tileset/tile_I_J.glb
+Optional OGC 3D Tiles tileset of the surface; see \fB--tileset\fR.
 .TP
 .B raw_mesh.glb
 Optional untrimmed triangle mesh before support trimming.

@@ -18,6 +18,7 @@ set(MBMESH_SOURCES
   src/io/track.cpp
   src/io/provenance.cpp
   src/io/glb_writer.cpp
+  src/io/tileset_writer.cpp
   src/io/x3dom_writer.cpp
   src/algorithms/point_decimation.cpp
   src/algorithms/normal_estimation.cpp
@@ -116,6 +117,17 @@ if(buildTests)
   target_include_directories(mbmesh_test_x3dom_writer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME mbmesh_x3dom_writer COMMAND mbmesh_test_x3dom_writer)
+
+  add_executable(mbmesh_test_tileset
+    tests/test_tileset.cpp
+    src/io/coordinate_frame.cpp
+    src/io/provenance.cpp
+    src/io/tileset_writer.cpp)
+  target_compile_features(mbmesh_test_tileset PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_tileset PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
+  add_test(NAME mbmesh_tileset COMMAND mbmesh_test_tileset)
 
   add_executable(mbmesh_test_provenance
     tests/test_provenance.cpp

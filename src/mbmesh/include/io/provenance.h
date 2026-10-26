@@ -81,6 +81,10 @@ struct RunInfo {
     // Where the output is.
     std::string geoorigin_mode = "none";   // "none", "automatic" or "specified"
     bool has_center = false;
+    // The vertices are not ECEF offsets from the center but are in the east-north-up frame at the center, written
+    // Y-up as glTF requires (X east, Y up, Z south), as the content of a 3D Tiles tileset whose transform places
+    // them. Needs has_center; the center is then the origin of that frame.
+    bool local_frame = false;
     double center_x = 0.0, center_y = 0.0, center_z = 0.0;   // ECEF, meters
     double center_longitude = 0.0, center_latitude = 0.0, center_height = 0.0;
     double extent_west = 0.0, extent_south = 0.0, extent_east = 0.0, extent_north = 0.0;
@@ -114,6 +118,9 @@ struct GlbContent {
     bool is_tile = false;
     int tile_i = 0;
     int tile_j = 0;
+    // Metadata to write in place of the run metadata that set_glb_run_metadata() set, for a file whose
+    // georeference differs, such as a tileset's content. The content of this file is added to it.
+    const MetaValue *metadata = nullptr;
 };
 
 [[nodiscard]] MetaValue content_metadata(const GlbContent &content);

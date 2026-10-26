@@ -103,6 +103,13 @@ class MbmeshTest(unittest.TestCase):
     self.assertIn('--geoviewpoint', output)
     self.assertIn('Copy GeoViewpoint', output)
 
+  def testHelpDocumentsTileset(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--tileset', output)
+    self.assertIn('tileset/tileset.json', output)
+    self.assertIn('--x3dom-url', output)
+
   def testHelpDocumentsGeoOrigin(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

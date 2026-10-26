@@ -28,6 +28,12 @@ struct Options {
 
     bool write_html = false;
 
+    // --tileset: write the tiles as an OGC 3D Tiles tileset in <output>/tileset (see io/tileset_writer.h).
+    bool write_tileset = false;
+
+    // --x3dom-url: the X3DOM script of the --html page, if not the default.
+    std::string x3dom_url;
+
     // --geoviewpoint, repeatable: GeoViewpoints for the --html page, as given (see parse_user_viewpoint()).
     std::vector<std::string> geoviewpoints;
     bool write_local_xyz = false;

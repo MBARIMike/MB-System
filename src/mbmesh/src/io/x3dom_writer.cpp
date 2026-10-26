@@ -186,6 +186,14 @@ void write_metadata_node(std::ostream &out, const MetaValue &value, const std::s
 
 // The style, the same as the page mbgrd2gltf writes.
 constexpr const char *page_style = R"CSS(
+      /* The scene fills the window. X3DOM sizes its canvas from the CSS size of the canvas, and sets the
+         width and height attributes of the canvas, which give it an aspect ratio, from that. With a height
+         that is a percentage of a parent, the canvas can end up 2:1 whatever the window is, and in Safari
+         the size can grow until the drawing buffer is too large to allocate. A size in viewport units, which
+         must win over the style that X3DOM writes, keeps it the size of the window. */
+      html, body { overflow: hidden; }
+      x3d { display: block; width: 100vw !important; height: 100vh !important; }
+      x3d canvas { display: block; width: 100% !important; height: 100% !important; }
       .x3dom-logContainer { bottom: 0px; position: absolute; }
       #log-panel {
         position: fixed;
@@ -410,11 +418,22 @@ std::string viewer_title(const std::filesystem::path &web_root) {
     return title;
 }
 
-std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory) {
+std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory, bool tileset) {
     std::vector<X3DomModel> models;
     const std::filesystem::path root = normalized_directory(web_root);
     const std::filesystem::path directory = normalized_directory(output_directory);
     const std::string directory_name = directory.filename().string();
+
+    // The tileset, if this run wrote one, is shown in place of mesh.glb, which is the same surface.
+    if (tileset) {
+        X3DomModel model;
+        model.uri = url_encode(directory_name + "/tileset/tileset.json");
+        model.label = "tileset (OGC 3D Tiles)";
+        model.group = directory_name;
+        model.visible = true;
+        model.is_tileset = true;
+        models.push_back(model);
+    }
 
     // The output directory: mesh.glb, then track.glb, then the rest by name.
     std::vector<std::string> names = glb_names(directory);
@@ -427,7 +446,7 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
         model.uri = url_encode(directory_name + "/" + name);
         model.label = name;
         model.group = directory_name;
-        model.visible = name == "mesh.glb" || name == "track.glb";
+        model.visible = (name == "mesh.glb" && !tileset) || name == "track.glb";
         models.push_back(model);
     }
 
@@ -709,6 +728,13 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
 
     const std::string title = options.title.empty() ? options.models.front().uri : options.title;
 
+    // The stylesheet is beside the script, in the same build of X3DOM.
+    std::string x3dom_stylesheet_url = options.x3dom_url;
+    {
+        const std::size_t slash = x3dom_stylesheet_url.find_last_of('/');
+        x3dom_stylesheet_url = (slash == std::string::npos ? std::string() : x3dom_stylesheet_url.substr(0, slash + 1)) + "x3dom.css";
+    }
+
     // GeoViewpoint position and centre of rotation, as latitude, longitude, elevation
     // (the X3D geospatial order), looking straight down with north up.
     const X3DomGeoOrigin &geo = options.geo;
@@ -750,8 +776,8 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "    <meta http-equiv='X-UA-Compatible' content='chrome=1'></meta>\n"
            << "    <meta http-equiv='Content-Type' content='text/html;charset=utf-8'></meta>\n"
            << "    <title>" << escape_html(title) << "</title>\n"
-           << "    <link type='text/css' href='https://www.x3dom.org/x3dom/dist/x3dom.css' rel='stylesheet'>\n"
-           << "    <script type='text/javascript' src='https://www.x3dom.org/x3dom/dist/x3dom-full.js'></script>\n"
+           << "    <link type='text/css' href='" << escape_html(x3dom_stylesheet_url) << "' rel='stylesheet'>\n"
+           << "    <script type='text/javascript' src='" << escape_html(options.x3dom_url) << "'></script>\n"
            << "    <style>" << page_style << "    </style>\n"
            << "  </head>\n"
            << "  <body style='width:100%; height:100%; border:0; margin:0; padding:0;'>\n"
@@ -913,7 +939,14 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         const X3DomModel &model = options.models[i];
         output << "        <switch id='switch_" << i << "' whichChoice='" << (model.visible ? 0 : -1) << "'>\n"
                << "          <transform id='transform_" << i << "'>\n";
-        if (model.visible) {
+        if (model.is_tileset) {
+            // Written whether or not it is shown: tiles are only loaded while the switch shows it.
+            output << "            <GeoTileset id='tileset_" << i << "' url='&quot;" << escape_html(model.uri) << "&quot;'>";
+            if (options.use_geoorigin) {
+                output << "\n              <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n            ";
+            }
+            output << "</GeoTileset>\n";
+        } else if (model.visible) {
             output << "            <Inline id='inline_" << i << "' url='" << escape_html(model.uri) << "' nameSpaceName='model_" << i
                    << "' mapDEFToID='true'></Inline>\n";
         }
@@ -946,7 +979,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "    <script>\n"
            << "      var viewerModels = [\n";
     for (std::size_t i = 0; i < options.models.size(); i++) {
-        output << "        { uri: '" << options.models[i].uri << "', loaded: " << (options.models[i].visible ? "true" : "false") << " }"
+        output << "        { uri: '" << options.models[i].uri << "', loaded: " << (options.models[i].visible || options.models[i].is_tileset ? "true" : "false") << " }"
                << (i + 1 < options.models.size() ? "," : "") << "\n";
     }
     output << "      ];\n"

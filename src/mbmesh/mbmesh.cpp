@@ -23,6 +23,7 @@
 #include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
 #include "io/glb_writer.h"
+#include "io/tileset_writer.h"
 #include "io/track.h"
 #include "io/x3dom_writer.h"
 
@@ -349,6 +350,48 @@ int main(int argc, char **argv) {
     }
     set_glb_run_metadata(run_metadata(run));
 
+    // The OGC 3D Tiles tileset: each tile's surface in the local east-north-up frame, written Y-up as glTF requires,
+    // and tileset.json, whose root transform is that frame in ECEF. It does not depend on the GeoOrigin.
+    std::vector<TilesetTile> tileset_tiles;
+    MetaValue tileset_metadata;
+    const std::filesystem::path tileset_directory = options.output_directory / "tileset";
+    if (options.write_tileset) {
+        const CoordinateFrame &frame = preprocessed.read_result.frame;
+        RunInfo tileset_run = run;
+        tileset_run.local_frame = true;
+        tileset_run.geoorigin_mode = "none";
+        tileset_run.has_center = true;
+        tileset_run.center_x = frame.origin_ecef.x;
+        tileset_run.center_y = frame.origin_ecef.y;
+        tileset_run.center_z = frame.origin_ecef.z;
+        tileset_run.center_longitude = frame.origin.longitude;
+        tileset_run.center_latitude = frame.origin.latitude;
+        tileset_run.center_height = frame.origin.elevation;
+        tileset_metadata = run_metadata(tileset_run);
+
+        std::error_code tileset_error;
+        std::filesystem::create_directories(tileset_directory, tileset_error);
+        if (tileset_error) {
+            LOG_ERROR("error creating tileset directory '" + tileset_directory.string() + "': " + tileset_error.message());
+            return 1;
+        }
+    }
+    const auto add_tileset_tile = [&](const Mesh &local_mesh, int i, int j) {
+        TilesetTile tile;
+        if (!mesh_bounds(local_mesh, tile.minimum, tile.maximum)) {
+            return;
+        }
+        tile.uri = "tile_" + std::to_string(i) + "_" + std::to_string(j) + ".glb";
+        std::string tile_error;
+        GlbContent content{"tileset_tile", "Surface of one tile of the 3D Tiles tileset, in the east-north-up frame at the center, Y-up", true, i, j};
+        content.metadata = &tileset_metadata;
+        if (!write_mesh_glb_file(tileset_directory / tile.uri, tileset_content_mesh(local_mesh), &tile_error, content)) {
+            LOG_WARN(tile_error);
+            return;
+        }
+        tileset_tiles.push_back(tile);
+    };
+
     CollectedPointCloud collected_points = std::move(preprocessed.read_result.points);
 
     // ====================================================================================================
@@ -421,6 +464,10 @@ int main(int argc, char **argv) {
                 LOG_WARN(tile_error);
             }
 
+            if (options.write_tileset) {
+                add_tileset_tile(tile.result.mesh, tile.i, tile.j);
+            }
+
             append_mesh(&clean_mesh, tile.result.mesh);
             if (keep_raw_mesh) {
                 append_mesh(&raw_mesh, tile.result.raw_mesh);
@@ -474,6 +521,19 @@ int main(int argc, char **argv) {
         output_points.push_back(collected_point.point);
     }
 
+    if (options.write_tileset) {
+        if (!options.use_chunking) {
+            add_tileset_tile(clean_mesh, 0, 0);   // one tile
+        }
+        std::string tileset_error;
+        if (!write_tileset_json(tileset_directory / "tileset.json", preprocessed.read_result.frame, tileset_tiles, tileset_metadata,
+                                "MB-System mbmesh " + mbsystem_version(), &tileset_error)) {
+            LOG_ERROR(tileset_error);
+            return 1;
+        }
+        LOG_INFO("[tileset]", "wrote " + (tileset_directory / "tileset.json").string() + " with " + std::to_string(tileset_tiles.size()) + " tiles");
+    }
+
     LOG_INFO("[reconstruction]", "completed in " + reconstruction_timer.text() + (options.use_chunking ? " on " + std::to_string(options.chunking.threads) + " threads" : std::string(", single pass")));
 
     if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, preprocessed.read_result.track, options, &error)) {
@@ -510,7 +570,10 @@ int main(int argc, char **argv) {
         }
         html_options.metadata = run_metadata(run);
         html_options.geo_summary = geo_metadata_summary(run);
-        html_options.models = find_viewer_models(web_root, options.output_directory);
+        html_options.models = find_viewer_models(web_root, options.output_directory, options.write_tileset);
+        if (!options.x3dom_url.empty()) {
+            html_options.x3dom_url = options.x3dom_url;
+        }
         html_options.log_messages = Logger::captured_messages();
         html_options.log_messages_omitted = Logger::captured_omitted();
         if (!write_glb_x3dom_file(html_path, html_options, &error)) {
@@ -546,6 +609,7 @@ Options parse_options(int argc, char **argv) {
         {"-normal-glb", "--normal-glb"},
         {"-origin-glb", "--origin-glb"},
         {"-track-glb", "--track-glb"},
+        {"-tileset", "--tileset"},
         {"-raw-mesh-glb", "--raw-mesh-glb"},
         {"-decimate", "--decimate"},
         {"-diagnostics", "--diagnostics"},
@@ -593,6 +657,8 @@ Options parse_options(int argc, char **argv) {
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
         {"track-glb", no_argument, nullptr, 1017},
+        {"tileset", no_argument, nullptr, 1019},
+        {"x3dom-url", required_argument, nullptr, 1020},
         {"geoviewpoint", required_argument, nullptr, 1018},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
@@ -743,6 +809,14 @@ Options parse_options(int argc, char **argv) {
             options.write_track_glb = true;
             break;
 
+        case 1019:
+            options.write_tileset = true;
+            break;
+
+        case 1020:
+            options.x3dom_url = optarg;
+            break;
+
         case 1016:
             options.threads = static_cast<std::size_t>(std::strtoull(optarg, nullptr, 10));
             break;
@@ -763,6 +837,7 @@ Options parse_options(int argc, char **argv) {
             options.write_origin_glb = true;
             options.write_track_glb = true;
             options.write_raw_mesh_glb = true;
+            options.write_tileset = true;
             break;
 
         case 'H':
@@ -849,6 +924,11 @@ void print_usage() {
     std::cout << "      --normal-glb             Also write normals.glb\n";
     std::cout << "      --origin-glb             Also write origins.glb\n";
     std::cout << "      --track-glb              Also write track.glb, the sensor track as a 3D line\n";
+    std::cout << "      --tileset                Also write tileset/tileset.json and tileset/tile_I_J.glb, the surface as an OGC 3D\n";
+    std::cout << "                               Tiles tileset (a part of it is loaded as needed, so large surveys fit in a browser).\n";
+    std::cout << "                               With --html the page shows it with a GeoTileset node, which needs a build of X3DOM\n";
+    std::cout << "                               that has one: see --x3dom-url\n";
+    std::cout << "      --x3dom-url <url>        The X3DOM script of the --html page [https://www.x3dom.org/x3dom/dist/x3dom-full.js]\n";
     std::cout << "      --raw-mesh-glb           Also write raw_mesh.glb before support trimming\n";
     std::cout << "      --diagnostics            Also write pointcloud, normal, and origin GLBs\n";
     std::cout << "      --all-outputs            Write all optional outputs\n\n";

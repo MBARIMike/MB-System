@@ -65,7 +65,7 @@ and the tests check that they do not.
 |---|---|
 | `schemaVersion` | Version of this vocabulary. 1 for this document. |
 | `crs` | The coordinate reference system of the vertex coordinates, once the center is added back. An EPSG code: `EPSG:4978` is WGS 84 geocentric Cartesian, in meters. |
-| `vertexCoordinates` | `"absolute"` if the vertices are already in `crs`, or `"relativeToCenter"` if `center` must be added to every vertex to get coordinates in `crs`. |
+| `vertexCoordinates` | `"absolute"` if the vertices are already in `crs`, `"relativeToCenter"` if `center` must be added to every vertex to get coordinates in `crs`, or `"localFrame"` if the vertices are in the local east-north-up frame at `center` (see below). |
 | `center` | Present when `vertexCoordinates` is `"relativeToCenter"`. A 3-vector in meters in `crs`. Same name and same meaning as `CESIUM_RTC.center` and the 3D Tiles `RTC_CENTER`: **absolute = vertex + center**. |
 | `geodeticCenter` | The same point as `center`, as WGS 84 geodetic coordinates in decimal degrees and meters. Present when `center` is. Written with named members because `EPSG:4979` orders its axes latitude, longitude, height, which is often confused. |
 | `heightReference` | What `height` is measured from. `"ellipsoid"`: the height above the WGS 84 ellipsoid. |
@@ -77,6 +77,17 @@ instead.
 
 To get absolute coordinates: `absolute = vertex + center` when `vertexCoordinates` is
 `"relativeToCenter"`, and `absolute = vertex` when it is `"absolute"`.
+
+### Content of a 3D Tiles tileset: `localFrame`
+
+The tile files of an OGC 3D Tiles tileset (`mbmesh --tileset`) are not offsets in ECEF axes. 3D Tiles
+glTF content is Y-up and is placed by the transform of the tileset, so their vertices are in the
+east-north-up frame at the frame origin, written Y-up: X is east, Y is up and Z is south. `vertexCoordinates` is
+`"localFrame"` and `center` is the origin of that frame, in ECEF. To get absolute coordinates:
+`absolute = center + east * x + north * (-z) + up * y`, where `east`, `north` and `up` are the unit
+vectors of the local frame at `geodeticCenter` expressed in ECEF; they are the first three columns of the
+`transform` of the root tile in `tileset.json`, a 4x4 matrix in column-major order whose last column is `center`. A
+viewer that follows 3D Tiles (turn Y-up to Z-up with a quarter turn about X, then apply the transform) needs none of this.
 
 ### Why these names
 

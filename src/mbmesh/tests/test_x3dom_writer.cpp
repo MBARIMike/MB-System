@@ -147,6 +147,19 @@ int main() {
                     "the page has a menu to choose between the two");
     }
 
+    // ---- the scene fills the window, whatever X3DOM does with the size of its canvas
+    {
+        X3DomWriterOptions options;
+        options.title = "survey";
+        options.geo = geo;
+        options.models = {model("mbmesh_output/mesh.glb", "mesh.glb", "mbmesh_output", true)};
+        const std::string page = write_page(options);
+        ok &= check(contains(page, "x3d { display: block; width: 100vw !important; height: 100vh !important; }") &&
+                        contains(page, "x3d canvas { display: block; width: 100% !important; height: 100% !important; }") &&
+                        contains(page, "html, body { overflow: hidden; }"),
+                    "the page sizes the scene and its canvas in viewport units, so that they cannot grow");
+    }
+
     // ---- GeoViewpoints the user supplies with --geoviewpoint
     {
         X3DomUserViewpoint v;
@@ -272,6 +285,60 @@ int main() {
         X3DomWriterOptions without = options;
         without.user_viewpoints.clear();
         ok &= check(!contains(write_page(without), "USER_GEOVIEW"), "no user GeoViewpoints, none in the page");
+    }
+
+    // ---- a tileset: a GeoTileset in the page, with the GeoOrigin, and the script that has it
+    {
+        X3DomWriterOptions options;
+        options.title = "survey";
+        options.use_geoorigin = true;
+        options.geo = geo;
+        options.x3dom_url = "http://127.0.0.1:8000/x3dom-full.js";
+        X3DomModel tileset = model("mbmesh_output/tileset/tileset.json", "tileset (OGC 3D Tiles)", "mbmesh_output", true);
+        tileset.is_tileset = true;
+        options.models = {tileset, model("mbmesh_output/track.glb", "track.glb", "mbmesh_output", true)};
+        const std::string page = write_page(options);
+        ok &= check(contains(page, "<GeoTileset id='tileset_0' url='&quot;mbmesh_output/tileset/tileset.json&quot;'>") && contains(page, "</GeoTileset>"),
+                    "the tileset is a GeoTileset whose url is an MFString");
+        ok &= check(contains(page, "<GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n            </GeoTileset>") ||
+                        page.find("<GeoOrigin USE='GRID_ORIGIN'>", page.find("<GeoTileset")) < page.find("</GeoTileset>"),
+                    "the GeoTileset has the GeoOrigin as its child node");
+        ok &= check(contains(page, "<script type='text/javascript' src='http://127.0.0.1:8000/x3dom-full.js'></script>") &&
+                        contains(page, "href='http://127.0.0.1:8000/x3dom.css'") && !contains(page, "www.x3dom.org/x3dom/dist"),
+                    "the page loads the X3DOM script it was given, and the stylesheet beside it");
+        ok &= check(!contains(page, "<Inline id='inline_0'") && contains(page, "<Inline id='inline_1'"), "a tileset is not an Inline");
+        ok &= check(contains(page, "{ uri: 'mbmesh_output/tileset/tileset.json', loaded: true }"), "a tileset needs no lazy loading");
+
+        // Without a GeoOrigin the GeoTileset has none.
+        X3DomWriterOptions absolute = options;
+        absolute.use_geoorigin = false;
+        const std::string absolute_page = write_page(absolute);
+        ok &= check(contains(absolute_page, "<GeoTileset id='tileset_0'") && !contains(absolute_page, "GRID_ORIGIN"), "without a GeoOrigin the GeoTileset has none");
+
+        // The default script.
+        X3DomWriterOptions plain;
+        plain.title = "survey";
+        plain.geo = geo;
+        plain.models = {model("mbmesh_output/mesh.glb", "mesh.glb", "mbmesh_output", true)};
+        ok &= check(contains(write_page(plain), "src='https://www.x3dom.org/x3dom/dist/x3dom-full.js'") &&
+                        contains(write_page(plain), "href='https://www.x3dom.org/x3dom/dist/x3dom.css'"),
+                    "the default script and stylesheet are the ones on x3dom.org");
+    }
+
+    // ---- which models a run offers: a tileset takes the place of mesh.glb
+    {
+        const std::filesystem::path root = std::filesystem::temp_directory_path() / "mbmesh_test_models";
+        std::filesystem::remove_all(root);
+        touch(root / "mbmesh_output" / "mesh.glb");
+        touch(root / "mbmesh_output" / "track.glb");
+        const std::vector<X3DomModel> with = find_viewer_models(root, root / "mbmesh_output", true);
+        const std::vector<X3DomModel> without = find_viewer_models(root, root / "mbmesh_output", false);
+        ok &= check(with.size() == 3 && with[0].is_tileset && with[0].visible && with[0].uri == "mbmesh_output/tileset/tileset.json",
+                    "a run with a tileset lists it first, shown");
+        ok &= check(with[1].label == "mesh.glb" && !with[1].visible && with[2].label == "track.glb" && with[2].visible,
+                    "mesh.glb is then not shown, since the tileset is the same surface, and the track is");
+        ok &= check(without.size() == 2 && without[0].label == "mesh.glb" && without[0].visible && !without[0].is_tileset, "without a tileset, mesh.glb is shown");
+        std::filesystem::remove_all(root);
     }
 
     // ---- a check box for every model; models that start switched off load when first wanted

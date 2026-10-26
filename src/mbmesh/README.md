@@ -104,6 +104,8 @@ The page has to be served over HTTP because browsers will not load the GLB files
 | `--normal-glb`, `-normal-glb` | none | Write `normals.glb`. |
 | `--origin-glb`, `-origin-glb` | none | Write `origins.glb`. |
 | `--track-glb`, `-track-glb` | none | Write `track.glb`, the sensor track as a 3D line. |
+| `--tileset`, `-tileset` | none | Write `tileset/tileset.json` and `tileset/tile_I_J.glb`, the surface as an OGC 3D Tiles tileset (see "OGC 3D Tiles"). |
+| `--x3dom-url` | `url` | The X3DOM script of the `--html` page, and the stylesheet beside it. Defaults to the build on `www.x3dom.org`, which has no `GeoTileset`; use a build of X3DOM master (October 2026 or later) to see a tileset. |
 | `--raw-mesh-glb`, `-raw-mesh-glb` | none | Write `raw_mesh.glb`, the untrimmed mesh before support trimming. |
 | `--diagnostics`, `-diagnostics` | none | Write `pointcloud.glb`, `normals.glb`, and `origins.glb`. |
 | `--all-outputs`, `-all-outputs` | none | Write every optional output currently supported. |
@@ -137,11 +139,25 @@ Every GLB records where it is on the Earth and how it was made in `asset.extras`
 
 The viewer page (`--html`) carries the same tree in a `GeoMetadata` node (the `summary` keywords, and the full tree as a `MetadataSet` named `extras`) and a `WorldInfo` node. All are written from one tree, so they cannot disagree. The names are a proposal for other software to adopt, described in [GEOREFERENCE.md](GEOREFERENCE.md), which also lists where each name comes from and what the files do not say (the vertical reference has no geoid correction). `mbgrd2gltf` writes the same blocks.
 
+### OGC 3D Tiles
+
+`--tileset` writes the reconstruction as an OGC 3D Tiles 1.1 tileset in `<outputdir>/tileset/`: one `tile_I_J.glb` for each reconstruction tile (one tile, `tile_0_0.glb`, for a single-pass run) and `tileset.json`. The tileset does not depend on `--geoorigin`.
+
+- **Content.** Each tile's vertices are in the local east-north-up frame of the reconstruction, written Y-up as glTF requires and as 3D Tiles expects: X is east, Y is up and Z is south. Loaders turn Y-up into Z-up with a quarter turn about X.
+- **Placement.** The `transform` of the root tile is that east-north-up frame at the frame origin in WGS 84 ECEF (a 4x4 matrix in column-major order whose columns are east, north, up and the origin).
+- **Structure.** The root tile has no content and the tiles are its leaf children, each with a box bounding volume (in the east-north-up frame) and a geometric error of 0. The geometric error of the root is the diagonal of its box, so a viewer always refines to the tiles and loads those in view. There is only one level of detail for now.
+- **Metadata.** `asset.extras` of each tile and `extras` of `tileset.json` hold the same `georeference`, `provenance` and `MB-System` blocks as the other GLBs (see [GEOREFERENCE.md](GEOREFERENCE.md)), with `vertexCoordinates` `localFrame`, and the frame origin as the `center`.
+- **Viewing.** With `--html` the page shows the tileset with a `GeoTileset` node, with the GeoOrigin as its child node if there is one, in place of `mesh.glb`. X3DOM has a `GeoTileset` node only since its master of October 2026 ([PR 1364](https://github.com/x3dom/x3dom/pull/1364)); the build on `www.x3dom.org` does not, so point the page at a newer build with `--x3dom-url`.
+
 ### Chunked Output
 
 When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is still written as the merged mesh, and each tile is also written as `tiles/tile_I_J.glb`, with vertices placed exactly as in `mesh.glb`.
 
 ### Optional Outputs
+
+2. **`tileset/tileset.json`** and **`tileset/tile_I_J.glb`** - OGC 3D Tiles tileset
+   - Written with `--tileset` or `--all-outputs`; see "OGC 3D Tiles" below
+   - A part of the surface is loaded at a time, so a survey too large for one GLB can be viewed (a browser will not load a GLB of more than 2 GiB)
 
 2. **`raw_mesh.glb`** - Raw marching-cubes mesh
    - Written with `--raw-mesh-glb` or `--all-outputs`
@@ -532,6 +548,7 @@ High-value future work:
 - **include/io/coordinate_frame.h** and **src/io/coordinate_frame.cpp** - Geodetic, ECEF, and local east-north-up conversions
 - **include/io/datalist_reader.h** and **src/io/datalist_reader.cpp** - MB-System datalist and swath reading
 - **include/io/glb_writer.h** and **src/io/glb_writer.cpp** - Mesh, point, normal, and origin-ray GLB writers
+- **include/io/tileset_writer.h** and **src/io/tileset_writer.cpp** - OGC 3D Tiles output: tile content in the local frame, Y-up, and `tileset.json`
 - **include/io/provenance.h** and **src/io/provenance.cpp** - The georeference and provenance metadata tree written to GLB extras and to the page's GeoMetadata and WorldInfo nodes
 - **include/io/track.h** and **src/io/track.cpp** - Splits the sensor track into lines, breaking it at file changes and gaps
 - **include/io/xyz_writer.h** and **src/io/xyz_writer.cpp** - Local XYZ, ECEF XYZ, and oriented PLY writers
@@ -544,6 +561,7 @@ High-value future work:
 - **tests/test_support_trimming.cpp** - Support-trimming test program
 - **tests/test_chunking.cpp** - Chunked reconstruction test (accuracy, coverage, ownership, thread-count independence) on a synthetic surface
 - **tests/test_x3dom_writer.cpp** - Viewer page writer tests (controls, GeoOrigin, track checkbox, log escaping)
+- **tests/test_tileset.cpp** - Tileset tests: Y-up content and the transform give back the ECEF position of each vertex, and the structure of `tileset.json`
 - **tests/test_provenance.cpp** - Metadata tests: GLB extras equal the metadata tree, absolute = vertex + center, the page says the same
 - **tests/test_track.cpp** - Track splitting and track GLB writer tests
 - **tests/test_coordinate_frame.cpp** - Geodetic/ECEF/local frame conversion tests

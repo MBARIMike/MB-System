@@ -15,6 +15,7 @@ mbmesh_SOURCES = \
 	src/io/track.cpp \
 	src/io/provenance.cpp \
 	src/io/glb_writer.cpp \
+	src/io/tileset_writer.cpp \
 	src/io/x3dom_writer.cpp \
 	src/algorithms/point_decimation.cpp \
 	src/algorithms/normal_estimation.cpp \

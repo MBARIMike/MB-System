@@ -260,6 +260,37 @@ int main() {
         ok &= check(contains(page, "coordinateSystem&quot; &quot;GC&quot;"), label + "geocentric coordinate system in the summary");
     }
 
+    // ---- a file whose georeference differs, such as a tileset's content, has its own metadata ----
+    {
+        RunInfo ecef_run = example_run(true);
+        set_glb_run_metadata(run_metadata(ecef_run));
+
+        RunInfo frame_run = example_run(true);
+        frame_run.local_frame = true;
+        frame_run.geoorigin_mode = "none";
+        const MetaValue frame_metadata = run_metadata(frame_run);
+
+        GlbContent content;
+        content.role = "tileset_tile";
+        content.description = "one tile";
+        content.metadata = &frame_metadata;
+        tinygltf::Model model;
+        ok &= check(write_and_read(directory / "c.glb", content, &model), "round trip with its own metadata");
+        std::map<std::string, std::string> found;
+        flatten_value(model.asset.extras, "", &found);
+        ok &= check(found["georeference.vertexCoordinates"] == "localFrame", "the file's own georeference is written, not the run's");
+        ok &= check(found.count("georeference.center[0]") == 1 && found["MB-System.content.role"] == "tileset_tile", "with its center and its content");
+        ok &= check(found["MB-System.vertexConvention"].find("Y is up") != std::string::npos && found["MB-System.geoOrigin.mode"] == "none",
+                    "and a convention that says how the vertices are placed");
+
+        // The run's own metadata is not changed by it.
+        tinygltf::Model other;
+        ok &= check(write_and_read(directory / "d.glb", GlbContent(), &other), "round trip without");
+        std::map<std::string, std::string> unchanged;
+        flatten_value(other.asset.extras, "", &unchanged);
+        ok &= check(unchanged["georeference.vertexCoordinates"] == "relativeToCenter", "a file without its own metadata still has the run's");
+    }
+
     // ---- no run metadata: no extras, and a page without the nodes ----
     {
         clear_glb_run_metadata();

@@ -74,6 +74,10 @@ struct X3DomModel {
     std::string group;       // models with the same group are listed together under that heading
     std::string group_note;  // small print under the heading, for the first model of a group; may be empty
     bool visible = false;    // shown when the page opens; others are loaded when first switched on
+    // The uri is an OGC 3D Tiles tileset.json, shown with a GeoTileset node (X3DOM 1.8.4 and later builds that
+    // have it), which is written into the page whether or not it is shown, with the GeoOrigin that the page
+    // has, if any, as its child node.
+    bool is_tileset = false;
 };
 
 struct X3DomWriterOptions {
@@ -89,6 +93,10 @@ struct X3DomWriterOptions {
     // GeoViewpoints the user supplied (--geoviewpoint), written after the two overview
     // viewpoints, as USER_GEOVIEW_1, USER_GEOVIEW_2 and so on, each with the GeoOrigin if there is one.
     std::vector<X3DomUserViewpoint> user_viewpoints;
+
+    // The X3DOM script the page loads. A GeoTileset needs a build of X3DOM that has it (merged in October 2026),
+    // which the build on www.x3dom.org, the default, does not.
+    std::string x3dom_url = "https://www.x3dom.org/x3dom/dist/x3dom-full.js";
 
     // The GLBs the page can show.
     std::vector<X3DomModel> models;
@@ -134,4 +142,5 @@ struct X3DomWriterOptions {
 // subdirectory of the output directory are not listed, since they repeat mesh.glb.
 [[nodiscard]] std::vector<X3DomModel> find_viewer_models(
     const std::filesystem::path &web_root,
-    const std::filesystem::path &output_directory);
+    const std::filesystem::path &output_directory,
+    bool tileset = false);
