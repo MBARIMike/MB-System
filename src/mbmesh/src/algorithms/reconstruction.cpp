@@ -123,7 +123,8 @@ ReconstructionResult reconstruct_chunk(
         // residual is 1 at the start and falls toward 0 as the solver converges.
         std::ostringstream message;
         message << "solver " << poisson_solver_name(poisson_diagnostics.solver) << ", " << poisson_diagnostics.iterations
-                << " iterations on " << poisson_diagnostics.cells << " cells: splat " << mbmesh::format_duration(poisson_diagnostics.splat_seconds)
+                << " iterations" << (poisson_diagnostics.solver == PoissonSolver::Sor ? " (relaxation " + std::to_string(poisson_diagnostics.relaxation).substr(0, 5) + ")" : std::string())
+                << " on " << poisson_diagnostics.cells << " cells: splat " << mbmesh::format_duration(poisson_diagnostics.splat_seconds)
                 << ", solve " << mbmesh::format_duration(poisson_diagnostics.solve_seconds) << "; relative residual 1";
         message << std::scientific << std::setprecision(2);
         if (poisson_diagnostics.residual_midway >= 0.0) {

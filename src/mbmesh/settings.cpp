@@ -362,6 +362,10 @@ ReconstructionOptions reconstruction_options(const Options &options) {
     reconstruction.poisson.solver = options.poisson_solver;
     if (options.poisson_iterations > 0) {
         reconstruction.poisson.solver_iterations = options.poisson_iterations;
+    } else if (options.poisson_solver == PoissonSolver::Sor) {
+        // The count chosen from the level of detail is meant for jacobi; sor chooses
+        // its own from the size of each grid.
+        reconstruction.poisson.solver_iterations = 0;
     }
     reconstruction.marching_cubes = options.marching_cubes;
     reconstruction.trimming = options.trimming;

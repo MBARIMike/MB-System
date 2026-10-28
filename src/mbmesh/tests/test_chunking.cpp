@@ -150,6 +150,7 @@ int main() {
         const OrientedPointCloud oriented = whole.oriented_points;
         PoissonDiagnostics few, many;
         ScreenedPoissonOptions poisson = options.poisson;
+        poisson.solver = PoissonSolver::Jacobi;   // the baseline that sor is compared with
         poisson.solver_iterations = 20;
         (void)screened_poisson(oriented, poisson, &few);
         poisson.solver_iterations = 200;
@@ -161,6 +162,50 @@ int main() {
         ok &= check(many.residual_final < few.residual_final, "more iterations lower the residual");
         ok &= check(many.residual_midway > many.residual_final, "the residual falls between the midpoint and the end");
         ok &= check(many.splat_seconds > 0.0 && many.solve_seconds > 0.0, "splat and solve are timed separately");
+
+        // sor reaches a given residual in far fewer sweeps than jacobi
+        ok &= check(parse_poisson_solver("sor", &solver) && solver == PoissonSolver::Sor &&
+                        std::string(poisson_solver_name(solver)) == "sor",
+                    "the solver name sor round-trips");
+        PoissonDiagnostics sor_few, sor_many;
+        poisson.solver = PoissonSolver::Sor;
+        poisson.solver_iterations = 20;
+        const ScalarGrid3D sor_field = screened_poisson(oriented, poisson, &sor_few);
+        poisson.solver_iterations = 100;
+        (void)screened_poisson(oriented, poisson, &sor_many);
+        std::printf("residual: sor 20 iterations %.3e, sor 100 iterations %.3e, relaxation %.3f\n", sor_few.residual_final,
+                    sor_many.residual_final, sor_many.relaxation);
+        ok &= check(sor_many.relaxation > 1.0 && sor_many.relaxation < 2.0, "the over-relaxation factor is between 1 and 2");
+        ok &= check(sor_few.residual_final < few.residual_final, "20 sor iterations beat 20 jacobi iterations");
+        ok &= check(sor_many.residual_final < many.residual_final, "100 sor iterations beat 200 jacobi iterations");
+
+        // with no count given, sor chooses one from the grid size and converges well
+        PoissonDiagnostics automatic;
+        poisson.solver = PoissonSolver::Sor;
+        poisson.solver_iterations = 0;
+        (void)screened_poisson(oriented, poisson, &automatic);
+        std::printf("sor with the automatic count: %d iterations, residual %.3e\n", automatic.iterations, automatic.residual_final);
+        ok &= check(automatic.iterations >= 50 && automatic.residual_final < 1.0e-2, "sor chooses its own iteration count and converges");
+        poisson.solver = PoissonSolver::Jacobi;
+        PoissonDiagnostics automatic_jacobi;
+        (void)screened_poisson(oriented, poisson, &automatic_jacobi);
+        ok &= check(automatic_jacobi.iterations == 200, "jacobi with no count takes 200 iterations");
+
+        // both solve the same equation, so given enough iterations they give the same field
+        poisson.solver = PoissonSolver::Jacobi;
+        poisson.solver_iterations = 4000;
+        const ScalarGrid3D jacobi_field = screened_poisson(oriented, poisson);
+        poisson.solver = PoissonSolver::Sor;
+        poisson.solver_iterations = 400;
+        const ScalarGrid3D converged_sor = screened_poisson(oriented, poisson);
+        double largest_difference = 0.0;
+        for (std::size_t n = 0; n < jacobi_field.values.size() && n < converged_sor.values.size(); n++) {
+            largest_difference = std::max(largest_difference, std::fabs(jacobi_field.values[n] - converged_sor.values[n]));
+        }
+        std::printf("largest field difference, jacobi 4000 vs sor 400: %.3e\n", largest_difference);
+        ok &= check(jacobi_field.values.size() == converged_sor.values.size() && largest_difference < 1.0e-2,
+                    "converged jacobi and sor agree on the field");
+        (void)sor_field;
     }
     std::printf("whole survey: %zu vertices, %zu triangles, max height error %.3f m\n",
                 whole.mesh.vertices.size(), whole.mesh.indices.size() / 3, whole_error);

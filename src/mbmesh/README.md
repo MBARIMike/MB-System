@@ -92,8 +92,8 @@ The page has to be served over HTTP because browsers will not load the GLB files
 | `--chunk-size` | `meters` | Reconstruct in square tiles of about this size (rounded up to whole Poisson cells) instead of one pass. Chunking turns on automatically when a single Poisson grid would exceed about 8 million cells. |
 | `--chunk` | `i,j` | Reconstruct only tile (i,j), for fast testing. Tile (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--info` and a verbose run to see tile indices. |
 | `--max-chunks` | `n` | Stop after n tiles (for testing). |
-| `--poisson-solver` | `name` | How the Poisson grid equation is solved. The only solver so far is `jacobi`, which is the default; the option exists so that further solvers can be chosen by name. |
-| `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000. By default the count is chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
+| `--poisson-solver` | `name` | How the Poisson grid equation is solved: `sor` (the default) or `jacobi`. `sor` is red-black successive over-relaxation, updated in place, with the over-relaxation factor chosen from the grid size (about 1.95 for a grid of a hundred cells across). One iteration of either costs about the same, but `sor` converges in far fewer, so it chooses its own, smaller number of iterations. See "Poisson solvers". |
+| `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000, for either solver. By default `sor` takes one iteration per cell across the longest edge of each tile's grid, but at least 50, and `jacobi` takes a count chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
@@ -605,6 +605,24 @@ From the MB-System repository root:
 ./configure
 make mbmesh
 ```
+
+## Poisson solvers
+
+The Poisson step solves one linear equation per cell of a regular grid: the cell's value times its diagonal equals the sum of its six neighbors plus a right-hand side (the divergence of the splatted normals, plus the screening term near samples). `--poisson-solver` chooses how:
+
+- **`jacobi`** (the previous default, kept for comparison) computes every cell from the previous sweep's neighbors. It needs a second grid and, because information crosses the grid by one cell a sweep, a number of sweeps that grows with the square of the grid width to converge. At the fine grids of a detailed survey (a hundred cells or more across) the 200 to 500 iterations that are used by default stop long before that.
+- **`sor`** (the default) updates the cells in place in a red-black order (first the cells whose x + y + z is even, then the odd ones, so the neighbors of a cell all have the other color and the result does not depend on the order within a color) and over-relaxes each update by a factor between 1 and 2. The factor is the best one for the plain Laplacian on the grid, 2 / (1 + sqrt(1 - r^2)) with r the average of cos(pi / n) over the three directions, kept below 1.98; the screening term only strengthens the diagonal, so it still converges. The number of sweeps then grows with the grid width instead of its square. It uses one grid less memory than `jacobi`.
+
+The relative residual that is logged (see "Log Messages") shows how far either got. On three tiles of a test survey at a 0.025 m cell (grids of 2.6 to 3.5 million cells), with the time of the solver iterations on one tile:
+
+| Solver and iterations | Residual at the end | Solve time |
+|---|---|---|
+| `jacobi`, 473 (its default) | 1.5e-2 to 2.5e-2 | 66 s |
+| `sor`, 40 | 5e-1 to 7e-1 | 5 s |
+| `sor`, 100 | 3e-2 to 5e-2 | 13 s |
+| `sor`, 473 | 1.4e-9 to 6.4e-9 | 60 s |
+
+so `sor` reaches the residual that `jacobi` reaches in 473 iterations in about 100 to 120, and converges completely if it is given more. Without `--poisson-iterations` it therefore takes one iteration per cell across the longest edge of the grid, at least 50 (145, 186 and 196 for those three tiles), which took the residual to 9e-4 to 4e-3, 6 to 25 times lower than `jacobi` reached, in 86 s of Poisson time in all against 241 s, 2.8 times less. The count follows the grid because the iterations that a relaxation needs grow with the width of the grid. A tile of a different size, or a different cell size, gets its own count, and `--poisson-iterations` sets one count for all. The meshes differ a little because `jacobi` has not converged: the vertex counts of the converged `sor` meshes (473 iterations) are 1834, 9072 and 27152, against 1835, 9072 and 27154 from `sor` with its own count, and 1846, 9096 and 27452 from `jacobi`.
 
 ## Log Messages
 

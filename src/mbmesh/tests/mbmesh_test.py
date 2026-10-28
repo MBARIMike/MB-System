@@ -38,7 +38,7 @@ class MbmeshTest(unittest.TestCase):
 
   def testPoissonSolverOptionsAreValidated(self):
     # an unknown solver or a bad count is refused before any data is read
-    for arg, message in (('--poisson-solver=bogus', "'bogus' is not one of jacobi"),
+    for arg, message in (('--poisson-solver=bogus', "'bogus' is not one of jacobi, sor"),
                          ('--poisson-iterations=0', 'whole number from 1 to 100000'),
                          ('--poisson-iterations=x', 'whole number from 1 to 100000')):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', arg],
@@ -48,6 +48,14 @@ class MbmeshTest(unittest.TestCase):
       output = proc.stdout.decode()
       self.assertIn(message, output, arg)
       self.assertNotIn('reading datalist', output, arg)
+
+  def testPoissonSolverNamesAreAccepted(self):
+    # a known solver gets past option parsing, to the missing input
+    for name in ('jacobi', 'sor'):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--poisson-solver=' + name],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+      self.assertNotIn('invalid --poisson-solver', proc.stdout.decode(), name)
 
   def testHelpDocumentsPoissonSolver(self):
     output = subprocess.check_output([self.cmd, '-h'],

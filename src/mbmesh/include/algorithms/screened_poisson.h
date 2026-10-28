@@ -8,6 +8,7 @@
 // How the grid equation is solved; chosen with --poisson-solver.
 enum class PoissonSolver {
     Jacobi,   // plain Jacobi relaxation
+    Sor,      // successive over-relaxation, updating the grid in place in a red-black order
 };
 
 [[nodiscard]] const char *poisson_solver_name(PoissonSolver solver);
@@ -37,12 +38,15 @@ struct ScreenedPoissonOptions {
     double screening_weight = 4.0;
 
     // The method that solves the grid equation.
-    PoissonSolver solver = PoissonSolver::Jacobi;
+    PoissonSolver solver = PoissonSolver::Sor;
 
-    // Number of relaxation passes used to solve the grid equation (a Jacobi
-    // sweep, or whatever one pass of the chosen solver is). More iterations
-    // improve convergence at a proportional runtime cost.
-    int solver_iterations = 200;
+    // Number of relaxation passes used to solve the grid equation (one sweep
+    // over the grid, whichever solver). More iterations improve convergence at
+    // a proportional runtime cost. 0 lets the solver choose: for sor one sweep
+    // per cell across the longest edge of the grid, but at least 50, which
+    // takes the residual to about 1e-3 or less; jacobi, which converges far
+    // more slowly, takes 200.
+    int solver_iterations = 0;
 
     // Apply sample-position constraints in addition to the normal field.
     bool use_screening = true;
@@ -66,6 +70,7 @@ struct PoissonDiagnostics {
     PoissonSolver solver = PoissonSolver::Jacobi;
     long long cells = 0;
     int iterations = 0;
+    double relaxation = 1.0;      // the over-relaxation factor of sor; 1 for jacobi, which has none
     double splat_seconds = 0.0;   // splatting the normals and samples, and the right-hand side
     double solve_seconds = 0.0;   // the iterations, without measuring the residual
 

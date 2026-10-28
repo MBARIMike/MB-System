@@ -119,15 +119,19 @@ also gives smaller tiles, since at least two tiles per thread are wanted. The
 output does not depend on it.
 .TP
 .B \--poisson-solver \fIname\fR
-Select how the Poisson grid equation is solved. The only solver so far is
-\fBjacobi\fR, the default; the option exists so that further solvers can be
-chosen by name.
+Select how the Poisson grid equation is solved: \fBsor\fR, the default, which is
+red-black successive over-relaxation, updated in place, or \fBjacobi\fR. An iteration
+of either costs about the same, but \fBsor\fR converges in far fewer, so it needs
+a much smaller number of iterations, which it chooses itself; on a test survey
+about 100 of its iterations reached the residual of 473 Jacobi iterations.
 .TP
 .B \--poisson-iterations \fIn\fR
-Number of iterations of the solver, from 1 to 100000. The default is chosen from
-the level of detail and is between 200 and 500. The relative residual after the
-iterations, which shows how far the solver converged, is logged with \fB-V\fR
-for each tile and at INFO level in a single pass.
+Number of iterations of the solver, from 1 to 100000, for either solver. By
+default \fBsor\fR takes one iteration per cell across the longest edge of
+each tile's grid, but at least 50, and \fBjacobi\fR takes a count chosen from the
+level of detail, between 200 and 500. The relative residual after the iterations,
+which shows how far the solver converged, is logged with \fB-V\fR for each tile
+and at INFO level in a single pass.
 .TP
 .B \--decimate \fImeters\fR
 Enable voxel-grid point decimation with the specified cell size in local meters.

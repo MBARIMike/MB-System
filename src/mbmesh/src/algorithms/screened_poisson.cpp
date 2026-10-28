@@ -6,17 +6,23 @@ const char *poisson_solver_name(PoissonSolver solver) {
 	switch (solver) {
 	case PoissonSolver::Jacobi:
 		return "jacobi";
+	case PoissonSolver::Sor:
+		return "sor";
 	}
 	return "unknown";
 }
 
 const char *poisson_solver_names() {
-	return "jacobi";
+	return "jacobi, sor";
 }
 
 bool parse_poisson_solver(const std::string &name, PoissonSolver *solver) {
 	if (name == "jacobi") {
 		*solver = PoissonSolver::Jacobi;
+		return true;
+	}
+	if (name == "sor") {
+		*solver = PoissonSolver::Sor;
 		return true;
 	}
 	return false;
@@ -246,8 +252,18 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 
 	ScalarGrid3D scalar_indicator_field(domain);
 
-	ScalarGrid3D next_iteration(domain);
-	const int iteration_count = std::max(0, options.solver_iterations);
+	// Jacobi writes each sweep to a second grid; sor updates the field in place.
+	ScalarGrid3D next_iteration;
+	if (options.solver == PoissonSolver::Jacobi) {
+		next_iteration = ScalarGrid3D(domain);
+	}
+	int iteration_count = std::max(0, options.solver_iterations);
+	if (iteration_count == 0) {
+		iteration_count = options.solver == PoissonSolver::Sor
+		                      ? std::max({50, static_cast<int>(scalar_indicator_field.nx), static_cast<int>(scalar_indicator_field.ny),
+		                                static_cast<int>(scalar_indicator_field.nz)})
+		                      : 200;
+	}
 	const double cell_size_squared = scalar_indicator_field.cell_size * scalar_indicator_field.cell_size;
 
 	// The equation at an interior cell is  diagonal * u = (sum of the six neighbors) + right_hand_side.
@@ -287,8 +303,24 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 		return right_hand_side_sum > 0.0 ? std::sqrt(residual_sum / right_hand_side_sum) : 0.0;
 	};
 
+	// Over-relaxation factor of sor. Without the screening term, the Jacobi iteration
+	// matrix of the 7-point Laplacian on this grid has the spectral radius
+	// (cos(pi/nx) + cos(pi/ny) + cos(pi/nz)) / 3, and the best factor is
+	// 2 / (1 + sqrt(1 - radius^2)). Screening only strengthens the diagonal, so that
+	// factor still converges (any factor below 2 does); it is kept below 1.98 so that
+	// a very large grid cannot push it to 2.
+	double relaxation = 1.0;
+	if (options.solver == PoissonSolver::Sor) {
+		const double pi = std::acos(-1.0);
+		const auto width = [](auto cells) { return std::max(2.0, static_cast<double>(cells) - 1.0); };
+		const double radius = (std::cos(pi / width(scalar_indicator_field.nx)) + std::cos(pi / width(scalar_indicator_field.ny)) +
+		                       std::cos(pi / width(scalar_indicator_field.nz))) / 3.0;
+		relaxation = std::min(1.98, 2.0 / (1.0 + std::sqrt(std::max(0.0, 1.0 - radius * radius))));
+	}
+
 	if (diagnostics != nullptr) {
 		*diagnostics = PoissonDiagnostics();
+		diagnostics->relaxation = relaxation;
 		diagnostics->solver = options.solver;
 		diagnostics->cells = static_cast<long long>(domain.nx) * domain.ny * domain.nz;
 		diagnostics->iterations = iteration_count;
@@ -300,26 +332,55 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 
 	for (int iteration = 0; iteration < iteration_count; iteration++) {
 
-		std::fill(next_iteration.values.begin(), next_iteration.values.end(), 0.0);
+		if (options.solver == PoissonSolver::Sor) {
 
-		for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
-			for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
-				for (int x = 1; x < scalar_indicator_field.nx - 1; x++) {
+			// Red-black order: the cells whose x + y + z is even, then those where it is
+			// odd. A cell's six neighbors all have the other color, so each color can be
+			// updated in place and the result does not depend on the order within it.
+			for (int color = 0; color < 2; color++) {
+				for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
+					for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
+						const int first_x = ((1 + y + z) & 1) == color ? 1 : 2;
+						for (int x = first_x; x < scalar_indicator_field.nx - 1; x += 2) {
 
-					const double neighbor_sum = scalar_indicator_field.at(x - 1, y, z) + scalar_indicator_field.at(x + 1, y, z) +
-					                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
-					                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
+							const double neighbor_sum = scalar_indicator_field.at(x - 1, y, z) + scalar_indicator_field.at(x + 1, y, z) +
+							                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
+							                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
 
-					double diagonal = 0.0;
-					double right_hand_side = 0.0;
-					cell_equation(x, y, z, &diagonal, &right_hand_side);
+							double diagonal = 0.0;
+							double right_hand_side = 0.0;
+							cell_equation(x, y, z, &diagonal, &right_hand_side);
 
-					next_iteration.at(x, y, z) = (neighbor_sum + right_hand_side) / diagonal;
+							double &value = scalar_indicator_field.at(x, y, z);
+							value += relaxation * ((neighbor_sum + right_hand_side) / diagonal - value);
+						}
+					}
 				}
 			}
 		}
+		else {
 
-		scalar_indicator_field.values.swap(next_iteration.values);
+			std::fill(next_iteration.values.begin(), next_iteration.values.end(), 0.0);
+
+			for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
+				for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
+					for (int x = 1; x < scalar_indicator_field.nx - 1; x++) {
+
+						const double neighbor_sum = scalar_indicator_field.at(x - 1, y, z) + scalar_indicator_field.at(x + 1, y, z) +
+						                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
+						                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
+
+						double diagonal = 0.0;
+						double right_hand_side = 0.0;
+						cell_equation(x, y, z, &diagonal, &right_hand_side);
+
+						next_iteration.at(x, y, z) = (neighbor_sum + right_hand_side) / diagonal;
+					}
+				}
+			}
+
+			scalar_indicator_field.values.swap(next_iteration.values);
+		}
 
 		if (diagnostics != nullptr && iteration + 1 == iteration_count / 2 && iteration + 1 < iteration_count) {
 			const mbmesh::Stopwatch residual_timer;

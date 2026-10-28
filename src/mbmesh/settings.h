@@ -78,7 +78,7 @@ struct Options {
 
     // The grid solver and its number of iterations, from --poisson-solver and
     // --poisson-iterations. A count of 0 keeps the one chosen from the level of detail.
-    PoissonSolver poisson_solver = PoissonSolver::Jacobi;
+    PoissonSolver poisson_solver = PoissonSolver::Sor;
     int poisson_iterations = 0;
 
     PointDecimationOptions decimation;
