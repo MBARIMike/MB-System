@@ -93,6 +93,8 @@ struct RunInfo {
     // How it was made.
     double level_of_detail = 0.0;
     double poisson_cell_size = 0.0;
+    std::string poisson_solver;
+    int poisson_iterations = 0;
     double normal_search_radius = 0.0;
     double point_spacing = 0.0;   // median nearest-neighbor distance
     bool chunked = false;

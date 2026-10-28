@@ -258,6 +258,10 @@ MetaValue program_block(const RunInfo &run) {
     MetaValue reconstruction = MetaValue::make_object();
     reconstruction.set("levelOfDetail", MetaValue::from_number(run.level_of_detail));
     reconstruction.set("poissonCellSize", MetaValue::from_number(run.poisson_cell_size));
+    if (!run.poisson_solver.empty()) {
+        reconstruction.set("poissonSolver", MetaValue::from_string(run.poisson_solver));
+        reconstruction.set("poissonIterations", MetaValue::from_number(run.poisson_iterations));
+    }
     reconstruction.set("normalSearchRadius", MetaValue::from_number(run.normal_search_radius));
     reconstruction.set("pointSpacing", MetaValue::from_number(run.point_spacing));
     reconstruction.set("mode", MetaValue::from_string(run.chunked ? "chunked" : "singlePass"));

@@ -36,6 +36,25 @@ class MbmeshTest(unittest.TestCase):
     self.assertNotEqual(proc.returncode, 0)
     self.assertIn('invalid --chunk argument', proc.stdout.decode())
 
+  def testPoissonSolverOptionsAreValidated(self):
+    # an unknown solver or a bad count is refused before any data is read
+    for arg, message in (('--poisson-solver=bogus', "'bogus' is not one of jacobi"),
+                         ('--poisson-iterations=0', 'whole number from 1 to 100000'),
+                         ('--poisson-iterations=x', 'whole number from 1 to 100000')):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', arg],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+      self.assertNotEqual(proc.returncode, 0, arg)
+      output = proc.stdout.decode()
+      self.assertIn(message, output, arg)
+      self.assertNotIn('reading datalist', output, arg)
+
+  def testHelpDocumentsPoissonSolver(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    for option in ('--poisson-solver', '--poisson-iterations'):
+      self.assertIn(option, output)
+
   def testHelpDocumentsChunking(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

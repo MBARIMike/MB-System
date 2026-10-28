@@ -1,5 +1,27 @@
  #include "algorithms/screened_poisson.h"
 
+#include "util/stopwatch.h"
+
+const char *poisson_solver_name(PoissonSolver solver) {
+	switch (solver) {
+	case PoissonSolver::Jacobi:
+		return "jacobi";
+	}
+	return "unknown";
+}
+
+const char *poisson_solver_names() {
+	return "jacobi";
+}
+
+bool parse_poisson_solver(const std::string &name, PoissonSolver *solver) {
+	if (name == "jacobi") {
+		*solver = PoissonSolver::Jacobi;
+		return true;
+	}
+	return false;
+}
+
 Vec3 cell_index(Vec3 point, Vec3 origin, double cell_size) {
 	return Vec3(static_cast<int>(std::floor((point.x - origin.x) / cell_size)),
 	            static_cast<int>(std::floor((point.y - origin.y) / cell_size)),
@@ -42,7 +64,10 @@ double finite_difference_component(const VectorGrid3D &vector_grid, int x, int y
  * Extracts an implicit surface from an OrientedPoint set.
  ******************************************************************************/
 
-ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, ScreenedPoissonOptions options) {
+ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, ScreenedPoissonOptions options,
+                              PoissonDiagnostics *diagnostics) {
+
+	const mbmesh::Stopwatch splat_timer;
 
 	if (oriented_points.empty() || options.cell_size <= 0.0 || options.normal_splat_radius <= 0.0) {
 		return ScalarGrid3D();
@@ -223,6 +248,55 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 
 	ScalarGrid3D next_iteration(domain);
 	const int iteration_count = std::max(0, options.solver_iterations);
+	const double cell_size_squared = scalar_indicator_field.cell_size * scalar_indicator_field.cell_size;
+
+	// The equation at an interior cell is  diagonal * u = (sum of the six neighbors) + right_hand_side.
+	const auto cell_equation = [&](int x, int y, int z, double *diagonal, double *right_hand_side) {
+		*diagonal = 6.0;
+		*right_hand_side = -cell_size_squared * normal_divergence.at(x, y, z);
+
+		if (options.use_screening && options.screening_weight > 0.0) {
+			const double sample_weight = screening_weights.at(x, y, z);
+			if (sample_weight > 0.0) {
+				const double scaled_screening_weight = cell_size_squared * options.screening_weight * sample_weight;
+				*diagonal += scaled_screening_weight;
+				*right_hand_side += scaled_screening_weight * screening_targets.at(x, y, z);
+			}
+		}
+	};
+
+	// Relative residual of the current field; see PoissonDiagnostics.
+	const auto relative_residual = [&]() {
+		double residual_sum = 0.0;
+		double right_hand_side_sum = 0.0;
+		for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
+			for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
+				for (int x = 1; x < scalar_indicator_field.nx - 1; x++) {
+					double diagonal = 0.0;
+					double right_hand_side = 0.0;
+					cell_equation(x, y, z, &diagonal, &right_hand_side);
+					const double neighbor_sum = scalar_indicator_field.at(x - 1, y, z) + scalar_indicator_field.at(x + 1, y, z) +
+					                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
+					                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
+					const double residual = neighbor_sum + right_hand_side - diagonal * scalar_indicator_field.at(x, y, z);
+					residual_sum += residual * residual;
+					right_hand_side_sum += right_hand_side * right_hand_side;
+				}
+			}
+		}
+		return right_hand_side_sum > 0.0 ? std::sqrt(residual_sum / right_hand_side_sum) : 0.0;
+	};
+
+	if (diagnostics != nullptr) {
+		*diagnostics = PoissonDiagnostics();
+		diagnostics->solver = options.solver;
+		diagnostics->cells = static_cast<long long>(domain.nx) * domain.ny * domain.nz;
+		diagnostics->iterations = iteration_count;
+		diagnostics->splat_seconds = splat_timer.seconds();
+	}
+
+	const mbmesh::Stopwatch solve_timer;
+	double residual_seconds = 0.0;   // measuring the residual is not part of the solve
 
 	for (int iteration = 0; iteration < iteration_count; iteration++) {
 
@@ -236,25 +310,29 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 					                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
 					                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
 
-					const double cell_size_squared = scalar_indicator_field.cell_size * scalar_indicator_field.cell_size;
-					double diagonal = 6.0;
-					double numerator = neighbor_sum - cell_size_squared * normal_divergence.at(x, y, z);
+					double diagonal = 0.0;
+					double right_hand_side = 0.0;
+					cell_equation(x, y, z, &diagonal, &right_hand_side);
 
-					if (options.use_screening && options.screening_weight > 0.0) {
-						const double sample_weight = screening_weights.at(x, y, z);
-						if (sample_weight > 0.0) {
-							const double scaled_screening_weight = cell_size_squared * options.screening_weight * sample_weight;
-							diagonal += scaled_screening_weight;
-							numerator += scaled_screening_weight * screening_targets.at(x, y, z);
-						}
-					}
-
-					next_iteration.at(x, y, z) = numerator / diagonal;
+					next_iteration.at(x, y, z) = (neighbor_sum + right_hand_side) / diagonal;
 				}
 			}
 		}
 
 		scalar_indicator_field.values.swap(next_iteration.values);
+
+		if (diagnostics != nullptr && iteration + 1 == iteration_count / 2 && iteration + 1 < iteration_count) {
+			const mbmesh::Stopwatch residual_timer;
+			diagnostics->residual_midway = relative_residual();
+			residual_seconds += residual_timer.seconds();
+		}
+	}
+
+	if (diagnostics != nullptr) {
+		const mbmesh::Stopwatch residual_timer;
+		diagnostics->residual_final = relative_residual();
+		residual_seconds += residual_timer.seconds();
+		diagnostics->solve_seconds = solve_timer.seconds() - residual_seconds;
 	}
 
 	/**************************************************************************

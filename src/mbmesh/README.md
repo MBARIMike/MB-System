@@ -92,6 +92,8 @@ The page has to be served over HTTP because browsers will not load the GLB files
 | `--chunk-size` | `meters` | Reconstruct in square tiles of about this size (rounded up to whole Poisson cells) instead of one pass. Chunking turns on automatically when a single Poisson grid would exceed about 8 million cells. |
 | `--chunk` | `i,j` | Reconstruct only tile (i,j), for fast testing. Tile (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--info` and a verbose run to see tile indices. |
 | `--max-chunks` | `n` | Stop after n tiles (for testing). |
+| `--poisson-solver` | `name` | How the Poisson grid equation is solved. The only solver so far is `jacobi`, which is the default; the option exists so that further solvers can be chosen by name. |
+| `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000. By default the count is chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
@@ -613,7 +615,25 @@ INFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] input=datalist.mb-1
 DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chunking] tile_size=6.05 m, halo=0.72 m, 6 tiles contain points
 ```
 
-A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s`, `[reconstruction] completed in 1 min 7.5 s on 4 threads`, `[complete] ..., total 1 min 9.0 s`). With `-V` each stage of each tile also reports its own time, which shows where the time goes.
+A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s`, `[reconstruction] completed in 1 min 7.5 s on 4 threads`, `[complete] ..., total 1 min 9.0 s`).
+
+The long wait in between is reported at `INFO` level, so that a run without `-V` shows its progress, but sparingly. When chunking, at most one short line a minute says how many tiles are finished, the percentage, the elapsed time and an estimate of the time left, and a last line gives the time spent in each stage added up over all the tiles and threads, which shows which stage the run waits for. The tiles run on several threads and the largest start first, so the estimate is pessimistic early in the run:
+
+```text
+INFO ... [chunking]  40 of 624 tiles,  6%,   3.2 min elapsed, about  46.6 min left
+INFO ... [chunking]  52 of 624 tiles,  8%,   4.4 min elapsed, about  48.1 min left
+INFO ... [chunking] time summed over all tiles and threads: normals 7 min 2.0 s, poisson 112 min 1.0 s, marching cubes 2 min 4.1 s, trimming 6 min 51.9 s
+```
+
+Each Poisson solve also logs how its time divides and how far the solver got, with `-V` for each tile and at `INFO` in a single pass:
+
+```text
+[poisson] tile 3,-4: solver jacobi, 473 iterations on 2603620 cells: splat 0.5 s, solve 1 min 5.8 s; relative residual 1 -> 3.05e-02 (after 236) -> 1.47e-02 (after 473)
+```
+
+The splat is the time to spread the normals and samples onto the grid and form the right-hand side, and the solve is the iterations. The relative residual is the norm of what is left over in the grid equation divided by the norm of the right-hand side, so it is 1 at the start and falls toward 0 as the solver converges; the run only measures it twice, after half the iterations and at the end, which costs two extra sweeps. A residual that is still falling steeply at the end means that the iterations did not converge.
+
+A single-pass run has no tiles, so it logs the completion of each stage instead (`[normal-estimation]`, `[poisson]`, `[marching-cubes]`, `[support-trimming]`). With `-V` each tile also logs a line of its own, with its number, its time and the time in each of its stages, and the start of each stage is logged.
 
 By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each tile (the tile name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--info` report. Output is serialized, so lines from tiles reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
 

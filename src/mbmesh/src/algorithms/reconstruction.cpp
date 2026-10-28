@@ -8,6 +8,7 @@ using mbmesh::Stopwatch;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -26,6 +27,16 @@ constexpr double maximum_tile_grid_cells = 1.5e8;
 // reconstructed at the same time can be told apart.
 [[nodiscard]] std::string labeled(const std::string &label, const std::string &message) {
     return label.empty() ? message : label + ": " + message;
+}
+
+// A stage's completion line. A single pass has no per-tile progress, so its
+// stages are reported at INFO; with a label the chunked driver reports the tile.
+void log_stage_completed(const char *tag, const std::string &label, const std::string &message) {
+    if (label.empty()) {
+        LOG_INFO(tag, message);
+    } else {
+        LOG_DEBUG(tag, labeled(label, message));
+    }
 }
 
 [[nodiscard]] double snap_down(double value, double cell_size) {
@@ -81,7 +92,8 @@ ReconstructionResult reconstruct_chunk(
         result.status = ReconstructionStatus::NoOrientedSamples;
         return result;
     }
-    LOG_DEBUG("[normal-estimation]", labeled(label, "completed: oriented " + std::to_string(result.oriented_points.size()) + " samples in " + stage_timer.text()));
+    result.times.normals = stage_timer.seconds();
+    log_stage_completed("[normal-estimation]", label, "completed: oriented " + std::to_string(result.oriented_points.size()) + " samples in " + stage_timer.text());
     stage_timer = Stopwatch();
 
     // ------------------------------------------------------------------ screened Poisson
@@ -96,13 +108,32 @@ ReconstructionResult reconstruct_chunk(
         LOG_DEBUG("[poisson]", labeled(label, message.str()));
     }
 
-    ScalarGrid3D poisson_surface = screened_poisson(result.oriented_points, options.poisson);
+    PoissonDiagnostics poisson_diagnostics;
+    ScalarGrid3D poisson_surface = screened_poisson(result.oriented_points, options.poisson, &poisson_diagnostics);
     if (poisson_surface.values.empty()) {
         result.status = ReconstructionStatus::EmptyField;
         return result;
     }
-    LOG_DEBUG("[poisson]", labeled(label, "completed: grid=" + std::to_string(poisson_surface.nx) + "x" + std::to_string(poisson_surface.ny) + "x" +
-               std::to_string(poisson_surface.nz) + " in " + stage_timer.text()));
+    result.times.poisson = stage_timer.seconds();
+    result.times.poisson_solve = poisson_diagnostics.solve_seconds;
+    log_stage_completed("[poisson]", label, "completed: grid=" + std::to_string(poisson_surface.nx) + "x" + std::to_string(poisson_surface.ny) + "x" +
+               std::to_string(poisson_surface.nz) + " in " + stage_timer.text());
+    {
+        // Where the Poisson time goes, and how far the solver got. The relative
+        // residual is 1 at the start and falls toward 0 as the solver converges.
+        std::ostringstream message;
+        message << "solver " << poisson_solver_name(poisson_diagnostics.solver) << ", " << poisson_diagnostics.iterations
+                << " iterations on " << poisson_diagnostics.cells << " cells: splat " << mbmesh::format_duration(poisson_diagnostics.splat_seconds)
+                << ", solve " << mbmesh::format_duration(poisson_diagnostics.solve_seconds) << "; relative residual 1";
+        message << std::scientific << std::setprecision(2);
+        if (poisson_diagnostics.residual_midway >= 0.0) {
+            message << " -> " << poisson_diagnostics.residual_midway << " (after " << poisson_diagnostics.iterations / 2 << ")";
+        }
+        if (poisson_diagnostics.residual_final >= 0.0) {
+            message << " -> " << poisson_diagnostics.residual_final << " (after " << poisson_diagnostics.iterations << ")";
+        }
+        log_stage_completed("[poisson]", label, message.str());
+    }
     stage_timer = Stopwatch();
 
     // ------------------------------------------------------------------ marching cubes
@@ -118,8 +149,9 @@ ReconstructionResult reconstruct_chunk(
         result.status = ReconstructionStatus::EmptyMesh;
         return result;
     }
-    LOG_DEBUG("[marching-cubes]", labeled(label, "completed: " + std::to_string(result.raw_mesh.vertices.size()) + " vertices, " +
-               std::to_string(result.raw_mesh.indices.size() / 3) + " triangles in " + stage_timer.text()));
+    result.times.marching_cubes = stage_timer.seconds();
+    log_stage_completed("[marching-cubes]", label, "completed: " + std::to_string(result.raw_mesh.vertices.size()) + " vertices, " +
+               std::to_string(result.raw_mesh.indices.size() / 3) + " triangles in " + stage_timer.text());
     stage_timer = Stopwatch();
 
     // ------------------------------------------------------------------ support trimming
@@ -140,6 +172,8 @@ ReconstructionResult reconstruct_chunk(
         result.mesh = result.raw_mesh;
     }
 
+    result.times.trimming = stage_timer.seconds();
+
     if (result.mesh.vertices.empty() || result.mesh.indices.empty()) {
         result.status = ReconstructionStatus::TrimmedAway;
         return result;
@@ -158,7 +192,7 @@ ReconstructionResult reconstruct_chunk(
                 << ", output=" << result.mesh.vertices.size() << " vertices, "
                 << result.mesh.indices.size() / 3 << " triangles in " << stage_timer.text()
                 << " (reconstruction total " << total_timer.text() << ")";
-        LOG_DEBUG("[support-trimming]", labeled(label, message.str()));
+        log_stage_completed("[support-trimming]", label, message.str());
     }
 
     result.status = ReconstructionStatus::Ok;
@@ -295,7 +329,7 @@ bool reconstruct_chunked(
             counts.tiles_with_points++;
         }
     }
-    LOG_DEBUG("[chunking]", "tile_size=" + std::to_string(tile) + " m, halo=" + std::to_string(halo) + " m, " +
+    LOG_INFO("[chunking]", "tile_size=" + std::to_string(tile) + " m, halo=" + std::to_string(halo) + " m, " +
                std::to_string(counts.tiles_with_points) + " tiles contain points");
 
     // ---------------------------------------------------------------- choose the tiles to run
@@ -349,6 +383,11 @@ bool reconstruct_chunked(
     });
 
     std::mutex state_mutex;
+    std::size_t completed_jobs = 0;
+    const Stopwatch reconstruction_timer;
+    constexpr double progress_interval_seconds = 60.0;
+    double last_progress_seconds = 0.0;
+    ReconstructionTimes stage_totals;   // summed over the tiles, so over threads as well
     std::size_t next_job = 0;
     std::size_t next_emit = 0;
     bool stop = false;
@@ -410,7 +449,9 @@ bool reconstruct_chunked(
         if (tile_result.result.status != ReconstructionStatus::Ok) {
             LOG_DEBUG("[chunking]", name + " produced no mesh: " + reconstruction_status_message(tile_result.result.status));
             outcome.disposition = Disposition::Failed;
+            const ReconstructionTimes times = tile_result.result.times;   // the progress line reports them
             tile_result.result = ReconstructionResult();
+            tile_result.result.times = times;
             return true;
         }
 
@@ -435,7 +476,9 @@ bool reconstruct_chunked(
         if (result.mesh.indices.empty()) {
             LOG_DEBUG("[chunking]", name + " has no triangles inside the tile");
             outcome.disposition = Disposition::EmptyCrop;
+            const ReconstructionTimes times = tile_result.result.times;   // the progress line reports them
             tile_result.result = ReconstructionResult();
+            tile_result.result.times = times;
             return true;
         }
 
@@ -457,11 +500,55 @@ bool reconstruct_chunked(
             }
 
             Outcome outcome;
+            const Stopwatch tile_timer;
             if (!run_job(jobs[n], outcome)) {
                 return;
             }
 
             std::lock_guard<std::mutex> lock(state_mutex);
+            completed_jobs++;
+            {
+                const ReconstructionTimes &times = outcome.tile.result.times;
+                stage_totals.normals += times.normals;
+                stage_totals.poisson += times.poisson;
+                stage_totals.poisson_solve += times.poisson_solve;
+                stage_totals.marching_cubes += times.marching_cubes;
+                stage_totals.trimming += times.trimming;
+
+                // One line per tile at DEBUG; at INFO only a short progress line, and
+                // not more than one a minute, because a survey can have hundreds of tiles.
+                const TileResult &done = outcome.tile;
+                std::ostringstream message;
+                message << "tile " << completed_jobs << " of " << jobs.size() << " (" << jobs[n].i << "," << jobs[n].j << ") ";
+                if (outcome.disposition == Disposition::Mesh) {
+                    message << "done in " << tile_timer.text() << ": " << done.result.mesh.vertices.size() << " vertices, "
+                            << done.result.mesh.indices.size() / 3 << " triangles";
+                } else if (outcome.disposition == Disposition::EmptyCrop) {
+                    message << "done in " << tile_timer.text() << ": no triangles inside the tile";
+                } else {
+                    message << "produced no mesh after " << tile_timer.text();
+                }
+                message << " (normals " << mbmesh::format_duration(times.normals) << ", poisson "
+                        << mbmesh::format_duration(times.poisson) << ", marching cubes "
+                        << mbmesh::format_duration(times.marching_cubes) << ", trimming "
+                        << mbmesh::format_duration(times.trimming) << ")";
+                LOG_DEBUG("[chunking]", message.str());
+
+                const double elapsed = reconstruction_timer.seconds();
+                if (completed_jobs < jobs.size() && elapsed - last_progress_seconds >= progress_interval_seconds) {
+                    last_progress_seconds = elapsed;
+                    // The largest tiles start first, so the estimate is pessimistic early on.
+                    // Padded so that the numbers line up from one line to the next.
+                    std::ostringstream progress;
+                    progress << std::setw(static_cast<int>(std::to_string(jobs.size()).size())) << completed_jobs << " of " << jobs.size()
+                             << " tiles, " << std::setw(2) << 100 * completed_jobs / jobs.size() << "%, "
+                             << mbmesh::format_minutes(elapsed) << " elapsed, about "
+                             << mbmesh::format_minutes(elapsed * static_cast<double>(jobs.size() - completed_jobs) /
+                                                       static_cast<double>(completed_jobs))
+                             << " left";
+                    LOG_INFO("[chunking]", progress.str());
+                }
+            }
             outcomes[n] = std::move(outcome);
             while (!stop && next_emit < outcomes.size() && outcomes[next_emit].disposition != Disposition::Pending) {
                 Outcome &ready = outcomes[next_emit++];
@@ -506,6 +593,13 @@ bool reconstruct_chunked(
             *error = failure;
         }
         return false;
+    }
+    if (completed_jobs > 0) {
+        LOG_INFO("[chunking]", "time summed over all tiles and threads: normals " + mbmesh::format_duration(stage_totals.normals) +
+                                   ", poisson " + mbmesh::format_duration(stage_totals.poisson) + " (solver iterations " +
+                                   mbmesh::format_duration(stage_totals.poisson_solve) + "), marching cubes " +
+                                   mbmesh::format_duration(stage_totals.marching_cubes) + ", trimming " +
+                                   mbmesh::format_duration(stage_totals.trimming));
     }
     return true;
 }

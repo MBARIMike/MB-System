@@ -1,4 +1,5 @@
 #include "algorithms/reconstruction.h"
+#include "util/stopwatch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -127,7 +128,40 @@ int main() {
     // ---- one run over the whole survey
     const ReconstructionResult whole = reconstruct_chunk(points, options);
     ok &= check(whole.status == ReconstructionStatus::Ok, "whole-survey reconstruction succeeds");
+    ok &= check(whole.times.normals > 0.0 && whole.times.poisson > 0.0 && whole.times.marching_cubes > 0.0,
+                "reconstruct_chunk times the normal, Poisson and marching cubes stages");
+    ok &= check(mbmesh::format_duration(12.34) == "12.3 s" && mbmesh::format_duration(125.06) == "2 min 5.1 s",
+                "format_duration gives seconds, then minutes and seconds");
+    ok &= check(mbmesh::format_minutes(191.3) == "  3.2 min" && mbmesh::format_minutes(2793.3) == " 46.6 min" &&
+                    mbmesh::format_minutes(7261.0) == "121.0 min",
+                "format_minutes gives minutes with a decimal, padded so the decimal points line up");
+    ok &= check(whole.times.poisson_solve > 0.0 && whole.times.poisson_solve <= whole.times.poisson,
+                "the solver iterations are timed and are part of the Poisson time");
     const double whole_error = max_height_error(whole.mesh);
+
+    // ---- the solver reports how far it got
+    {
+        PoissonSolver solver = PoissonSolver::Jacobi;
+        ok &= check(parse_poisson_solver("jacobi", &solver) && solver == PoissonSolver::Jacobi &&
+                        std::string(poisson_solver_name(solver)) == "jacobi",
+                    "the solver name jacobi round-trips");
+        ok &= check(!parse_poisson_solver("bogus", &solver), "an unknown solver name is refused");
+
+        const OrientedPointCloud oriented = whole.oriented_points;
+        PoissonDiagnostics few, many;
+        ScreenedPoissonOptions poisson = options.poisson;
+        poisson.solver_iterations = 20;
+        (void)screened_poisson(oriented, poisson, &few);
+        poisson.solver_iterations = 200;
+        (void)screened_poisson(oriented, poisson, &many);
+        std::printf("residual: 20 iterations %.3e, 200 iterations %.3e (midway %.3e)\n", few.residual_final, many.residual_final,
+                    many.residual_midway);
+        ok &= check(few.cells > 0 && many.iterations == 200, "diagnostics report the grid size and the iterations");
+        ok &= check(few.residual_final > 0.0 && few.residual_final < 1.0, "the relative residual starts below 1 after some iterations");
+        ok &= check(many.residual_final < few.residual_final, "more iterations lower the residual");
+        ok &= check(many.residual_midway > many.residual_final, "the residual falls between the midpoint and the end");
+        ok &= check(many.splat_seconds > 0.0 && many.solve_seconds > 0.0, "splat and solve are timed separately");
+    }
     std::printf("whole survey: %zu vertices, %zu triangles, max height error %.3f m\n",
                 whole.mesh.vertices.size(), whole.mesh.indices.size() / 3, whole_error);
 
@@ -151,6 +185,10 @@ int main() {
     ok &= check(chunked_ok, "chunked reconstruction succeeds: " + error);
     ok &= check(stats.tiles_processed == 9, "a 30 m survey in 10 m tiles gives 3 x 3 tiles, got " + std::to_string(stats.tiles_processed));
     ok &= check(stats.tiles_failed == 0 && stats.tiles_skipped_sparse == 0, "no tile fails or is skipped");
+    ok &= check(!tile_meshes.empty() && std::all_of(tile_meshes.begin(), tile_meshes.end(), [](const TileResult &tile) {
+                    return tile.result.times.poisson > 0.0;
+                }),
+                "every delivered tile carries its stage times");
 
     const double chunked_error = max_height_error(merged);
     std::printf("chunked:      %zu vertices, %zu triangles, max height error %.3f m (%zu tiles)\n",

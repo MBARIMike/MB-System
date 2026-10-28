@@ -39,8 +39,19 @@ enum class ReconstructionStatus {
 
 [[nodiscard]] const char *reconstruction_status_message(ReconstructionStatus status);
 
+// Wall-clock seconds spent in each stage of reconstruct_chunk(); stages that
+// did not run are zero.
+struct ReconstructionTimes {
+    double normals = 0.0;
+    double poisson = 0.0;
+    double poisson_solve = 0.0;   // the part of poisson spent in the solver iterations
+    double marching_cubes = 0.0;
+    double trimming = 0.0;
+};
+
 struct ReconstructionResult {
     ReconstructionStatus status = ReconstructionStatus::Ok;
+    ReconstructionTimes times;
     Mesh raw_mesh;
     Mesh mesh;
     OrientedPointCloud oriented_points;
@@ -49,8 +60,10 @@ struct ReconstructionResult {
 
 // Normal estimation, screened Poisson, marching cubes and support trimming for
 // one set of points. Decimation is not included; apply it beforehand. Progress
-// is logged at DEBUG level through util/logger.h; label, if given, prefixes each
-// message (the chunked driver passes the tile name).
+// is logged through util/logger.h: at INFO level when label is empty (a single
+// pass, where each stage is a long wait worth reporting) and at DEBUG level
+// otherwise, because the chunked driver reports each tile itself. label, if
+// given, prefixes each message (the chunked driver passes the tile name).
 [[nodiscard]] ReconstructionResult reconstruct_chunk(
     const CollectedPointCloud &points,
     const ReconstructionOptions &options,

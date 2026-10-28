@@ -359,6 +359,10 @@ ReconstructionOptions reconstruction_options(const Options &options) {
     ReconstructionOptions reconstruction;
     reconstruction.normals = options.normals;
     reconstruction.poisson = options.poisson;
+    reconstruction.poisson.solver = options.poisson_solver;
+    if (options.poisson_iterations > 0) {
+        reconstruction.poisson.solver_iterations = options.poisson_iterations;
+    }
     reconstruction.marching_cubes = options.marching_cubes;
     reconstruction.trimming = options.trimming;
     return reconstruction;

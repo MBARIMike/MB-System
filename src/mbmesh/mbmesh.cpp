@@ -259,7 +259,8 @@ int main(int argc, char **argv) {
         std::ostringstream settings;
         settings << std::setprecision(6) << "level of detail " << options.level_of_detail << " m, Poisson cell " << options.poisson.cell_size
                  << " m, normal radius " << options.normals.search_radius << " m, point spacing " << preprocessed.metadata.spacing.median
-                 << " m (median), " << preprocessed.metadata.point_count << " soundings; ";
+                 << " m (median), " << preprocessed.metadata.point_count << " soundings; Poisson solver " << poisson_solver_name(options.poisson_solver)
+                 << ", " << (options.poisson_iterations > 0 ? options.poisson_iterations : options.poisson.solver_iterations) << " iterations; ";
         if (options.use_chunking) {
             settings << "chunked reconstruction, tile " << options.chunking.tile_size << " m, halo " << options.chunking.halo << " m, "
                      << options.chunking.threads << " threads";
@@ -341,6 +342,8 @@ int main(int argc, char **argv) {
 
         run.level_of_detail = options.level_of_detail;
         run.poisson_cell_size = options.poisson.cell_size;
+        run.poisson_solver = poisson_solver_name(options.poisson_solver);
+        run.poisson_iterations = options.poisson_iterations > 0 ? options.poisson_iterations : options.poisson.solver_iterations;
         run.normal_search_radius = options.normals.search_radius;
         run.point_spacing = preprocessed.metadata.spacing.median;
         run.chunked = options.use_chunking;
@@ -659,6 +662,8 @@ Options parse_options(int argc, char **argv) {
         {"track-glb", no_argument, nullptr, 1017},
         {"tileset", no_argument, nullptr, 1019},
         {"x3dom-url", required_argument, nullptr, 1020},
+        {"poisson-solver", required_argument, nullptr, 1021},
+        {"poisson-iterations", required_argument, nullptr, 1022},
         {"geoviewpoint", required_argument, nullptr, 1018},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
@@ -817,6 +822,24 @@ Options parse_options(int argc, char **argv) {
             options.x3dom_url = optarg;
             break;
 
+        case 1021:
+            if (!parse_poisson_solver(optarg, &options.poisson_solver)) {
+                LOG_ERROR("invalid --poisson-solver:", std::string("'") + optarg + "' is not one of " + poisson_solver_names());
+                std::exit(1);
+            }
+            break;
+
+        case 1022: {
+            char *end = nullptr;
+            const long iterations = std::strtol(optarg, &end, 10);
+            if (end == optarg || *end != '\0' || iterations < 1 || iterations > 100000) {
+                LOG_ERROR("invalid --poisson-iterations:", std::string("'") + optarg + "' is not a whole number from 1 to 100000");
+                std::exit(1);
+            }
+            options.poisson_iterations = static_cast<int>(iterations);
+            break;
+        }
+
         case 1016:
             options.threads = static_cast<std::size_t>(std::strtoull(optarg, nullptr, 10));
             break;
@@ -909,6 +932,9 @@ void print_usage() {
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
     std::cout << "      --max-chunks <n>         Stop after n tiles (for testing)\n";
     std::cout << "      --threads <n>            Tiles reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
+    std::cout << "      --poisson-solver <name>  How the Poisson grid equation is solved: " << poisson_solver_names() << " [jacobi]\n";
+    std::cout << "      --poisson-iterations <n> Iterations of the solver [chosen from the level of detail, 200 to 500]; the\n";
+    std::cout << "                               relative residual after them is logged with -V, and at INFO in a single pass\n";
     std::cout << "      --info                   Print dataset information and the reconstruction plan, then exit\n";
     std::cout << "  -V, --verbose                Enable progress and diagnostic logging\n";
     std::cout << "  -H, -h, --help               Print this help message\n\n";

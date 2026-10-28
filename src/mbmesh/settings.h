@@ -76,6 +76,11 @@ struct Options {
     bool use_chunking = false;
     ChunkingOptions chunking;
 
+    // The grid solver and its number of iterations, from --poisson-solver and
+    // --poisson-iterations. A count of 0 keeps the one chosen from the level of detail.
+    PoissonSolver poisson_solver = PoissonSolver::Jacobi;
+    int poisson_iterations = 0;
+
     PointDecimationOptions decimation;
     NormalEstimationOptions normals;
     ScreenedPoissonOptions poisson;
