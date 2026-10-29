@@ -854,6 +854,21 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
     throw std::runtime_error("Failed to open HTML output file: " + html_filepath);
   }
   
+  // The log goes in a file of its own beside the page, which the page loads when the log is first shown, so
+  // that a long log does not make the page large and hard to edit by hand.
+  std::string log_filepath = options.output_filepath() + ".log";
+  std::string log_url = html_filepath.substr(html_filepath.find_last_of("/\\") == std::string::npos ? 0 : html_filepath.find_last_of("/\\") + 1);
+  log_url = log_url.substr(0, log_url.size() - 5) + ".log";
+  {
+    std::ofstream log_file(log_filepath);
+    if (!log_file.is_open()) {
+      throw std::runtime_error("Failed to open log output file: " + log_filepath);
+    }
+    for (const auto& log_msg : log_messages) {
+      log_file << log_msg << "\n";
+    }
+  }
+
   // Get grid bounds from bathymetry
   double lon_min = bathymetry.longitude_min();
   double lon_max = bathymetry.longitude_max();
@@ -1175,34 +1190,11 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "    \n";
   html_file << "    <div id='log-panel'>\n";
   html_file << "      <div id='log-header' onclick='toggleLogPanel()'>\n";
-  html_file << "        <span>Processing Log (" << log_messages.size() << " messages)</span>\n";
+  html_file << "        <span id='log-title'>Processing Log</span>\n";
   html_file << "        <span id='close-log'>✕</span>\n";
   html_file << "      </div>\n";
   html_file << "      <div id='log-content'>\n";
-  
-  // Output all captured log messages
-  for (const auto& log_msg : log_messages) {
-    // Escape HTML special characters
-    std::string escaped_msg = log_msg;
-    size_t pos = 0;
-    while ((pos = escaped_msg.find("&", pos)) != std::string::npos) {
-      escaped_msg.replace(pos, 1, "&amp;");
-      pos += 5;
-    }
-    pos = 0;
-    while ((pos = escaped_msg.find("<", pos)) != std::string::npos) {
-      escaped_msg.replace(pos, 1, "&lt;");
-      pos += 4;
-    }
-    pos = 0;
-    while ((pos = escaped_msg.find(">", pos)) != std::string::npos) {
-      escaped_msg.replace(pos, 1, "&gt;");
-      pos += 4;
-    }
-    
-    html_file << "        <div class='log-line'>" << escaped_msg << "</div>\n";
-  }
-  
+
   html_file << "      </div>\n";
   html_file << "    </div>\n";
   html_file << "    \n";
@@ -1210,6 +1202,21 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << std::fixed << std::setprecision(3)
             << "      // The WGS 84 ECEF position of the GeoOrigin that the model is relative to (zeros if it is absolute).\n"
             << "      var modelOrigin = [" << origin_ecef[0] << ", " << origin_ecef[1] << ", " << origin_ecef[2] << "];\n";
+  {
+    // The log file's name as a JavaScript string, with the characters that would end it escaped.
+    std::string escaped_url;
+    for (char c : log_url) {
+      if (c == '\'' || c == '\\') {
+        escaped_url += '\\';
+      }
+      if (c == '<') {
+        escaped_url += "\\x3c";
+      } else {
+        escaped_url += c;
+      }
+    }
+    html_file << "      var logUrl = '" << escaped_url << "';\n";
+  }
   html_file << copy_viewpoint_script << "\n";
   html_file << "      // Makes one of the page's viewpoints the one in use.\n";
   html_file << "      function bindViewpoint(id) {\n";
@@ -1217,6 +1224,35 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "        if (viewpoint) {\n";
   html_file << "          viewpoint.setAttribute('set_bind', 'true');\n";
   html_file << "        }\n";
+  html_file << "      }\n\n";
+  html_file << "      // Loads the log file the first time the panel is shown.\n";
+  html_file << "      var logLoaded = false;\n";
+  html_file << "      function loadLog() {\n";
+  html_file << "        if (logLoaded) {\n";
+  html_file << "          return;\n";
+  html_file << "        }\n";
+  html_file << "        logLoaded = true;\n";
+  html_file << "        var content = document.getElementById('log-content');\n";
+  html_file << "        var show = function (lines) {\n";
+  html_file << "          lines.forEach(function (line) {\n";
+  html_file << "            var div = document.createElement('div');\n";
+  html_file << "            div.className = 'log-line';\n";
+  html_file << "            div.textContent = line;\n";
+  html_file << "            content.appendChild(div);\n";
+  html_file << "          });\n";
+  html_file << "          document.getElementById('log-title').textContent = 'Processing Log (' + lines.length + ' lines, from ' + logUrl + ')';\n";
+  html_file << "        };\n";
+  html_file << "        fetch(logUrl).then(function (response) {\n";
+  html_file << "          if (!response.ok) {\n";
+  html_file << "            throw new Error(response.status + ' ' + response.statusText);\n";
+  html_file << "          }\n";
+  html_file << "          return response.text();\n";
+  html_file << "        }).then(function (text) {\n";
+  html_file << "          show(text.split('\\n').filter(function (line) { return line.length > 0; }));\n";
+  html_file << "        }).catch(function (error) {\n";
+  html_file << "          logLoaded = false;\n";
+  html_file << "          show(['Could not load ' + logUrl + ': ' + error.message + ' (the page must be served over HTTP)']);\n";
+  html_file << "        });\n";
   html_file << "      }\n\n";
   html_file << "      function toggleLogPanel() {\n";
   html_file << "        var panel = document.getElementById('log-panel');\n";
@@ -1227,6 +1263,7 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "        } else {\n";
   html_file << "          panel.classList.add('visible');\n";
   html_file << "          btn.textContent = 'Hide Processing Log';\n";
+  html_file << "          loadLog();\n";
   html_file << "        }\n";
   html_file << "      }\n";
   html_file << "    </script>\n";

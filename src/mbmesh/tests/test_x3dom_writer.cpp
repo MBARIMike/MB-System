@@ -408,6 +408,28 @@ int main() {
                     "the page counts and mentions the messages that were left out");
     }
 
+    // ---- the log in a file of its own, loaded by the page
+    {
+        X3DomWriterOptions options;
+        options.geo = geo;
+        options.models = {model("a.glb", "a.glb", "g", true)};
+        options.log_messages = {"DEBUG should not be in the page"};
+        options.log_url = viewer_log_url("/x/my run/mbmesh_output");
+        const std::string page = write_page(options);
+        ok &= check(viewer_log_url("/x/my run") == "my%20run/mbmesh.log", "the log URL is relative to the page beside the directory, encoded");
+        ok &= check(!contains(page, "should not be in the page") && !contains(page, "class='log-line'>"), "the page does not hold the messages");
+        ok &= check(contains(page, "var logUrl = 'mbmesh_output/mbmesh.log'") || contains(page, "var logUrl = 'my%20run/mbmesh.log'"), "the page names the log file");
+        ok &= check(contains(page, "function loadLog()") && contains(page, "fetch(logUrl)"), "the page loads it");
+
+        const std::filesystem::path log = std::filesystem::temp_directory_path() / "mbmesh_test.log";
+        std::string error;
+        ok &= check(write_log_file(log, {"INFO a", "DEBUG b < c"}, 3, &error), "the log file is written");
+        std::ifstream input(log);
+        const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        std::filesystem::remove(log);
+        ok &= check(text == "INFO a\nDEBUG b < c\n... 3 further messages are not shown\n", "one message a line, unescaped, then the omitted count");
+    }
+
     // ---- errors
     {
         X3DomWriterOptions one;
@@ -533,10 +555,57 @@ int main() {
             glb.write(json.data(), static_cast<std::streamsize>(json.size()));
         }
         use_geoorigin = false;
-        find_survey_models(survey, base, &use_geoorigin, &survey_geo);
+        static_cast<void>(find_survey_models(survey, base, &use_geoorigin, &survey_geo));
         ok &= check(use_geoorigin && std::fabs(survey_geo.origin_lon + 122.3) < 1e-12 && std::fabs(survey_geo.origin_lat - 36.4) < 1e-12 &&
                         std::fabs(survey_geo.origin_elevation + 900.0) < 1e-9 && survey_geo.has_local_view && survey_geo.view_altitude > 1000.0,
                     "the first mesh.glb with a georeference gives the GeoOrigin and an overview above the data");
+
+        // The view takes in every georeferenced GLB; the GeoOrigin is still that of the first with relative vertices
+        {
+            const std::string json =
+                "{\"asset\":{\"version\":\"2.0\",\"extras\":{\"georeference\":{\"vertexCoordinates\":\"absolute\","
+                "\"extent\":{\"west\":-122.21,\"south\":36.39,\"east\":-122.19,\"north\":36.41}}}}}   ";
+            std::ofstream glb(survey / "lidar" / "points.glb", std::ios::binary);
+            const std::uint32_t length = static_cast<std::uint32_t>(json.size());
+            const std::uint32_t words[5] = {0x46546C67, 2, 28 + length, length, 0x4E4F534A};
+            glb.write(reinterpret_cast<const char *>(words), sizeof(words));
+            glb.write(json.data(), static_cast<std::streamsize>(json.size()));
+            glb.close();
+            bool wide_origin = false;
+            X3DomGeoOrigin wide;
+            std::vector<std::string> mismatches;
+            static_cast<void>(find_survey_models(survey, base, &wide_origin, &wide, &mismatches));
+            ok &= check(mismatches.size() == 1 && contains(mismatches[0], "lidar/points.glb") && contains(mismatches[0], "absolute vertices"),
+                        "a GLB with absolute vertices does not agree with a GeoOrigin");
+
+            // A GLB relative to another GeoOrigin, a second away in longitude, is reported and named
+            const std::string other =
+                "{\"asset\":{\"version\":\"2.0\",\"extras\":{\"georeference\":{\"vertexCoordinates\":\"relativeToCenter\","
+                "\"center\":[-2700100.5,-4300000.25,3800000],\"geodeticCenter\":{\"crs\":\"EPSG:4979\",\"longitude\":-122.3012,"
+                "\"latitude\":36.4,\"height\":-900},\"extent\":{\"west\":-122.31,\"south\":36.39,\"east\":-122.29,\"north\":36.41}}}}}   ";
+            std::ofstream second(survey / "multibeam" / "ZTopo.glb", std::ios::binary);
+            const std::uint32_t other_length = static_cast<std::uint32_t>(other.size());
+            const std::uint32_t other_words[5] = {0x46546C67, 2, 28 + other_length, other_length, 0x4E4F534A};
+            second.write(reinterpret_cast<const char *>(other_words), sizeof(other_words));
+            second.write(other.data(), static_cast<std::streamsize>(other.size()));
+            second.close();
+            bool scratch_origin = false;
+            X3DomGeoOrigin scratch_geo;
+            mismatches.clear();
+            static_cast<void>(find_survey_models(survey, base, &scratch_origin, &scratch_geo, &mismatches));
+            ok &= check(mismatches.size() == 2 && contains(mismatches[1], "multibeam/ZTopo.glb") && contains(mismatches[1], "mbmesh_output/mesh.glb") &&
+                            contains(mismatches[1], "100.0 m apart"),
+                        "a GLB with another GeoOrigin is reported with both names and the distance");
+            std::filesystem::remove(survey / "multibeam" / "ZTopo.glb");
+            std::filesystem::remove(survey / "lidar" / "points.glb");
+            mismatches.clear();
+            touch(survey / "lidar" / "points.glb");
+            static_cast<void>(find_survey_models(survey, base, &scratch_origin, &scratch_geo, &mismatches));
+            ok &= check(mismatches.empty(), "GLBs that agree, and those with no georeference, report nothing");
+            ok &= check(wide_origin && std::fabs(wide.origin_lon + 122.3) < 1e-12 && std::fabs(wide.center_lon + 122.25) < 1e-9 &&
+                            std::fabs(wide.center_lat - 36.4) < 1e-9 && wide.view_altitude > survey_geo.view_altitude * 4.0 && wide.has_local_view,
+                        "the overview is centered on, and as high as to see, all the georeferenced GLBs");
+        }
 
         // The accordions: one per directory, inside the one before, the survey directory open
         X3DomWriterOptions options;
@@ -562,9 +631,26 @@ int main() {
             closed++;
         }
         ok &= check(opened == 6 && closed == 6, "every accordion is closed again");
-        ok &= check(contains(page, "id='model-checkbox-6' type='checkbox' onclick='toggleModel(6, this.checked);'") &&
-                        contains(page, "{ uri: '20260101A/multibeam/mbmesh_output/track.glb', loaded: false }"),
+        ok &= check(contains(page, "id='model-checkbox-6' type='checkbox' checked onclick='toggleModel(6, this.checked);'") &&
+                        contains(page, "id='model-checkbox-5' type='checkbox' onclick='toggleModel(5, this.checked);'") &&
+                        contains(page, "{ uri: '20260101A/multibeam/mbmesh_output/track.glb', loaded: true }") &&
+                        contains(page, "<Inline id='inline_6' url='20260101A/multibeam/mbmesh_output/track.glb'"),
                     "each model has its check box and its place in the model list");
+
+        // User GeoViewpoints given for the survey page are in its menu even without a georeference
+        {
+            X3DomUserViewpoint user;
+            std::string viewpoint_error;
+            ok &= check(parse_user_viewpoint("-122.4,36.6,50,-122.39,36.61,10", &user, &viewpoint_error), "the test viewpoint parses");
+            X3DomWriterOptions plain;
+            plain.nested_groups = true;
+            plain.models = models;
+            plain.user_viewpoints = {user};
+            const std::string plain_page = write_page(plain);
+            ok &= check(contains(plain_page, "<option value='USER_GEOVIEW_1'>User GeoViewpoint 1") &&
+                            !contains(plain_page, "<option value='OVERVIEW_LOCAL'>") && contains(plain_page, "<GeoViewpoint DEF='USER_GEOVIEW_1'"),
+                        "the survey page offers its user GeoViewpoints in the menu, with no georeference");
+        }
 
         std::filesystem::remove_all(base);
     }

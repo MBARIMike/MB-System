@@ -49,8 +49,10 @@ is supplied as the first non-option argument. If it names a directory instead,
 directory: a viewer page with a check box for every .glb file beneath that directory,
 in accordions that mirror its layout, for example a survey directory with
 \fImultibeam\fR and \fIlidar\fR subdirectories. The tiles of a tileset are left out and its
-tileset.json is offered. The page is placed and aimed from the first mbmesh GLB found,
-so GLBs from runs with another GeoOrigin do not line up with it. Run \fBmbmesh\fR in the
+tileset.json is offered. The track.glb files are switched on when the page opens, the other GLBs are not. The page has an overview viewpoint over all the mbmesh GLBs found, as the page of a run does,
+with the GeoOrigin of the first. A GLB with another GeoOrigin, or with absolute vertices, does not line up
+with it, and is logged as an ERROR that names it. \fB--geoviewpoint\fR adds GeoViewpoints to its
+Viewpoint menu, without \fB--html\fR. Run \fBmbmesh\fR in the
 survey directory or above it and serve that directory.
 .TP
 .B \-O\fI outputdir\fR, \fB--output\fR \fIoutputdir\fR
@@ -316,8 +318,11 @@ web root, which identify the survey, for example
 opened with the button at the bottom left, which shows every message of the run
 up to DEBUG level, whether or not \fB-V\fR was used: the command line, the
 settings, the timing of each stage and, when chunking, of each tile. At most
-20,000 messages are kept, and the page says how many were left out. The page is
-written last so that the log is complete.
+20,000 messages are kept, and the log says how many were left out. The log is
+written to \fImbmesh.log\fR in the output directory, one message a line, and not
+into the page, which it would make large and hard to edit; the page loads it when
+the panel is first opened, so it must be served over HTTP. The log is written
+last so that it is complete.
 .IP
 The page has a check box for every GLB it can show: the .glb files in the output
 directory, with \fBmesh.glb\fR and \fBtrack.glb\fR first, and then the .glb files in the

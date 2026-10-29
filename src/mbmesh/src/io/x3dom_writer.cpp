@@ -378,6 +378,37 @@ constexpr const char *page_script = R"JS(
         }
       }
 
+      // Loads the log file, when the page has one instead of holding the log, the first time the panel is shown.
+      var logLoaded = false;
+      function loadLog() {
+        if (logLoaded || !logUrl) {
+          return;
+        }
+        logLoaded = true;
+        var content = document.getElementById('log-content');
+        var show = function (lines) {
+          var count = 0;
+          lines.forEach(function (line) {
+            var div = document.createElement('div');
+            div.className = 'log-line';
+            div.textContent = line;
+            content.appendChild(div);
+            count++;
+          });
+          document.getElementById('log-title').textContent = 'Processing Log (' + count + ' lines, from ' + logUrl + ')';
+        };
+        fetch(logUrl).then(function (response) {
+          if (!response.ok) {
+            throw new Error(response.status + ' ' + response.statusText);
+          }
+          return response.text();
+        }).then(function (text) {
+          show(text.split('\n').filter(function (line) { return line.length > 0; }));
+        }).catch(function (error) {
+          logLoaded = false;
+          show(['Could not load ' + logUrl + ': ' + error.message + ' (the page must be served over HTTP)']);
+        });
+      }
       function toggleLogPanel() {
         var panel = document.getElementById('log-panel');
         var btn = document.getElementById('toggle-log-btn');
@@ -387,6 +418,7 @@ constexpr const char *page_script = R"JS(
         } else {
           panel.classList.add('visible');
           btn.textContent = 'Hide Processing Log';
+          loadLog();
         }
       }
 )JS";
@@ -421,6 +453,34 @@ std::string viewer_title(const std::filesystem::path &web_root) {
 
 std::filesystem::path viewer_inner_page_path(const std::filesystem::path &output_directory) {
     return normalized_directory(output_directory) / "mbmesh.html";
+}
+
+std::filesystem::path viewer_log_path(const std::filesystem::path &output_directory) {
+    return normalized_directory(output_directory) / "mbmesh.log";
+}
+
+std::string viewer_log_url(const std::filesystem::path &output_directory) {
+    return url_encode(normalized_directory(output_directory).filename().string() + "/mbmesh.log");
+}
+
+bool write_log_file(const std::filesystem::path &log_path, const std::vector<std::string> &messages, std::size_t omitted, std::string *error) {
+    std::ofstream output(log_path);
+    if (!output) {
+        set_error(error, "Unable to create log file: " + log_path.string());
+        return false;
+    }
+    for (const std::string &message : messages) {
+        output << message << "\n";
+    }
+    if (omitted > 0) {
+        output << "... " << omitted << " further messages are not shown\n";
+    }
+    output.close();
+    if (!output) {
+        set_error(error, "Error while writing log file: " + log_path.string());
+        return false;
+    }
+    return true;
 }
 
 std::filesystem::path survey_page_path() {
@@ -525,55 +585,68 @@ std::string glb_json(const std::filesystem::path &path) {
     return json;
 }
 
-// The georeference of a GLB that mbmesh wrote with vertices relative to a center: the ECEF center and the
-// geodetic center and extent, from asset.extras. False if the GLB has none.
-bool glb_georeference(const std::filesystem::path &path, double center_ecef[3], double *longitude, double *latitude, double *height,
-                      double *width_meters) {
+void geodetic_to_ecef_array(double longitude, double latitude, double elevation, double ecef[3]);
+
+// What the asset.extras of a GLB that mbmesh wrote say about where it is.
+struct GlbGeoreference {
+    bool relative = false;       // vertices are relative to center, the ECEF position of the GeoOrigin
+    double center[3] = {0.0, 0.0, 0.0};
+    bool has_geodetic = false;   // geodeticCenter: longitude, latitude and height of the center
+    double longitude = 0.0, latitude = 0.0, height = 0.0;
+    bool has_extent = false;     // extent, in degrees
+    double west = 0.0, east = 0.0, south = 0.0, north = 0.0;
+    std::string where;           // the path of the GLB beneath the survey directory, for messages
+};
+
+// Reads the georeference block of a GLB. False if the GLB has none.
+bool glb_georeference(const std::filesystem::path &path, GlbGeoreference *georeference) {
     const std::string json = glb_json(path);
-    const std::size_t block = json.find("\"relativeToCenter\"");
+    const std::size_t block = json.find("\"georeference\"");
     if (block == std::string::npos) {
         return false;
     }
+    GlbGeoreference result;
+    result.relative = json.find("\"relativeToCenter\"", block) != std::string::npos;
     const std::size_t array = json.find("\"center\"", block);
-    if (array == std::string::npos) {
-        return false;
-    }
-    std::size_t at = json.find('[', array);
-    if (at == std::string::npos) {
-        return false;
-    }
-    const char *cursor = json.c_str() + at + 1;
-    for (int i = 0; i < 3; i++) {
-        char *stop = nullptr;
-        center_ecef[i] = std::strtod(cursor, &stop);
-        if (stop == cursor) {
-            return false;
+    const std::size_t at = array == std::string::npos ? std::string::npos : json.find('[', array);
+    if (result.relative && at != std::string::npos) {
+        const char *cursor = json.c_str() + at + 1;
+        for (int i = 0; i < 3; i++) {
+            char *stop = nullptr;
+            result.center[i] = std::strtod(cursor, &stop);
+            if (stop == cursor) {
+                result.relative = false;
+                break;
+            }
+            cursor = stop;
+            while (*cursor == ',' || *cursor == ' ') {
+                cursor++;
+            }
         }
-        cursor = stop;
-        while (*cursor == ',' || *cursor == ' ') {
-            cursor++;
-        }
+    } else {
+        result.relative = false;
     }
     const std::size_t geodetic = json.find("\"geodeticCenter\"", block);
-    double west = 0.0, east = 0.0, south = 0.0, north = 0.0;
-    if (geodetic == std::string::npos || !json_number_after(json, "longitude", geodetic, longitude) ||
-        !json_number_after(json, "latitude", geodetic, latitude) || !json_number_after(json, "height", geodetic, height)) {
+    result.has_geodetic = geodetic != std::string::npos && json_number_after(json, "longitude", geodetic, &result.longitude) &&
+                          json_number_after(json, "latitude", geodetic, &result.latitude) && json_number_after(json, "height", geodetic, &result.height);
+    const std::size_t extent = json.find("\"extent\"", block);
+    result.has_extent = extent != std::string::npos && json_number_after(json, "west", extent, &result.west) &&
+                        json_number_after(json, "east", extent, &result.east) && json_number_after(json, "south", extent, &result.south) &&
+                        json_number_after(json, "north", extent, &result.north);
+    if (result.relative && !result.has_geodetic) {
+        result.relative = false;   // the GeoOrigin's geodetic position is needed for the page
+    }
+    if (!result.has_geodetic && !result.has_extent) {
         return false;
     }
-    const std::size_t extent = json.find("\"extent\"", block);
-    *width_meters = 0.0;
-    if (extent != std::string::npos && json_number_after(json, "west", extent, &west) && json_number_after(json, "east", extent, &east) &&
-        json_number_after(json, "south", extent, &south) && json_number_after(json, "north", extent, &north)) {
-        constexpr double pi_value = 3.14159265358979323846;
-        *width_meters = std::max((north - south) * 111000.0, (east - west) * 111000.0 * std::cos(*latitude * pi_value / 180.0));
-    }
+    *georeference = result;
     return true;
 }
 
 } // namespace
 
 std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_directory, const std::filesystem::path &page_directory,
-                                           bool *use_geoorigin, X3DomGeoOrigin *geo) {
+                                           bool *use_geoorigin, X3DomGeoOrigin *geo, std::vector<std::string> *geoorigin_mismatches) {
     constexpr std::size_t maximum_survey_models = 1000;
 
     const std::filesystem::path root = normalized_directory(survey_directory);
@@ -634,7 +707,7 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
         return a.name < b.name;
     });
     std::vector<X3DomModel> models;
-    bool have_georeference = false;
+    std::vector<GlbGeoreference> references;
     for (const Found &entry : found) {
         if (models.size() >= maximum_survey_models) {
             break;
@@ -652,25 +725,95 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
         model.label = entry.is_tileset ? "tileset (OGC 3D Tiles)" : entry.name;
         model.group = group;
         model.is_tileset = entry.is_tileset;
+        model.visible = !entry.is_tileset && entry.name == "track.glb";
         models.push_back(model);
 
-        if (!have_georeference && !entry.is_tileset && entry.name == "mesh.glb") {
-            double center[3], longitude = 0.0, latitude = 0.0, height = 0.0, width = 0.0;
-            if (glb_georeference(entry.path, center, &longitude, &latitude, &height, &width)) {
-                have_georeference = true;
-                *use_geoorigin = true;
-                geo->origin_lon = longitude;
-                geo->origin_lat = latitude;
-                geo->origin_elevation = height;
-                geo->center_lon = longitude;
-                geo->center_lat = latitude;
-                geo->mean_elevation = height;
-                constexpr double field_of_view = 0.785398;
-                geo->view_altitude = std::max(width, 100.0) / 2.0 / std::tan(field_of_view / 2.0);
-                const double origin[3] = {center[0], center[1], center[2]};
-                set_local_viewpoint(geo, origin, origin);
+        if (!entry.is_tileset) {
+            GlbGeoreference georeference;
+            if (glb_georeference(entry.path, &georeference)) {
+                georeference.where = entry.path.lexically_relative(root).generic_string();
+                references.push_back(georeference);
             }
         }
+    }
+
+    // The initial view, as a run's page has: the middle of the data, framed to fill a 45 degree view. The data
+    // are all the georeferenced GLBs, so the view takes in the whole survey. The GeoOrigin is that of the first
+    // GLB with vertices relative to one.
+    if (!references.empty()) {
+        double west = 0.0, east = 0.0, south = 0.0, north = 0.0, height_sum = 0.0;
+        std::size_t extents = 0, heights = 0;
+        double lon_sum = 0.0, lat_sum = 0.0;
+        const GlbGeoreference *origin = nullptr;
+        for (const GlbGeoreference &reference : references) {
+            if (origin == nullptr && reference.relative) {
+                origin = &reference;
+            }
+            if (reference.has_extent) {
+                west = extents == 0 ? reference.west : std::min(west, reference.west);
+                east = extents == 0 ? reference.east : std::max(east, reference.east);
+                south = extents == 0 ? reference.south : std::min(south, reference.south);
+                north = extents == 0 ? reference.north : std::max(north, reference.north);
+                extents++;
+            }
+            if (reference.has_geodetic) {
+                height_sum += reference.height;
+                lon_sum += reference.longitude;
+                lat_sum += reference.latitude;
+                heights++;
+            }
+        }
+        if (extents == 0) {
+            // No extent: the middle of the centers, over a small area.
+            west = east = heights > 0 ? lon_sum / static_cast<double>(heights) : 0.0;
+            south = north = heights > 0 ? lat_sum / static_cast<double>(heights) : 0.0;
+        }
+        constexpr double pi_value = 3.14159265358979323846;
+        geo->center_lon = (west + east) / 2.0;
+        geo->center_lat = (south + north) / 2.0;
+        geo->mean_elevation = heights > 0 ? height_sum / static_cast<double>(heights) : 0.0;
+        const double lat_extent_m = (north - south) * 111000.0;
+        const double lon_extent_m = (east - west) * 111000.0 * std::cos(geo->center_lat * pi_value / 180.0);
+        constexpr double field_of_view = 0.785398;
+        geo->view_altitude = std::max(std::max(lat_extent_m, lon_extent_m), 100.0) / 2.0 / std::tan(field_of_view / 2.0);
+
+        // Every GLB has to agree with the GeoOrigin GLB about where the GeoOrigin is, or about having none.
+        if (geoorigin_mismatches != nullptr) {
+            for (const GlbGeoreference &reference : references) {
+                std::ostringstream message;
+                message << std::fixed << std::setprecision(8);
+                if (reference.relative && origin != nullptr) {
+                    const double dx = reference.center[0] - origin->center[0];
+                    const double dy = reference.center[1] - origin->center[1];
+                    const double dz = reference.center[2] - origin->center[2];
+                    if (std::sqrt(dx * dx + dy * dy + dz * dz) > 0.01) {
+                        message << reference.where << " has the GeoOrigin " << reference.longitude << "," << reference.latitude << ","
+                                << std::setprecision(2) << reference.height << ", but " << origin->where << " has " << std::setprecision(8)
+                                << origin->longitude << "," << origin->latitude << "," << std::setprecision(2) << origin->height
+                                << " (" << std::setprecision(1) << std::sqrt(dx * dx + dy * dy + dz * dz) << " m apart): they do not line up";
+                        geoorigin_mismatches->push_back(message.str());
+                    }
+                } else if (!reference.relative && origin != nullptr) {
+                    message << reference.where << " has absolute vertices, but " << origin->where
+                            << " is relative to a GeoOrigin: they do not line up";
+                    geoorigin_mismatches->push_back(message.str());
+                }
+            }
+        }
+
+        double origin_ecef[3] = {0.0, 0.0, 0.0};
+        if (origin != nullptr) {
+            *use_geoorigin = true;
+            geo->origin_lon = origin->longitude;
+            geo->origin_lat = origin->latitude;
+            geo->origin_elevation = origin->height;
+            for (int i = 0; i < 3; i++) {
+                origin_ecef[i] = origin->center[i];
+            }
+        }
+        double middle_ecef[3];
+        geodetic_to_ecef_array(geo->center_lon, geo->center_lat, geo->mean_elevation, middle_ecef);
+        set_local_viewpoint(geo, middle_ecef, origin_ecef);
     }
     return models;
 }
@@ -946,15 +1089,18 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     const X3DomGeoOrigin &geo = options.geo;
     // The Viewpoint menu: the two overview viewpoints and any the user supplied.
     std::string viewpoint_menu;
-    if (geo.has_local_view) {
+    if (geo.has_local_view || !options.user_viewpoints.empty()) {
         viewpoint_menu =
             "          <tr>\n"
             "            <td>Viewpoint:\n"
             "            </td>\n"
             "            <td align='right'>\n"
-            "              <select style='float:right;' onchange='bindViewpoint(this.value)'>\n"
-            "                <option value='OVERVIEW_LOCAL'>Viewpoint (model coordinates)\n                </option>\n"
-            "                <option value='OVERVIEW_GEO'>GeoViewpoint (with GeoOrigin)\n                </option>\n";
+            "              <select style='float:right;' onchange='bindViewpoint(this.value)'>\n";
+        if (geo.has_local_view) {
+            viewpoint_menu +=
+                "                <option value='OVERVIEW_LOCAL'>Viewpoint (model coordinates)\n                </option>\n"
+                "                <option value='OVERVIEW_GEO'>GeoViewpoint (with GeoOrigin)\n                </option>\n";
+        }
         for (std::size_t i = 0; i < options.user_viewpoints.size(); i++) {
             const std::string number = std::to_string(i + 1);
             viewpoint_menu += "                <option value='USER_GEOVIEW_" + number + "'>User GeoViewpoint " + number + "\n                </option>\n";
@@ -1215,15 +1361,17 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "    \n"
            << "    <div id='log-panel'>\n"
            << "      <div id='log-header' onclick='toggleLogPanel()'>\n"
-           << "        <span>Processing Log (" << options.log_messages.size() + options.log_messages_omitted << " messages)</span>\n"
+           << "        <span id='log-title'>Processing Log"
+           << (options.log_url.empty() ? " (" + std::to_string(options.log_messages.size() + options.log_messages_omitted) + " messages)" : std::string())
+           << "</span>\n"
            << "        <span id='close-log'>&#10005;</span>\n"
            << "      </div>\n"
            << "      <div id='log-content'>\n";
 
-    for (const std::string &message : options.log_messages) {
+    for (const std::string &message : options.log_url.empty() ? options.log_messages : std::vector<std::string>()) {
         output << "        <div class='log-line'>" << escape_html(message) << "</div>\n";
     }
-    if (options.log_messages_omitted > 0) {
+    if (options.log_url.empty() && options.log_messages_omitted > 0) {
         output << "        <div class='log-line'>... " << options.log_messages_omitted << " further messages are not shown</div>\n";
     }
 
@@ -1231,6 +1379,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "    </div>\n"
            << "    \n"
            << "    <script>\n"
+           << "      var logUrl = '" << (options.log_url.empty() ? std::string() : escape_html(options.log_url)) << "';\n"
            << "      var viewerModels = [\n";
     for (std::size_t i = 0; i < options.models.size(); i++) {
         output << "        { uri: '" << options.models[i].uri << "', loaded: " << (options.models[i].visible || options.models[i].is_tileset ? "true" : "false") << " }"

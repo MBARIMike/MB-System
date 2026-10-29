@@ -116,7 +116,21 @@ struct X3DomWriterOptions {
     // further messages were left out of it.
     std::vector<std::string> log_messages;
     std::size_t log_messages_omitted = 0;
+
+    // If set, the log is not written into the page, which a long run makes large and hard to edit. The page
+    // loads this file instead, the first time the log panel is opened: a URL relative to the page, of a text
+    // file with a message on each line, as write_log_file() writes it. The page must be served over HTTP, as
+    // it must to load its GLBs. The messages above are then ignored.
+    std::string log_url;
 };
+
+// Writes the log messages to a text file, a message on each line, and a last line saying how many further
+// messages were left out, if any.
+[[nodiscard]] bool write_log_file(
+    const std::filesystem::path &log_path,
+    const std::vector<std::string> &messages,
+    std::size_t omitted,
+    std::string *error);
 
 // Writes an X3DOM viewer page, in the style of the page mbgrd2gltf writes: a
 // heads-up display with the navigation mode, debug display and view controls, a
@@ -153,6 +167,12 @@ struct X3DomWriterOptions {
     bool tileset = false,
     bool page_in_output_directory = false);
 
+// The log of a run, <output>/mbmesh.log, which the pages load instead of holding it themselves.
+[[nodiscard]] std::filesystem::path viewer_log_path(const std::filesystem::path &output_directory);
+
+// The URL of that log from the page beside the output directory, for X3DomWriterOptions::log_url.
+[[nodiscard]] std::string viewer_log_url(const std::filesystem::path &output_directory);
+
 // The page inside the output directory, <output>/mbmesh.html, which shows the GLBs of the one run.
 [[nodiscard]] std::filesystem::path viewer_inner_page_path(const std::filesystem::path &output_directory);
 
@@ -162,11 +182,18 @@ struct X3DomWriterOptions {
 // Every GLB beneath survey_directory, as models whose groups are the directory paths, starting with the
 // name of the survey directory itself, with uris relative to page_directory. The tiles of a tileset (the
 // directories "tiles" and "tileset") are left out, and the tileset.json of a tileset is offered in their
-// place. mesh.glb comes first in a directory, then track.glb, then the rest by name. All start switched off.
-// If a GLB written by mbmesh with a GeoOrigin is found, the first, its center is returned as the GeoOrigin and
-// the viewpoint of geo, and use_geoorigin is set; otherwise they are left as they were.
+// place. mesh.glb comes first in a directory, then track.glb, then the rest by name. The track.glb files start switched on, the others off.
+// From the georeference in the GLBs written by mbmesh, geo gets an overview as a run's page has: its center is
+// the middle of the union of the extents, its height fits them in a 45 degree view. The GeoOrigin of geo is that
+// of the first GLB with vertices relative to one, and use_geoorigin is set; with none, the models are absolute.
+// If no GLB has a georeference, geo and use_geoorigin are left as they were.
+//
+// The GLBs are meant to be placed relative to one GeoOrigin. If geoorigin_mismatches is given, a message is added
+// to it for each GLB whose GeoOrigin is not that of the first with relative vertices (its center differs by more than 1 cm), and for each
+// whose vertices are absolute when there is a GeoOrigin, since such a GLB does not line up with the others.
 [[nodiscard]] std::vector<X3DomModel> find_survey_models(
     const std::filesystem::path &survey_directory,
     const std::filesystem::path &page_directory,
     bool *use_geoorigin,
-    X3DomGeoOrigin *geo);
+    X3DomGeoOrigin *geo,
+    std::vector<std::string> *geoorigin_mismatches = nullptr);

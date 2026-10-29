@@ -139,7 +139,7 @@ void print_html_viewer_command(
 namespace {
 
 // The page of a directory input: every GLB beneath it. Returns false after logging an error.
-bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url) {
+bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url, const std::vector<std::string> &geoviewpoints) {
     const std::filesystem::path html_path = survey_page_path();
     X3DomWriterOptions html_options;
     html_options.title = viewer_title(survey_directory);
@@ -148,13 +148,26 @@ bool write_survey_page(const std::filesystem::path &survey_directory, const std:
         html_options.x3dom_url = x3dom_url;
     }
     std::string error;
-    html_options.models = find_survey_models(survey_directory, html_path.parent_path(), &html_options.use_geoorigin, &html_options.geo);
+    std::vector<std::string> mismatches;
+    html_options.models = find_survey_models(survey_directory, html_path.parent_path(), &html_options.use_geoorigin, &html_options.geo, &mismatches);
+    for (const std::string &mismatch : mismatches) {
+        LOG_ERROR("[html] GeoOrigin mismatch: " + mismatch);
+    }
     if (html_options.models.empty()) {
         LOG_ERROR("no .glb files beneath " + survey_directory.string());
         return false;
     }
     if (!html_options.models.front().uri.empty() && html_options.models.front().uri.rfind("../", 0) == 0) {
         LOG_WARN("the directory is not beneath the current directory, so a web server run here cannot serve its GLBs; run mbmesh in the survey directory or above it");
+    }
+    for (const std::string &text : geoviewpoints) {
+        X3DomUserViewpoint viewpoint;
+        std::string viewpoint_error;
+        if (!parse_user_viewpoint(text, &viewpoint, &viewpoint_error)) {
+            LOG_ERROR(viewpoint_error);
+            return false;
+        }
+        html_options.user_viewpoints.push_back(viewpoint);
     }
     html_options.log_messages = mbmesh::Logger::captured_messages();
     html_options.log_messages_omitted = mbmesh::Logger::captured_omitted();
@@ -219,7 +232,7 @@ int main(int argc, char **argv) {
     {
         std::error_code directory_error;
         if (std::filesystem::is_directory(options.input_datalist, directory_error)) {
-            return write_survey_page(options.input_datalist, options.x3dom_url) ? 0 : 1;
+            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints) ? 0 : 1;
         }
     }
 
@@ -622,8 +635,13 @@ int main(int argc, char **argv) {
         if (!options.x3dom_url.empty()) {
             html_options.x3dom_url = options.x3dom_url;
         }
-        html_options.log_messages = Logger::captured_messages();
-        html_options.log_messages_omitted = Logger::captured_omitted();
+        // The log goes in its own file, which the pages load, so that they stay small and can be edited by hand.
+        const std::filesystem::path log_path = viewer_log_path(options.output_directory);
+        if (!write_log_file(log_path, Logger::captured_messages(), Logger::captured_omitted(), &error)) {
+            LOG_ERROR(error);
+            return 1;
+        }
+        html_options.log_url = viewer_log_url(options.output_directory);
         if (!write_glb_x3dom_file(html_path, html_options, &error)) {
             LOG_ERROR(error);
             return 1;
@@ -635,6 +653,7 @@ int main(int argc, char **argv) {
         {
             X3DomWriterOptions inner_options = html_options;
             inner_options.title = viewer_title(web_root);
+            inner_options.log_url = log_path.filename().string();
             inner_options.models = find_viewer_models(web_root, options.output_directory, options.write_tileset, true);
             const std::filesystem::path inner_path = viewer_inner_page_path(options.output_directory);
             if (!write_glb_x3dom_file(inner_path, inner_options, &error)) {
@@ -935,13 +954,16 @@ Options parse_options(int argc, char **argv) {
         }
     }
 
-    if (!options.geoviewpoints.empty() && !options.write_html) {
-        LOG_ERROR("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
-        std::exit(1);
-    }
-
     if (options.input_datalist.empty() && optind < argc) {
         options.input_datalist = argv[optind++];
+    }
+
+    // A directory input writes the survey page, which takes --geoviewpoint without --html.
+    std::error_code input_error;
+    const bool directory_input = !options.input_datalist.empty() && std::filesystem::is_directory(options.input_datalist, input_error);
+    if (!options.geoviewpoints.empty() && !options.write_html && !directory_input) {
+        LOG_ERROR("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
+        std::exit(1);
     }
 
     // Without -O the output goes beside the datalist, so that a run from a survey directory with
@@ -1030,10 +1052,11 @@ void print_usage() {
     std::cout << "Survey page: when -I names a directory, for example a survey directory with multibeam and lidar\n";
     std::cout << "subdirectories, mbmesh reconstructs nothing. It writes mbmesh_survey.html in the current directory,\n";
     std::cout << "a viewer page with a check box for every .glb file beneath that directory, in accordions that mirror\n";
-    std::cout << "its layout (the tiles of a tileset are left out; its tileset.json is offered). Run it where a\n";
+    std::cout << "its layout (the tiles of a tileset are left out; its tileset.json is offered; the track.glb files start switched on). Run it where a\n";
     std::cout << "web server will serve the directory, and the page loads the GLBs by relative path. The page\n";
-    std::cout << "is placed and aimed from the first mbmesh GLB found, so GLBs from runs with another GeoOrigin\n";
-    std::cout << "do not line up with it.\n";
+    std::cout << "has an overview viewpoint over all the mbmesh GLBs found, with the GeoOrigin of the first, so GLBs from runs with another GeoOrigin\n";
+    std::cout << "do not line up with it; each is logged as an ERROR. --geoviewpoint adds GeoViewpoints to its Viewpoint menu, as it does with --html;\n";
+    std::cout << "--x3dom-url sets its X3DOM script.\n";
     std::cout << "Single-dash long output options such as -html are accepted for legacy compatibility.\n";
 }
 
