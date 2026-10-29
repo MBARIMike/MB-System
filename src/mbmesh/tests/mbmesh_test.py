@@ -174,12 +174,20 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotIn('t.glb', page)
 
   def testNoInputFailsCleanly(self):
+    # With no arguments at all the usage is shown, as mbgrd2gltf does
     cmd = [self.cmd]
     proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-    self.assertNotEqual(proc.returncode, 0)
+    self.assertEqual(proc.returncode, 0)
     output = proc.stdout.decode()
-    self.assertIn('input datalist path is empty', output)
+    self.assertIn('mbmesh generates 3D meshes from swath sonar bathymetry', output)
+    self.assertIn('usage: mbmesh', output)
+    self.assertIn('Earth-Centered, Earth-Fixed', output)
+    # Options but no input is still an error
+    proc = subprocess.run([self.cmd, '-V'], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    self.assertNotEqual(proc.returncode, 0)
+    self.assertIn('input datalist path is empty', proc.stdout.decode())
 
 
 if __name__ == '__main__':

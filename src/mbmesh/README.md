@@ -107,6 +107,8 @@ The page gets an initial view as a run's page does, from the georeference (`asse
 
 ## Command-Line Interface
 
+Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage: a description, the options and the survey page, as `mbgrd2gltf` does.
+
 | Option | Argument | Description |
 | --- | --- | --- |
 | `-I`, `--input` | `datalist` | Input MB-System datalist path. Required unless the datalist is supplied as the first non-option argument. |

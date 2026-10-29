@@ -675,6 +675,12 @@ Options parse_options(int argc, char **argv) {
 
     Options options;
 
+    // No arguments at all: show the usage, as mbgrd2gltf does, rather than an error about a missing input.
+    if (argc < 2) {
+        options.help_requested = true;
+        return options;
+    }
+
     struct SingleDashLongOption {
         const char *single_dash;
         const char *double_dash;
@@ -986,6 +992,14 @@ Options parse_options(int argc, char **argv) {
 
 void print_usage() {
     std::cout << "mbmesh generates 3D meshes from swath sonar bathymetry data.\n\n";
+    std::cout << "mbmesh reads the soundings of an MB-System datalist, estimates normals from the neighbors of each\n";
+    std::cout << "sounding, fits a surface to them with screened Poisson reconstruction, extracts it with marching\n";
+    std::cout << "cubes and trims what the soundings do not support. The output is a glTF binary (GLB), mesh.glb, and,\n";
+    std::cout << "optionally, an OGC 3D Tiles tileset and an X3DOM viewer page.\n\n";
+    std::cout << "The vertices are in an Earth-Centered, Earth-Fixed (ECEF) Cartesian coordinate system, WGS 84, in\n";
+    std::cout << "meters. ECEF is right-handed with its origin at the Earth's center of mass. A GeoOrigin (--geoorigin)\n";
+    std::cout << "makes the vertices offsets from a point, which keeps the detail of a localized area in the 32-bit\n";
+    std::cout << "floats of a GLB. Heights are above the ellipsoid, with no geoid correction.\n\n";
     std::cout << "usage: mbmesh -I datalist [-R west/east/south/north] [-O outputdir] [-L meters] [output options] [-V]\n\n";
     std::cout << "Required:\n";
     std::cout << "  -I, --input <datalist>       Input MB-System datalist file. A directory writes only a survey page\n";
