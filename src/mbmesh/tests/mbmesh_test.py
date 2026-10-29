@@ -24,7 +24,7 @@ class MbmeshTest(unittest.TestCase):
     for arg in ('--geoorigin=-122.4,36.6', '-G-122.4'):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', arg],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, check=False)
       self.assertNotEqual(proc.returncode, 0, arg)
       self.assertIn('GeoOrigin format must be lon,lat,elev',
                     proc.stdout.decode(), arg)
@@ -32,7 +32,7 @@ class MbmeshTest(unittest.TestCase):
   def testChunkOptionsAreValidated(self):
     proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--chunk=abc'],
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
+                           stderr=subprocess.STDOUT, check=False)
     self.assertNotEqual(proc.returncode, 0)
     self.assertIn('invalid --chunk argument', proc.stdout.decode())
 
@@ -43,7 +43,7 @@ class MbmeshTest(unittest.TestCase):
                          ('--poisson-iterations=x', 'whole number from 1 to 100000')):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', arg],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, check=False)
       self.assertNotEqual(proc.returncode, 0, arg)
       output = proc.stdout.decode()
       self.assertIn(message, output, arg)
@@ -54,7 +54,7 @@ class MbmeshTest(unittest.TestCase):
     for name in ('jacobi', 'sor'):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--poisson-solver=' + name],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, check=False)
       self.assertNotIn('invalid --poisson-solver', proc.stdout.decode(), name)
 
   def testHelpDocumentsPoissonSolver(self):
@@ -81,7 +81,7 @@ class MbmeshTest(unittest.TestCase):
     for option in ('--metadata', '-metadata'):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', option],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, check=False)
       self.assertNotEqual(proc.returncode, 0, option)
       output = proc.stdout.decode()
       self.assertIn('renamed --info', output, option)
@@ -94,7 +94,7 @@ class MbmeshTest(unittest.TestCase):
     for value in ('122.4,36.6,0', '-122.4,36.6,0'):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--geoorigin', value],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, check=False)
       self.assertNotEqual(proc.returncode, 0, value)
       output = proc.stdout.decode()
       self.assertNotIn('reading datalist', output, value)
@@ -103,7 +103,7 @@ class MbmeshTest(unittest.TestCase):
   def testUnknownOptionsAreRefused(self):
     proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--bogus'],
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
+                           stderr=subprocess.STDOUT, check=False)
     self.assertNotEqual(proc.returncode, 0)
     self.assertIn('unrecognized', proc.stdout.decode())
 
@@ -119,7 +119,7 @@ class MbmeshTest(unittest.TestCase):
     for args, message in cases:
       proc = subprocess.run([self.cmd, '-I', 'nonexistent'] + args,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, check=False)
       self.assertNotEqual(proc.returncode, 0, args)
       self.assertIn(message, proc.stdout.decode(), args)
       self.assertNotIn('reading datalist', proc.stdout.decode(), args)
@@ -142,10 +142,41 @@ class MbmeshTest(unittest.TestCase):
                                       stderr=subprocess.STDOUT).decode()
     self.assertIn('--geoorigin', output)
 
+  def testOutputGoesBesideTheDatalistAndDirectoryInputWritesSurveyPage(self):
+    import os, struct, tempfile
+    cmd = os.path.abspath(self.cmd)
+    with tempfile.TemporaryDirectory() as work:
+      survey = os.path.join(work, '20260101A')
+      os.makedirs(os.path.join(survey, 'multibeam', 'mbmesh_output', 'tiles'))
+      os.makedirs(os.path.join(survey, 'lidar'))
+      for name in ('multibeam/mbmesh_output/mesh.glb', 'multibeam/mbmesh_output/tiles/t.glb', 'lidar/l.glb'):
+        with open(os.path.join(survey, name), 'wb') as f:
+          f.write(b'glTF' + struct.pack('<III', 2, 28, 0))
+      # Without -O the output directory is beside the datalist
+      proc = subprocess.run([cmd, '-I', 'multibeam/datalistp.mb-1'],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, cwd=survey, check=False)
+      self.assertIn('output=multibeam/mbmesh_output', proc.stdout.decode())
+      proc = subprocess.run([cmd, '-I', 'multibeam/datalistp.mb-1', '-O', 'elsewhere'],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, cwd=survey, check=False)
+      self.assertIn('output=elsewhere', proc.stdout.decode())
+      # A directory input writes only the survey page, in the current directory
+      proc = subprocess.run([cmd, '-I', '20260101A'],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, cwd=work, check=False)
+      self.assertEqual(proc.returncode, 0, proc.stdout.decode())
+      with open(os.path.join(work, 'mbmesh_survey.html')) as f:
+        page = f.read()
+      self.assertIn('<summary><b>multibeam</b></summary>', page)
+      self.assertIn("uri: '20260101A/lidar/l.glb'", page)
+      self.assertIn("uri: '20260101A/multibeam/mbmesh_output/mesh.glb'", page)
+      self.assertNotIn('t.glb', page)
+
   def testNoInputFailsCleanly(self):
     cmd = [self.cmd]
     proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
     self.assertNotEqual(proc.returncode, 0)
     output = proc.stdout.decode()
     self.assertIn('input datalist path is empty', output)

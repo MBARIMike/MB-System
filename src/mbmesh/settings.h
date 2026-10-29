@@ -46,7 +46,8 @@ struct Options {
     bool write_raw_mesh_glb = false;
 
     std::filesystem::path input_datalist;
-    std::filesystem::path output_directory = "mbmesh_output";
+    // The output directory: -O, or else mbmesh_output in the directory of the input datalist.
+    std::filesystem::path output_directory;
 
     bool use_bounds = false;
     GeographicBounds bounds;

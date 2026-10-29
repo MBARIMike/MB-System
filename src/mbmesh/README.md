@@ -31,6 +31,8 @@ Optional command-line flags can also write:
 - **`origins.glb`** - diagnostic sensor-origin ray GLB
 - **`track.glb`** - the sensor track as a 3D line
 - **`<outputdir>.html`** (for example `mbmesh_output.html`) - X3DOM viewer page for the GLB files, written in the parent of the output directory
+- **`<outputdir>/mbmesh.html`** - the same page inside the output directory, showing only the GLBs of this run
+- **`mbmesh_survey.html`** - written in the current directory when `-I` names a directory instead of a datalist: one page for every GLB beneath it (see [Survey Directories](#survey-directories))
 
 ## Quick Start
 
@@ -80,12 +82,33 @@ mbmesh: [html]   http://127.0.0.1:8000/mbmesh_output.html
 
 The page has to be served over HTTP because browsers will not load the GLB files from a `file://` URL.
 
+The same page is also written inside the output directory as `mbmesh.html`. It is like `mbmesh_output.html` except that it refers to its GLBs by their names in that directory and offers none from beside the directory (no "Other GLBs in this directory" section), so it works wherever the web server is rooted, for example at a survey directory above the `multibeam` and `lidar` directories (`http://127.0.0.1:8000/multibeam/mbmesh_output/mbmesh.html`).
+
+### Survey Directories
+
+A survey directory in the SeafloorMapping layout, for example `20260722d1`, holds subdirectories such as `multibeam` and `lidar`, each of which can hold an `mbmesh_output`. Run `mbmesh` in the survey directory, naming the datalist inside a subdirectory:
+
+```bash
+cd 20260722d1
+mbmesh -I multibeam/datalistp.mb-1 --html     # writes multibeam/mbmesh_output/, multibeam/mbmesh_output.html and multibeam/mbmesh_output/mbmesh.html
+```
+
+When `-I` names a **directory**, `mbmesh` reconstructs nothing. It writes `mbmesh_survey.html` in the current directory, a viewer page for every `.glb` file beneath that directory:
+
+```bash
+mbmesh -I .                                   # in the survey directory; serve this directory and open /mbmesh_survey.html
+```
+
+The check boxes are in accordions that mirror the directory layout, one inside another for each level, with the directory named by `-I` open and the ones inside it closed. In each directory `mesh.glb` is listed first, then `track.glb`, then the others by name, and a `tileset/tileset.json` is offered, as a tileset, in place of the tile files (the `tiles` and `tileset` directories are otherwise skipped, as are directories whose names begin with a dot). Nothing is switched on when the page opens. At most 1000 models are listed. The paths are relative to the current directory, so run `mbmesh` in the survey directory or above it, and serve that directory.
+
+The page is positioned from the first `mesh.glb` found that records a georeference: its center is the GeoOrigin and the overview looks down on it. GLBs from runs with another GeoOrigin do not line up with it. (`mbmesh` runs on different surveys or tiles of one survey use the automatic GeoOrigin of their own data unless the same `--geoorigin` is given.)
+
 ## Command-Line Interface
 
 | Option | Argument | Description |
 | --- | --- | --- |
 | `-I`, `--input` | `datalist` | Input MB-System datalist path. Required unless the datalist is supplied as the first non-option argument. |
-| `-O`, `--output` | `outputdir` | Output directory. Defaults to `mbmesh_output`. |
+| `-O`, `--output` | `outputdir` | Output directory. Defaults to `mbmesh_output` in the directory of the input datalist, so `-I multibeam/datalistp.mb-1` writes `multibeam/mbmesh_output`. |
 | `-R`, `--bounds` | `west/east/south/north` | Geographic subset bounds in degrees. Use `--bounds=-122.5/-121.8/36.5/37.2` when the west value is negative. |
 | `-G`, `--geoorigin` | `[lon,lat,elev]` | Write GLB vertices as ECEF offsets from a GeoOrigin, as in `mbgrd2gltf`. With a value, all three of lon, lat, elev (degrees, degrees, meters above the ellipsoid) are required. With no value, uses the data-bounds center and mean elevation. Without the option, vertices are absolute ECEF. The value must be attached to the option, with an equals sign and no spaces, as in `mbgrd2gltf`: `--geoorigin=-122.4,36.6,0` or `-G-122.4,36.6,0`. A value in a separate argument (`--geoorigin -122.4,36.6,0`) is not accepted. |
 | `-L`, `--lod`, `--level-of-detail` | `meters` | Requested smallest feature size in local meters; the Poisson cell is a quarter of it, but no finer than half the point spacing. If omitted, `mbmesh` derives LOD from the measured point spacing, coarsened if needed to keep the run within about 500 million cells. |
@@ -169,6 +192,7 @@ When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is sti
    - Written with `--html` or `--all-outputs`, in the parent of the output directory and named after it (`mbmesh_output.html` for `mbmesh_output`). The parent is the web root, so the page refers to its models by paths relative to it (`mbmesh_output/mesh.glb`)
    - Titled with the last three directories of the web root, which identify the survey, for example `OceanImaging2018/20180923d1/multibeam`
    - Laid out like the page `mbgrd2gltf` writes: a heads-up display with the navigation mode, the Stats and Log debug displays, and the Show Everything and Reset View buttons, and a **Processing Log** panel, opened with the button at the bottom left, that shows the log of the run
+   - Also written inside the output directory as `mbmesh.html`, with paths relative to that directory and without the GLBs of the web root
    - Has a check box, grouped under headings, for every GLB the page can show: first the `.glb` files in the output directory (`mesh.glb`, then `track.glb`, then the others such as `pointcloud.glb`, `normals.glb` or `raw_mesh.glb`), then the `.glb` files in the web root beside the output directory, such as the product of `mbgrd2gltf`. `mesh.glb` and `track.glb` are on when the page opens; the others are off and are not loaded until they are first switched on, so a large file costs nothing until it is wanted. The tile files in `tiles/` are not listed, since they repeat `mesh.glb`. At most 200 models are listed
    - GLB files from the web root line up with the mesh only if they use the same coordinates: the same GeoOrigin, for `mbgrd2gltf` the same `--geoorigin` value as `mbmesh`. The page says so under that heading
    - Always has a `GeoViewpoint` over the center of the data; with `--geoorigin` it also declares the `GeoOrigin` that the viewpoint and the vertices are relative to, as `mbgrd2gltf` does

@@ -44,11 +44,19 @@ with command-line output options.
 .TP
 .B \-I\fI datalist\fR, \fB--input\fR \fIdatalist\fR
 Input MB-System datalist file. This option is required unless the datalist path
-is supplied as the first non-option argument.
+is supplied as the first non-option argument. If it names a directory instead,
+\fBmbmesh\fR reconstructs nothing and writes \fBmbmesh_survey.html\fR in the current
+directory: a viewer page with a check box for every .glb file beneath that directory,
+in accordions that mirror its layout, for example a survey directory with
+\fImultibeam\fR and \fIlidar\fR subdirectories. The tiles of a tileset are left out and its
+tileset.json is offered. The page is placed and aimed from the first mbmesh GLB found,
+so GLBs from runs with another GeoOrigin do not line up with it. Run \fBmbmesh\fR in the
+survey directory or above it and serve that directory.
 .TP
 .B \-O\fI outputdir\fR, \fB--output\fR \fIoutputdir\fR
 Output directory for generated files. The directory is created if needed.
-The default is \fImbmesh_output\fR.
+The default is \fImbmesh_output\fR in the directory of the input datalist, so
+\fB-I multibeam/datalistp.mb-1\fR writes \fImultibeam/mbmesh_output\fR.
 .TP
 .B \-R\fI west/east/south/north\fR, \fB--bounds\fR \fIwest/east/south/north\fR
 Restrict accepted soundings to a geographic bounding box in degrees longitude
@@ -291,6 +299,11 @@ Optional OGC 3D Tiles tileset of the surface; see \fB--tileset\fR.
 .TP
 .B raw_mesh.glb
 Optional untrimmed triangle mesh before support trimming.
+.TP
+.B <outputdir>/mbmesh.html
+The same page inside the output directory: it refers to its models by their names there
+and offers none from beside the directory, so it works when the web server is rooted
+higher up, for example at a survey directory. Written with \fB--html\fR.
 .TP
 .B <outputdir>.html
 Optional X3DOM viewer page, written in the parent of the output directory and named

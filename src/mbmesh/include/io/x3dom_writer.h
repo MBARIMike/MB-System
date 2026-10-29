@@ -108,6 +108,10 @@ struct X3DomWriterOptions {
     MetaValue metadata;
     std::vector<std::string> geo_summary;   // keyword and value strings, an even number
 
+    // List the models in accordions, one per directory level, instead of under flat headings: a model's group
+    // is then a path of names separated by slashes, and each name is an accordion inside the one before.
+    bool nested_groups = false;
+
     // The processing log shown in the page, one message per entry, and how many
     // further messages were left out of it.
     std::vector<std::string> log_messages;
@@ -140,7 +144,29 @@ struct X3DomWriterOptions {
 // track.glb then the rest by name, with mesh.glb and track.glb visible at the start,
 // and then those in the web root, which start switched off. The tile files in the
 // subdirectory of the output directory are not listed, since they repeat mesh.glb.
+//
+// With page_in_output_directory the page is mbmesh.html inside the output directory, so the uris are
+// relative to that directory and no GLBs from the web root are offered.
 [[nodiscard]] std::vector<X3DomModel> find_viewer_models(
     const std::filesystem::path &web_root,
     const std::filesystem::path &output_directory,
-    bool tileset = false);
+    bool tileset = false,
+    bool page_in_output_directory = false);
+
+// The page inside the output directory, <output>/mbmesh.html, which shows the GLBs of the one run.
+[[nodiscard]] std::filesystem::path viewer_inner_page_path(const std::filesystem::path &output_directory);
+
+// The page that a directory input writes, mbmesh_survey.html in the current directory.
+[[nodiscard]] std::filesystem::path survey_page_path();
+
+// Every GLB beneath survey_directory, as models whose groups are the directory paths, starting with the
+// name of the survey directory itself, with uris relative to page_directory. The tiles of a tileset (the
+// directories "tiles" and "tileset") are left out, and the tileset.json of a tileset is offered in their
+// place. mesh.glb comes first in a directory, then track.glb, then the rest by name. All start switched off.
+// If a GLB written by mbmesh with a GeoOrigin is found, the first, its center is returned as the GeoOrigin and
+// the viewpoint of geo, and use_geoorigin is set; otherwise they are left as they were.
+[[nodiscard]] std::vector<X3DomModel> find_survey_models(
+    const std::filesystem::path &survey_directory,
+    const std::filesystem::path &page_directory,
+    bool *use_geoorigin,
+    X3DomGeoOrigin *geo);

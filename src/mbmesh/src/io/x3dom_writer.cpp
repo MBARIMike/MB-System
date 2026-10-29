@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -418,8 +419,20 @@ std::string viewer_title(const std::filesystem::path &web_root) {
     return title;
 }
 
-std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory, bool tileset) {
+std::filesystem::path viewer_inner_page_path(const std::filesystem::path &output_directory) {
+    return normalized_directory(output_directory) / "mbmesh.html";
+}
+
+std::filesystem::path survey_page_path() {
+    std::error_code filesystem_error;
+    const std::filesystem::path current = std::filesystem::current_path(filesystem_error);
+    return current / "mbmesh_survey.html";
+}
+
+std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory, bool tileset,
+                                           bool page_in_output_directory) {
     std::vector<X3DomModel> models;
+    const std::string prefix = page_in_output_directory ? std::string() : normalized_directory(output_directory).filename().string() + "/";
     const std::filesystem::path root = normalized_directory(web_root);
     const std::filesystem::path directory = normalized_directory(output_directory);
     const std::string directory_name = directory.filename().string();
@@ -427,7 +440,7 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
     // The tileset, if this run wrote one, is shown in place of mesh.glb, which is the same surface.
     if (tileset) {
         X3DomModel model;
-        model.uri = url_encode(directory_name + "/tileset/tileset.json");
+        model.uri = url_encode(prefix + "tileset/tileset.json");
         model.label = "tileset (OGC 3D Tiles)";
         model.group = directory_name;
         model.visible = true;
@@ -443,7 +456,7 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
     });
     for (const std::string &name : names) {
         X3DomModel model;
-        model.uri = url_encode(directory_name + "/" + name);
+        model.uri = url_encode(prefix + name);
         model.label = name;
         model.group = directory_name;
         model.visible = (name == "mesh.glb" && !tileset) || name == "track.glb";
@@ -451,7 +464,7 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
     }
 
     // The web root: other GLBs, such as the product of mbgrd2gltf.
-    if (directory.parent_path() == root) {
+    if (!page_in_output_directory && directory.parent_path() == root) {
         for (const std::string &name : glb_names(root)) {
             X3DomModel model;
             model.uri = url_encode(name);
@@ -465,6 +478,199 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
 
     if (models.size() > maximum_viewer_models) {
         models.resize(maximum_viewer_models);
+    }
+    return models;
+}
+
+namespace {
+
+// The number after "key": in a JSON text, searching from start; false if there is none.
+bool json_number_after(const std::string &text, const std::string &key, std::size_t start, double *value, std::size_t *end = nullptr) {
+    const std::size_t found = text.find("\"" + key + "\"", start);
+    if (found == std::string::npos) {
+        return false;
+    }
+    std::size_t at = text.find(':', found);
+    if (at == std::string::npos) {
+        return false;
+    }
+    const char *begin = text.c_str() + at + 1;
+    char *stop = nullptr;
+    const double number = std::strtod(begin, &stop);
+    if (stop == begin || !std::isfinite(number)) {
+        return false;
+    }
+    *value = number;
+    if (end != nullptr) {
+        *end = static_cast<std::size_t>(stop - text.c_str());
+    }
+    return true;
+}
+
+// The JSON chunk of a GLB, or empty.
+std::string glb_json(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    unsigned char header[20];
+    if (!input.read(reinterpret_cast<char *>(header), sizeof(header))) {
+        return std::string();
+    }
+    const std::uint32_t length = header[12] | (header[13] << 8) | (header[14] << 16) | (static_cast<std::uint32_t>(header[15]) << 24);
+    if (length == 0 || length > 16u * 1024u * 1024u) {
+        return std::string();
+    }
+    std::string json(length, '\0');
+    if (!input.read(json.data(), static_cast<std::streamsize>(length))) {
+        return std::string();
+    }
+    return json;
+}
+
+// The georeference of a GLB that mbmesh wrote with vertices relative to a center: the ECEF center and the
+// geodetic center and extent, from asset.extras. False if the GLB has none.
+bool glb_georeference(const std::filesystem::path &path, double center_ecef[3], double *longitude, double *latitude, double *height,
+                      double *width_meters) {
+    const std::string json = glb_json(path);
+    const std::size_t block = json.find("\"relativeToCenter\"");
+    if (block == std::string::npos) {
+        return false;
+    }
+    const std::size_t array = json.find("\"center\"", block);
+    if (array == std::string::npos) {
+        return false;
+    }
+    std::size_t at = json.find('[', array);
+    if (at == std::string::npos) {
+        return false;
+    }
+    const char *cursor = json.c_str() + at + 1;
+    for (int i = 0; i < 3; i++) {
+        char *stop = nullptr;
+        center_ecef[i] = std::strtod(cursor, &stop);
+        if (stop == cursor) {
+            return false;
+        }
+        cursor = stop;
+        while (*cursor == ',' || *cursor == ' ') {
+            cursor++;
+        }
+    }
+    const std::size_t geodetic = json.find("\"geodeticCenter\"", block);
+    double west = 0.0, east = 0.0, south = 0.0, north = 0.0;
+    if (geodetic == std::string::npos || !json_number_after(json, "longitude", geodetic, longitude) ||
+        !json_number_after(json, "latitude", geodetic, latitude) || !json_number_after(json, "height", geodetic, height)) {
+        return false;
+    }
+    const std::size_t extent = json.find("\"extent\"", block);
+    *width_meters = 0.0;
+    if (extent != std::string::npos && json_number_after(json, "west", extent, &west) && json_number_after(json, "east", extent, &east) &&
+        json_number_after(json, "south", extent, &south) && json_number_after(json, "north", extent, &north)) {
+        constexpr double pi_value = 3.14159265358979323846;
+        *width_meters = std::max((north - south) * 111000.0, (east - west) * 111000.0 * std::cos(*latitude * pi_value / 180.0));
+    }
+    return true;
+}
+
+} // namespace
+
+std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_directory, const std::filesystem::path &page_directory,
+                                           bool *use_geoorigin, X3DomGeoOrigin *geo) {
+    constexpr std::size_t maximum_survey_models = 1000;
+
+    const std::filesystem::path root = normalized_directory(survey_directory);
+    const std::filesystem::path page = normalized_directory(page_directory);
+    const std::string root_name = root.filename().string().empty() ? root.string() : root.filename().string();
+
+    struct Found {
+        std::vector<std::string> directories;   // the directory names beneath the survey directory
+        std::string name;                       // the file name
+        std::filesystem::path path;
+        bool is_tileset = false;
+    };
+    std::vector<Found> found;
+
+    std::error_code filesystem_error;
+    for (std::filesystem::recursive_directory_iterator it(root, filesystem_error), end; !filesystem_error && it != end; it.increment(filesystem_error)) {
+        const std::filesystem::path &path = it->path();
+        const std::string name = path.filename().string();
+        if (it->is_directory(filesystem_error)) {
+            // The tiles of a tileset repeat mesh.glb, and a tileset can have hundreds.
+            if (name == "tiles" || (!name.empty() && name[0] == '.')) {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+        // In a tileset directory only tileset.json is offered, as a tileset of the directory that holds it.
+        const bool in_tileset = path.parent_path().filename() == "tileset";
+        Found entry;
+        entry.is_tileset = in_tileset && name == "tileset.json";
+        if (!entry.is_tileset && (in_tileset || !is_glb(*it))) {
+            continue;
+        }
+        const std::filesystem::path relative = path.lexically_relative(root);
+        std::filesystem::path directory = relative.parent_path();
+        if (in_tileset) {
+            directory = directory.parent_path();
+        }
+        for (const std::filesystem::path &part : directory) {
+            if (!part.empty() && part != ".") {
+                entry.directories.push_back(part.string());
+            }
+        }
+        entry.name = name;
+        entry.path = path;
+        found.push_back(entry);
+    }
+
+    // Directories in order of their names, component by component, so that a directory's accordion is
+    // contiguous with its subdirectories'; within one, the tileset, then mesh.glb, then track.glb, then by name.
+    const auto rank = [](const Found &f) { return f.is_tileset ? 0 : (f.name == "mesh.glb" ? 1 : (f.name == "track.glb" ? 2 : 3)); };
+    std::stable_sort(found.begin(), found.end(), [&](const Found &a, const Found &b) {
+        if (a.directories != b.directories) {
+            return a.directories < b.directories;
+        }
+        if (rank(a) != rank(b)) {
+            return rank(a) < rank(b);
+        }
+        return a.name < b.name;
+    });
+    std::vector<X3DomModel> models;
+    bool have_georeference = false;
+    for (const Found &entry : found) {
+        if (models.size() >= maximum_survey_models) {
+            break;
+        }
+        X3DomModel model;
+        std::string group = root_name;
+        for (const std::string &directory : entry.directories) {
+            group += "/" + directory;
+        }
+        std::filesystem::path relative_to_page = entry.path.lexically_relative(page);
+        if (relative_to_page.empty()) {
+            relative_to_page = entry.path;
+        }
+        model.uri = url_encode(relative_to_page.generic_string());
+        model.label = entry.is_tileset ? "tileset (OGC 3D Tiles)" : entry.name;
+        model.group = group;
+        model.is_tileset = entry.is_tileset;
+        models.push_back(model);
+
+        if (!have_georeference && !entry.is_tileset && entry.name == "mesh.glb") {
+            double center[3], longitude = 0.0, latitude = 0.0, height = 0.0, width = 0.0;
+            if (glb_georeference(entry.path, center, &longitude, &latitude, &height, &width)) {
+                have_georeference = true;
+                *use_geoorigin = true;
+                geo->origin_lon = longitude;
+                geo->origin_lat = latitude;
+                geo->origin_elevation = height;
+                geo->center_lon = longitude;
+                geo->center_lat = latitude;
+                geo->mean_elevation = height;
+                constexpr double field_of_view = 0.785398;
+                geo->view_altitude = std::max(width, 100.0) / 2.0 / std::tan(field_of_view / 2.0);
+                const double origin[3] = {center[0], center[1], center[2]};
+                set_local_viewpoint(geo, origin, origin);
+            }
+        }
     }
     return models;
 }
@@ -826,9 +1032,57 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "            </td>\n"
            << "          </tr>\n";
 
+    // With nested groups: an accordion for each directory, inside the accordion of its parent, in one cell.
+    if (options.nested_groups) {
+        const auto split = [](const std::string &path) {
+            std::vector<std::string> parts;
+            std::size_t start = 0;
+            while (start <= path.size()) {
+                const std::size_t slash = path.find('/', start);
+                parts.push_back(path.substr(start, slash == std::string::npos ? std::string::npos : slash - start));
+                if (slash == std::string::npos) {
+                    break;
+                }
+                start = slash + 1;
+            }
+            return parts;
+        };
+        output << "          <tr>\n"
+               << "            <td colspan='2' style='max-width:22em; max-height:60vh; overflow:auto;'>\n";
+        std::vector<std::string> open_groups;
+        for (std::size_t i = 0; i < options.models.size(); i++) {
+            const X3DomModel &model = options.models[i];
+            const std::vector<std::string> parts = split(model.group);
+            std::size_t common = 0;
+            while (common < open_groups.size() && common < parts.size() && open_groups[common] == parts[common]) {
+                common++;
+            }
+            while (open_groups.size() > common) {
+                output << std::string(open_groups.size() * 2 + 12, ' ') << "</div></details>\n";
+                open_groups.pop_back();
+            }
+            for (std::size_t level = common; level < parts.size(); level++) {
+                // The survey directory itself starts open; the accordions inside it start closed.
+                const bool open = level == 0;
+                output << std::string(level * 2 + 12, ' ') << "<details class='group-accordion'" << (open ? " open" : "") << "><summary><b>"
+                       << escape_html(parts[level]) << "</b></summary><div style='margin-left:1.2em;'>\n";
+                open_groups.push_back(parts[level]);
+            }
+            output << std::string(open_groups.size() * 2 + 12, ' ') << "<div><input id='model-checkbox-" << i << "' type='checkbox'"
+                   << (model.visible ? " checked" : "") << " onclick='toggleModel(" << i << ", this.checked);'></input> "
+                   << escape_html(model.label) << "</div>\n";
+        }
+        while (!open_groups.empty()) {
+            output << std::string(open_groups.size() * 2 + 12, ' ') << "</div></details>\n";
+            open_groups.pop_back();
+        }
+        output << "            </td>\n"
+               << "          </tr>\n";
+    }
+
     // A check box for each model, under a heading for each group.
     std::string current_group;
-    for (std::size_t i = 0; i < options.models.size(); i++) {
+    for (std::size_t i = 0; i < options.models.size() && !options.nested_groups; i++) {
         const X3DomModel &model = options.models[i];
         if (i == 0 || model.group != current_group) {
             current_group = model.group;

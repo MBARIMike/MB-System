@@ -136,6 +136,39 @@ void print_html_viewer_command(
 
 // ========================================================================================================
 
+namespace {
+
+// The page of a directory input: every GLB beneath it. Returns false after logging an error.
+bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url) {
+    const std::filesystem::path html_path = survey_page_path();
+    X3DomWriterOptions html_options;
+    html_options.title = viewer_title(survey_directory);
+    html_options.nested_groups = true;
+    if (!x3dom_url.empty()) {
+        html_options.x3dom_url = x3dom_url;
+    }
+    std::string error;
+    html_options.models = find_survey_models(survey_directory, html_path.parent_path(), &html_options.use_geoorigin, &html_options.geo);
+    if (html_options.models.empty()) {
+        LOG_ERROR("no .glb files beneath " + survey_directory.string());
+        return false;
+    }
+    if (!html_options.models.front().uri.empty() && html_options.models.front().uri.rfind("../", 0) == 0) {
+        LOG_WARN("the directory is not beneath the current directory, so a web server run here cannot serve its GLBs; run mbmesh in the survey directory or above it");
+    }
+    html_options.log_messages = mbmesh::Logger::captured_messages();
+    html_options.log_messages_omitted = mbmesh::Logger::captured_omitted();
+    if (!write_glb_x3dom_file(html_path, html_options, &error)) {
+        LOG_ERROR(error);
+        return false;
+    }
+    LOG_INFO("[html]", "wrote " + html_path.string() + ", offering " + std::to_string(html_options.models.size()) + " GLB files");
+    print_html_viewer_command(html_path.parent_path(), html_path.filename().string());
+    return true;
+}
+
+} // namespace
+
 int main(int argc, char **argv) {
     const std::time_t started_at = std::time(nullptr);
 
@@ -181,6 +214,13 @@ int main(int argc, char **argv) {
     if (options.input_datalist.empty()) {
         LOG_ERROR("input datalist path is empty; use -I <path>");
         return 1;
+    }
+
+    {
+        std::error_code directory_error;
+        if (std::filesystem::is_directory(options.input_datalist, directory_error)) {
+            return write_survey_page(options.input_datalist, options.x3dom_url) ? 0 : 1;
+        }
     }
 
     LOG_DEBUG("[input]", "reading datalist " + options.input_datalist.string());
@@ -590,6 +630,20 @@ int main(int argc, char **argv) {
         }
         LOG_INFO("[html]", "wrote " + html_path.string() + ", showing " + std::to_string(html_options.models.size()) + " GLB files");
 
+        // The same page inside the output directory, for a server that is rooted higher up, as one
+        // rooted at a survey directory is: it shows the GLBs of this run and no others.
+        {
+            X3DomWriterOptions inner_options = html_options;
+            inner_options.title = viewer_title(web_root);
+            inner_options.models = find_viewer_models(web_root, options.output_directory, options.write_tileset, true);
+            const std::filesystem::path inner_path = viewer_inner_page_path(options.output_directory);
+            if (!write_glb_x3dom_file(inner_path, inner_options, &error)) {
+                LOG_ERROR(error);
+                return 1;
+            }
+            LOG_INFO("[html]", "wrote " + inner_path.string() + ", showing " + std::to_string(inner_options.models.size()) + " GLB files");
+        }
+
         print_html_viewer_command(web_root, html_path.filename().string());
     }
 
@@ -890,6 +944,12 @@ Options parse_options(int argc, char **argv) {
         options.input_datalist = argv[optind++];
     }
 
+    // Without -O the output goes beside the datalist, so that a run from a survey directory with
+    // "-I multibeam/datalistp.mb-1" writes multibeam/mbmesh_output.
+    if (options.output_directory.empty()) {
+        options.output_directory = options.input_datalist.parent_path() / "mbmesh_output";
+    }
+
     // Anything left over was not understood. Ignoring it can silently change the
     // result: "--geoorigin 122.4,36.6,0" is --geoorigin with no value (the
     // automatic GeoOrigin) followed by a stray argument.
@@ -906,9 +966,10 @@ void print_usage() {
     std::cout << "mbmesh generates 3D meshes from swath sonar bathymetry data.\n\n";
     std::cout << "usage: mbmesh -I datalist [-R west/east/south/north] [-O outputdir] [-L meters] [output options] [-V]\n\n";
     std::cout << "Required:\n";
-    std::cout << "  -I, --input <datalist>       Input MB-System datalist file\n\n";
+    std::cout << "  -I, --input <datalist>       Input MB-System datalist file. A directory writes only a survey page\n";
+    std::cout << "                               (mbmesh_survey.html) instead, see below\n\n";
     std::cout << "Optional:\n";
-    std::cout << "  -O, --output <outputdir>     Output directory [mbmesh_output]\n";
+    std::cout << "  -O, --output <outputdir>     Output directory [mbmesh_output in the directory of the datalist]\n";
     std::cout << "  -R, --bounds <w/e/s/n>       Geographic bounds in degrees\n";
     std::cout << "  -L, --lod <meters>           Requested smallest feature size; auto if omitted\n";
     std::cout << "      --decimate <meters>      Enable voxel-grid point decimation\n";
@@ -947,7 +1008,8 @@ void print_usage() {
     std::cout << "Output options:\n";
     std::cout << "      --html                   Also write an X3DOM viewer page, with a check box for each GLB and the\n";
     std::cout << "                               processing log, in the parent of the output directory (for example\n";
-    std::cout << "                               mbmesh_output.html), and print the command to view it\n";
+    std::cout << "                               mbmesh_output.html), and print the command to view it. The output directory\n";
+    std::cout << "                               gets its own page too, mbmesh.html, without the GLBs beside the directory\n";
     std::cout << "      --xyz                    Also write local and ECEF XYZ point clouds\n";
     std::cout << "      --local-xyz              Also write pointcloud-local.xyz\n";
     std::cout << "      --ecef-xyz               Also write pointcloud-ecef.xyz\n";
@@ -964,7 +1026,14 @@ void print_usage() {
     std::cout << "      --raw-mesh-glb           Also write raw_mesh.glb before support trimming\n";
     std::cout << "      --diagnostics            Also write pointcloud, normal, and origin GLBs\n";
     std::cout << "      --all-outputs            Write all optional outputs\n\n";
-    std::cout << "The default output is mesh.glb.\n";
+    std::cout << "The default output is mesh.glb.\n\n";
+    std::cout << "Survey page: when -I names a directory, for example a survey directory with multibeam and lidar\n";
+    std::cout << "subdirectories, mbmesh reconstructs nothing. It writes mbmesh_survey.html in the current directory,\n";
+    std::cout << "a viewer page with a check box for every .glb file beneath that directory, in accordions that mirror\n";
+    std::cout << "its layout (the tiles of a tileset are left out; its tileset.json is offered). Run it where a\n";
+    std::cout << "web server will serve the directory, and the page loads the GLBs by relative path. The page\n";
+    std::cout << "is placed and aimed from the first mbmesh GLB found, so GLBs from runs with another GeoOrigin\n";
+    std::cout << "do not line up with it.\n";
     std::cout << "Single-dash long output options such as -html are accepted for legacy compatibility.\n";
 }
 

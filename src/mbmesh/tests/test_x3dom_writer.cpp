@@ -1,6 +1,7 @@
 #include "io/x3dom_writer.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -460,6 +461,110 @@ int main() {
         const std::vector<X3DomModel> without_mesh = find_viewer_models(survey, output);
         ok &= check(!without_mesh.empty() && without_mesh[0].uri == "mbmesh_output/pointcloud.glb" && !without_mesh[0].visible,
                     "only models that exist are offered");
+
+        std::filesystem::remove_all(base);
+    }
+
+    // ---- the page inside the output directory, and the survey page with its accordions
+    {
+        const std::filesystem::path base = std::filesystem::temp_directory_path() / "mbmesh_test_survey";
+        std::filesystem::remove_all(base);
+        const std::filesystem::path survey = base / "20260101A";
+        touch(survey / "multibeam" / "ZTopo.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "mesh.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "track.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "tileset.json");
+        touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "tile_0_0.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "tiles" / "t.glb");
+        touch(survey / "lidar" / "points.glb");
+        touch(survey / "lidar" / "a-x" / "q.glb");
+        touch(survey / "lidar" / "a" / "p.glb");
+        touch(survey / "lidar" / ".hidden" / "h.glb");
+
+        // The page in the output directory: relative to that directory, and no GLBs from beside it
+        const std::filesystem::path output = survey / "multibeam" / "mbmesh_output";
+        const std::vector<X3DomModel> inner = find_viewer_models(survey / "multibeam", output, true, true);
+        ok &= check(inner.size() == 3 && inner[0].uri == "tileset/tileset.json" && inner[1].uri == "mesh.glb" && inner[2].uri == "track.glb",
+                    "the page inside the output directory refers to its files by their names there");
+        ok &= check(viewer_inner_page_path(output) == output / "mbmesh.html", "that page is mbmesh.html in the output directory");
+        ok &= check(find_viewer_models(survey / "multibeam", output, false, false).size() == 3 &&
+                        find_viewer_models(survey / "multibeam", output, false, false)[2].label == "ZTopo.glb",
+                    "the page beside it still offers the GLBs of its directory");
+
+        // The survey: every GLB beneath it, in directory order, relative to the page's directory
+        bool use_geoorigin = false;
+        X3DomGeoOrigin survey_geo;
+        const std::vector<X3DomModel> models = find_survey_models(survey, base, &use_geoorigin, &survey_geo);
+        std::vector<std::string> uris;
+        for (const X3DomModel &m : models) {
+            uris.push_back(m.uri);
+        }
+        const std::vector<std::string> expected = {
+            "20260101A/lidar/points.glb",
+            "20260101A/lidar/a/p.glb",
+            "20260101A/lidar/a-x/q.glb",
+            "20260101A/multibeam/ZTopo.glb",
+            "20260101A/multibeam/mbmesh_output/tileset/tileset.json",
+            "20260101A/multibeam/mbmesh_output/mesh.glb",
+            "20260101A/multibeam/mbmesh_output/track.glb"};
+        ok &= check(uris == expected, "the survey lists every GLB beneath it, a directory's files before its subdirectories, without tiles or hidden directories");
+        ok &= check(models.size() == 7 && models[4].is_tileset && models[4].group == "20260101A/multibeam/mbmesh_output" &&
+                        models[0].group == "20260101A/lidar" && models[2].group == "20260101A/lidar/a-x",
+                    "the groups are the directory paths, from the survey directory");
+        ok &= check(!use_geoorigin, "GLBs without a georeference give no GeoOrigin");
+
+        // A GLB with the georeference gives the GeoOrigin and the viewpoint
+        {
+            const std::string json =
+                "{\"asset\":{\"version\":\"2.0\",\"extras\":{\"georeference\":{\"vertexCoordinates\":\"relativeToCenter\","
+                "\"center\":[-2700000.5,-4300000.25,3800000],\"geodeticCenter\":{\"crs\":\"EPSG:4979\",\"longitude\":-122.3,"
+                "\"latitude\":36.4,\"height\":-900},\"extent\":{\"west\":-122.31,\"south\":36.39,\"east\":-122.29,\"north\":36.41}}}}}   ";
+            std::ofstream glb(output / "mesh.glb", std::ios::binary);
+            const std::uint32_t length = static_cast<std::uint32_t>(json.size());
+            const std::uint32_t total = 28 + length;
+            const std::uint32_t version = 2;
+            const std::uint32_t json_type = 0x4E4F534A;
+            const std::uint32_t magic = 0x46546C67;
+            glb.write(reinterpret_cast<const char *>(&magic), 4);
+            glb.write(reinterpret_cast<const char *>(&version), 4);
+            glb.write(reinterpret_cast<const char *>(&total), 4);
+            glb.write(reinterpret_cast<const char *>(&length), 4);
+            glb.write(reinterpret_cast<const char *>(&json_type), 4);
+            glb.write(json.data(), static_cast<std::streamsize>(json.size()));
+        }
+        use_geoorigin = false;
+        find_survey_models(survey, base, &use_geoorigin, &survey_geo);
+        ok &= check(use_geoorigin && std::fabs(survey_geo.origin_lon + 122.3) < 1e-12 && std::fabs(survey_geo.origin_lat - 36.4) < 1e-12 &&
+                        std::fabs(survey_geo.origin_elevation + 900.0) < 1e-9 && survey_geo.has_local_view && survey_geo.view_altitude > 1000.0,
+                    "the first mesh.glb with a georeference gives the GeoOrigin and an overview above the data");
+
+        // The accordions: one per directory, inside the one before, the survey directory open
+        X3DomWriterOptions options;
+        options.title = "20260101A";
+        options.geo = survey_geo;
+        options.nested_groups = true;
+        options.models = models;
+        const std::string page = write_page(options);
+        const std::size_t survey_at = page.find("<summary><b>20260101A</b></summary>");
+        const std::size_t lidar_at = page.find("<summary><b>lidar</b></summary>");
+        const std::size_t multibeam_at = page.find("<summary><b>multibeam</b></summary>");
+        const std::size_t output_at = page.find("<summary><b>mbmesh_output</b></summary>");
+        ok &= check(survey_at != std::string::npos && survey_at < lidar_at && lidar_at < multibeam_at && multibeam_at < output_at,
+                    "the page has an accordion for each directory, in order");
+        ok &= check(contains(page, "<details class='group-accordion' open><summary><b>20260101A</b>") &&
+                        contains(page, "<details class='group-accordion'><summary><b>lidar</b>"),
+                    "the survey directory starts open and the directories inside it closed");
+        std::size_t opened = 0, closed = 0;
+        for (std::size_t at = page.find("<details class='group-accordion'"); at != std::string::npos; at = page.find("<details class='group-accordion'", at + 1)) {
+            opened++;
+        }
+        for (std::size_t at = page.find("</div></details>"); at != std::string::npos; at = page.find("</div></details>", at + 1)) {
+            closed++;
+        }
+        ok &= check(opened == 6 && closed == 6, "every accordion is closed again");
+        ok &= check(contains(page, "id='model-checkbox-6' type='checkbox' onclick='toggleModel(6, this.checked);'") &&
+                        contains(page, "{ uri: '20260101A/multibeam/mbmesh_output/track.glb', loaded: false }"),
+                    "each model has its check box and its place in the model list");
 
         std::filesystem::remove_all(base);
     }
