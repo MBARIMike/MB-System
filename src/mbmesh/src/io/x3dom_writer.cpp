@@ -1157,7 +1157,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "        <a href='https://www.mbari.org/products/research-software/mb-system/'>MB-System</a> mbmesh.\n"
            << "      </div>\n"
            << "      <div id='model-title'>" << escape_html(title) << "</div>\n"
-           << "      <div id='Interaction_Toolbox' style='margin:2px; padding:4px; padding-right:150px; "
+           << "      <div id='Interaction_Toolbox' style='margin:2px; padding:4px; "
               "background-color:rgba(199,202,204,.7);position:absolute; z-index:1000; right:0px; top:0px;'>\n"
            << "        <table>\n"
            << "          <tr>\n"
