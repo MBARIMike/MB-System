@@ -139,6 +139,18 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotEqual(proc.returncode, 0, args)
       self.assertIn(message, proc.stdout.decode(), args)
 
+  def testPointcloudColormapIsValidated(self):
+    proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--pointcloud-colormap=rainbow'],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, check=False)
+    self.assertNotEqual(proc.returncode, 0)
+    self.assertIn('linear, equalized, none', proc.stdout.decode())
+
+  def testHelpDocumentsPointcloudColormap(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--pointcloud-colormap', output)
+
   def testHelpDocumentsLifted(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

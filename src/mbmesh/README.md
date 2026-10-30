@@ -26,10 +26,10 @@ Optional command-line flags can also write:
 - **`pointcloud-local.xyz`** - accepted/decimated samples in the same local reconstruction frame as `mesh.glb`
 - **`pointcloud-ecef.xyz`** - accepted/decimated samples in WGS84 Earth-Centered, Earth-Fixed coordinates
 - **`oriented-pointcloud-ecef.ply`** - oriented samples and PCA lambda values
-- **`pointcloud.glb`** - diagnostic point-cloud GLB
+- **`pointcloud.glb`** - diagnostic point-cloud GLB, colored by height with the Haxby color table of `mbm_grdplot` (a `COLOR_0` attribute): 11 colors from dark blue to white, changing linearly between 11 heights that are listed in the file's `MB-System.content` description; `--pointcloud-colormap` chooses the heights
 - **`normals.glb`** - diagnostic normal-vector GLB
 - **`origins.glb`** - diagnostic sensor-origin ray GLB
-- **`track.glb`** - the sensor track as a 3D line
+- **`track.glb`** - the sensor track as a black 3D line
 - **`<outputdir>.html`** (for example `mbmesh_output.html`) - X3DOM viewer page for the GLB files, written in the parent of the output directory
 - **`<outputdir>/mbmesh.html`** - the same page inside the output directory, showing only the GLBs of this run
 - **`mbmesh_survey.html`** - written in the current directory when `-I` names a directory instead of a datalist: one page for every GLB beneath it (see [Survey Directories](#survey-directories))
@@ -134,6 +134,7 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `--origin-glb`, `-origin-glb` | none | Write `origins.glb`. |
 | `--track-glb`, `-track-glb` | none | Write `track.glb`, the sensor track as a 3D line. |
 | `--tileset`, `-tileset` | none | Write `tileset/tileset.json` and `tileset/tile_I_J.glb`, the surface as an OGC 3D Tiles tileset (see "OGC 3D Tiles"). |
+| `--pointcloud-colormap` | `name` | How `pointcloud.glb` is colored by height: `linear` (the default), 11 equal steps between rounded heights chosen from the range, as `mbm_grdplot -G5` does; `equalized`, steps with equal numbers of points, as `mbm_grdplot -G5 -S` does (histogram equalization, using the quantiles of the heights; GMT's `grdhisteq` weights a geographic grid by cell area, which can move the upper steps by a fraction of the range); `none`, one orange. All use the Haxby colors, from dark blue to white. |
 | `--lifted` | `meters` | With `--html`, or a directory input, lift everything this many meters above the ellipsoid along the local vertical: each model is written inside a `GeoTransform` whose `translation` goes up, and the heights of the viewpoints, `--geoviewpoint` ones too, are raised by the same amount. It is for seafloor data, whose negative heights parts of X3DOM's `GeoTileset` do not handle; use more than the greatest depth. The Copy GeoViewpoint button takes the lift off, so the option it gives is for the true heights. |
 | `--x3dom-url` | `url` | The X3DOM script of the `--html` page, and the stylesheet beside it. Defaults to the build on `www.x3dom.org`, which has no `GeoTileset`; use a build of X3DOM master (October 2026 or later) to see a tileset. |
 | `--raw-mesh-glb`, `-raw-mesh-glb` | none | Write `raw_mesh.glb`, the untrimmed mesh before support trimming. |

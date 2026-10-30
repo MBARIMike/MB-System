@@ -140,6 +140,78 @@ int main() {
     const std::filesystem::path directory = std::filesystem::temp_directory_path() / "mbmesh_test_provenance";
     std::filesystem::create_directories(directory);
 
+    // ---- a point cloud GLB is colored by the heights it is given: COLOR_0, low dark, high yellow ----
+    {
+        PointCloud points;
+        std::vector<double> heights;
+        for (int i = 0; i < 100; i++) {
+            points.push_back(Vec3(i, 0.0, 0.0));
+            heights.push_back(-100.0 + i);
+        }
+        const std::filesystem::path path = directory / "points.glb";
+        std::string error;
+        ok &= check(write_pointcloud_glb_file(path, points, &error, GlbContent{"pointcloud", "points"}, &heights, PointColorMap::HaxbyEqualized),
+                    "colored point cloud is written");
+        tinygltf::Model model;
+        tinygltf::TinyGLTF loader;
+        std::string load_error, warning;
+        ok &= check(loader.LoadBinaryFromFile(&model, &load_error, &warning, path.string()), "colored point cloud is read back");
+        const tinygltf::Primitive &primitive = model.meshes.at(0).primitives.at(0);
+        ok &= check(primitive.mode == TINYGLTF_MODE_POINTS && primitive.attributes.count("COLOR_0") == 1, "the points have COLOR_0");
+        if (primitive.attributes.count("COLOR_0") == 1) {
+            const tinygltf::Accessor &accessor = model.accessors.at(primitive.attributes.at("COLOR_0"));
+            ok &= check(accessor.count == 100 && accessor.type == TINYGLTF_TYPE_VEC3 && accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT,
+                        "COLOR_0 is a float RGB color for each point");
+            const tinygltf::BufferView &view = model.bufferViews.at(accessor.bufferView);
+            const float *rgb = reinterpret_cast<const float *>(model.buffers.at(view.buffer).data.data() + view.byteOffset + accessor.byteOffset);
+            const auto near = [](float value, double expected) { return std::fabs(value - expected / 255.0) < 1e-3; };
+            ok &= check(rgb[0] < 60.0 / 255.0 && rgb[2] > 170.0 / 255.0 && rgb[1] < 130.0 / 255.0, "the lowest point is dark blue");
+            // The cell bounds are the 100 sorted heights at 100 * k / 11 (less one), so point 26 is the fourth bound, with the fourth Haxby color.
+            ok &= check(near(rgb[26 * 3], 106.0) && near(rgb[26 * 3 + 1], 235.0) && near(rgb[26 * 3 + 2], 255.0), "a point at the fourth bound has the fourth Haxby color");
+            ok &= check(near(rgb[99 * 3], 255.0) && near(rgb[99 * 3 + 1], 255.0) && near(rgb[99 * 3 + 2], 255.0), "a point above the last bound is white");
+        }
+        ok &= check(model.materials.at(0).pbrMetallicRoughness.baseColorFactor.at(0) == 1.0 && model.materials.at(0).pbrMetallicRoughness.baseColorFactor.at(2) == 1.0,
+                    "the base color is white, so that the colors are the points' own");
+
+        // The linear map, the default: 11 equal steps between rounded heights. For 100 heights from -100 to -1 the step is 11.25 from -101.25,
+        // so the highest point, -1, is 0.911 of the way from the ninth Haxby color (255,161,68) to the tenth (255,186,133).
+        tinygltf::Model plain;
+        {
+            set_glb_run_metadata(run_metadata(example_run(true)));
+            ok &= check(write_pointcloud_glb_file(path, points, &error, GlbContent{"pointcloud", "points"}, &heights), "linear point cloud is written");
+            clear_glb_run_metadata();
+            tinygltf::Model linear;
+            ok &= check(loader.LoadBinaryFromFile(&linear, &load_error, &warning, path.string()), "linear point cloud is read back");
+            const tinygltf::Primitive &linear_primitive = linear.meshes.at(0).primitives.at(0);
+            ok &= check(linear_primitive.attributes.count("COLOR_0") == 1, "the linear points have COLOR_0");
+            if (linear_primitive.attributes.count("COLOR_0") == 1) {
+                const tinygltf::Accessor &accessor = linear.accessors.at(linear_primitive.attributes.at("COLOR_0"));
+                const tinygltf::BufferView &view = linear.bufferViews.at(accessor.bufferView);
+                const float *rgb = reinterpret_cast<const float *>(linear.buffers.at(view.buffer).data.data() + view.byteOffset + accessor.byteOffset);
+                ok &= check(std::fabs(rgb[99 * 3] - 1.0f) < 1e-3 && std::fabs(rgb[99 * 3 + 1] - (161.0 + 0.9111 * 25.0) / 255.0) < 2e-3 &&
+                                std::fabs(rgb[99 * 3 + 2] - (68.0 + 0.9111 * 65.0) / 255.0) < 2e-3,
+                            "the linear map colors the highest point between the ninth and tenth Haxby colors");
+            }
+            const std::string description = linear.asset.extras.Get("MB-System").Get("content").Get("description").Get<std::string>();
+            ok &= check(description.find("-101.25") != std::string::npos && description.find("equally spaced") != std::string::npos,
+                        "the linear map lists its bounds in the description");
+        }
+        ok &= check(write_pointcloud_glb_file(path, points, &error, GlbContent{"pointcloud", "points"}, &heights, PointColorMap::None) &&
+                        loader.LoadBinaryFromFile(&plain, &load_error, &warning, path.string()) &&
+                        plain.meshes.at(0).primitives.at(0).attributes.count("COLOR_0") == 0,
+                    "the colormap none gives no COLOR_0");
+        PointColorMap parsed = PointColorMap::None;
+        ok &= check(parse_point_color_map("equalized", &parsed) && parsed == PointColorMap::HaxbyEqualized && parse_point_color_map("linear", &parsed) &&
+                        parsed == PointColorMap::HaxbyLinear && parse_point_color_map("none", &parsed) && parsed == PointColorMap::None &&
+                        !parse_point_color_map("rainbow", &parsed),
+                    "the colormap names parse");
+
+        ok &= check(write_pointcloud_glb_file(path, points, &error, GlbContent{"pointcloud", "points"}), "plain point cloud is written");
+        ok &= check(loader.LoadBinaryFromFile(&plain, &load_error, &warning, path.string()) &&
+                        plain.meshes.at(0).primitives.at(0).attributes.count("COLOR_0") == 0,
+                    "without heights the points have no COLOR_0");
+    }
+
     // ---- GLB extras equal the metadata, and carry the content of the file ----
     for (const bool with_center : {true, false}) {
         const std::string label = with_center ? "with GeoOrigin: " : "without GeoOrigin: ";

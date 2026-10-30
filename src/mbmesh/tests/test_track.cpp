@@ -125,6 +125,8 @@ int main() {
         // 2 + 1 segments, each two vertices
         ok &= check(json.find("\"count\":6") != std::string::npos, "the track holds one vertex pair per segment");
         ok &= check(json.find("\"mode\":1") != std::string::npos, "the track is drawn as lines");
+        double color[3] = {1, 1, 1};
+        ok &= check(read_triplet(json, "\"baseColorFactor\":[", color) && color[0] == 0.0 && color[1] == 0.0 && color[2] == 0.0, "the track is black");
         double minimum[3] = {1, 1, 1}, maximum[3] = {0, 0, 0};
         ok &= check(read_triplet(json, "\"min\":[", minimum) && read_triplet(json, "\"max\":[", maximum) &&
                         minimum[0] == 0.0 && minimum[1] == 0.0 && minimum[2] == 0.0 &&

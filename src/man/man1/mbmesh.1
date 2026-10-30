@@ -108,6 +108,13 @@ ellipsoid. Without an orientation the top of the view is toward local up. The
 the clipboard and in the X3DOM log. The value must be attached to the option, with an
 equals sign and no spaces, for example \fB\-\-geoviewpoint=\-122.4,36.6,\-900,\-122.39,36.61,\-950\fR.
 .TP
+.B \-\-pointcloud-colormap=\fINAME\fR
+How \fBpointcloud.glb\fR is colored by height, with the Haxby color table that \fBmbm_grdplot\fR
+uses, 11 colors from dark blue to white: \fBlinear\fR (the default), 11 equal steps between rounded
+heights chosen from the range, as \fBmbm_grdplot -G5\fR does; \fBequalized\fR, steps with equal
+numbers of points, as \fBmbm_grdplot -G5 -S\fR does; or \fBnone\fR, one orange. The heights the color
+changes between are in the description of the file's MB-System.content metadata.
+.TP
 .B \-\-lifted=\fIMETERS\fR
 With \fB\-\-html\fR, or with a directory input, lift everything this many meters above the
 ellipsoid along the local vertical. Each model is written inside a GeoTransform whose translation
@@ -212,7 +219,10 @@ for inspection.
 .TP
 .B \--pointcloud-glb
 Also write \fBpointcloud.glb\fR, a diagnostic GLB point cloud for smaller
-datasets.
+datasets. The points are colored by their height in the local frame, in a COLOR_0 attribute, the way
+\fBmbm_grdplot -G5 -S\fR colors a grid: the Haxby color table, 11 colors from dark blue to white,
+changing linearly between heights that divide the points into 11 cells of equal numbers. Those heights
+are in the description of the file's MB-System.content metadata.
 .TP
 .B \--normal-glb
 Also write \fBnormals.glb\fR, diagnostic normal vectors for smaller datasets.
@@ -222,7 +232,7 @@ Also write \fBorigins.glb\fR, diagnostic sensor-origin rays for smaller
 datasets.
 .TP
 .B \--track-glb
-Also write \fBtrack.glb\fR, the sensor track as a 3D line, with one position per
+Also write \fBtrack.glb\fR, the sensor track as a black 3D line, with one position per
 ping. The positions are in the same coordinates as \fBmesh.glb\fR, including any
 \fB--geoorigin\fR offset, so the two overlay directly.
 .TP
@@ -351,7 +361,7 @@ Optional WGS84 Earth-Centered, Earth-Fixed XYZ point cloud.
 Optional oriented ECEF point cloud.
 .TP
 .B pointcloud.glb
-Optional diagnostic point cloud GLB.
+Optional diagnostic point cloud GLB, colored by height.
 .TP
 .B normals.glb
 Optional diagnostic normal-vector GLB.

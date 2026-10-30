@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -271,6 +273,110 @@ int add_index_accessor(tinygltf::Model *model, int buffer_view_index, std::size_
     return static_cast<int>(model->accessors.size()) - 1;
 }
 
+// The Haxby color table that mbm_grdplot uses (its palette 1), from low to high: 11 colors.
+constexpr int haxby_color_count = 11;
+const double haxby_colors[haxby_color_count][3] = {
+    {37, 57, 175}, {40, 127, 251}, {50, 190, 255}, {106, 235, 255}, {138, 236, 174}, {205, 255, 162},
+    {240, 236, 121}, {255, 189, 87}, {255, 161, 68}, {255, 186, 133}, {255, 255, 255},
+};
+
+// The color of the palette at x, from 0 (first color) to 10 (last), interpolated between the colors.
+[[nodiscard]] std::array<double, 3> haxby_palette_color(double x) {
+    x = std::min(static_cast<double>(haxby_color_count - 1), std::max(0.0, x));
+    const int i1 = std::min(haxby_color_count - 2, static_cast<int>(x));
+    std::array<double, 3> color;
+    for (int c = 0; c < 3; c++) {
+        color[c] = haxby_colors[i1][c] + (haxby_colors[i1 + 1][c] - haxby_colors[i1][c]) * (x - i1);
+    }
+    return color;
+}
+
+// The bounds of the color table that "mbm_grdplot -G5" makes without -S: 11 equal steps from a rounded value below the
+// minimum, the step chosen as mbm_grdplot does from the range of the values.
+void linear_color_bounds(double minimum, double maximum, std::vector<double> *bounds) {
+    bounds->clear();
+    const double range = maximum - minimum;
+    if (!(range > 0.0)) {
+        bounds->push_back(minimum);
+        return;
+    }
+    const int steps = haxby_color_count - 1;
+    double contour_interval = std::pow(10.0, std::trunc(std::log10(range) + 0.5)) / 10.0;
+    if (range / contour_interval < 10.0) {
+        contour_interval /= 4.0;
+    } else if (range / contour_interval < 20.0) {
+        contour_interval /= 2.0;
+    }
+    const double start_interval = contour_interval / 2.0;
+    double multiplier = std::trunc(range / steps / start_interval) + 1.0;
+    double color_interval = multiplier * start_interval;
+    const auto first_bound = [&](double interval) {
+        return minimum < 0.0 ? interval * (std::trunc(minimum / interval) - 1.0) : interval * std::trunc(minimum / interval);
+    };
+    double start = first_bound(color_interval);
+    if (start + color_interval * steps < maximum) {
+        multiplier += 1.0;
+        color_interval = multiplier * start_interval;
+        start = first_bound(color_interval);
+    }
+    for (int i = 0; i <= steps; i++) {
+        bounds->push_back(start + color_interval * i);
+    }
+}
+
+// The colors for the heights, as the color table that mbm_grdplot -G5 makes for a grid with the Haxby colors, with a color at each of
+// 11 bounds and the color changing linearly from one to the next; the bounds are returned in bounds. For HaxbyLinear they
+// are those of linear_color_bounds. For HaxbyEqualized (-S) the data are divided into 11 cells of equal numbers of values
+// (what "gmt grdhisteq -C11" does to a Cartesian grid), and the bounds are each cell's lower bound, 0.01 of the range
+// below the minimum for the first. A value above the last bound has the last color, white. If the values are not spread
+// enough to have 11 different bounds, the palette is interpolated over fewer, as mbm_grdplot does.
+[[nodiscard]] std::vector<float> colors_for_values(const std::vector<double> &values, PointColorMap colormap, std::vector<double> *bounds) {
+    std::vector<double> sorted = values;
+    std::sort(sorted.begin(), sorted.end());
+    const std::size_t count = sorted.size();
+    const double range = sorted.back() - sorted.front();
+
+    if (colormap == PointColorMap::HaxbyLinear) {
+        linear_color_bounds(sorted.front(), sorted.back(), bounds);
+    } else {
+        bounds->clear();
+        bounds->push_back(sorted.front() - 0.01 * range);
+        for (int k = 1; k < haxby_color_count; k++) {
+            // The first value of cell k, which is the last of cell k - 1, as gmt grdhisteq reports it.
+            const std::size_t last_of_previous = static_cast<std::size_t>(k) * count / (haxby_color_count);
+            const double bound = sorted[last_of_previous > 0 ? last_of_previous - 1 : 0];
+            if (bound > bounds->back()) {
+                bounds->push_back(bound);
+            }
+        }
+    }
+
+    const int bound_count = static_cast<int>(bounds->size());
+    std::vector<std::array<double, 3>> bound_colors;
+    for (int i = 0; i < bound_count; i++) {
+        bound_colors.push_back(haxby_palette_color(bound_count > 1 ? (haxby_color_count - 1.0) * i / (bound_count - 1.0) : haxby_color_count / 2.0));
+    }
+
+    std::vector<float> colors;
+    colors.reserve(count * 3);
+    for (const double value : values) {
+        std::array<double, 3> color = bound_colors.back();
+        if (bound_count > 1 && value < bounds->back()) {
+            const int upper = static_cast<int>(std::upper_bound(bounds->begin(), bounds->end(), value) - bounds->begin());
+            const int lower = std::max(0, upper - 1);
+            const int next = std::min(bound_count - 1, upper);
+            const double fraction = next > lower ? (value - (*bounds)[lower]) / ((*bounds)[next] - (*bounds)[lower]) : 0.0;
+            for (int c = 0; c < 3; c++) {
+                color[c] = bound_colors[lower][c] + (bound_colors[next][c] - bound_colors[lower][c]) * fraction;
+            }
+        }
+        for (int c = 0; c < 3; c++) {
+            colors.push_back(static_cast<float>(color[c] / 255.0));
+        }
+    }
+    return colors;
+}
+
 [[nodiscard]] tinygltf::Material make_material(const std::array<double, 4> &base_color) {
     tinygltf::Material material;
     material.doubleSided = true;
@@ -347,7 +453,8 @@ void apply_asset_extras(tinygltf::Model *model, const GlbContent &content) {
     const std::array<double, 4> &base_color,
     const std::string &error_context,
     std::string *error,
-    const GlbContent &content) {
+    const GlbContent &content,
+    const std::vector<float> *colors = nullptr) {
     if (path.empty()) {
         set_error(error, "GLB output path is empty");
         return false;
@@ -362,6 +469,10 @@ void apply_asset_extras(tinygltf::Model *model, const GlbContent &content) {
     const std::vector<float> positions = flatten_vec3_values(vertices);
     const std::size_t position_offset = append_vector_bytes(&binary_buffer, positions);
     const std::size_t position_byte_length = positions.size() * sizeof(float);
+    std::size_t color_offset = 0;
+    if (colors != nullptr) {
+        color_offset = append_vector_bytes(&binary_buffer, *colors);
+    }
     append_padding(&binary_buffer);
 
     tinygltf::Model model;
@@ -380,6 +491,17 @@ void apply_asset_extras(tinygltf::Model *model, const GlbContent &content) {
     primitive.mode = primitive_mode;
     primitive.attributes["POSITION"] = position_accessor;
     primitive.material = 0;
+    if (colors != nullptr) {
+        // COLOR_0 as RGB floats, which a viewer multiplies by the material's base color.
+        const int color_buffer_view = add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, color_offset, colors->size() * sizeof(float));
+        tinygltf::Accessor color_accessor;
+        color_accessor.bufferView = color_buffer_view;
+        color_accessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+        color_accessor.count = vertices.size();
+        color_accessor.type = TINYGLTF_TYPE_VEC3;
+        model.accessors.push_back(std::move(color_accessor));
+        primitive.attributes["COLOR_0"] = static_cast<int>(model.accessors.size()) - 1;
+    }
 
     tinygltf::Mesh gltf_mesh;
     gltf_mesh.name = mesh_name;
@@ -518,9 +640,60 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
     return true;
 }
 
-bool write_pointcloud_glb_file(const std::filesystem::path &path, const PointCloud &pointcloud, std::string *error, const GlbContent &content) {
+const char *point_color_map_names() {
+    return "linear, equalized, none";
+}
+
+const char *point_color_map_name(PointColorMap colormap) {
+    switch (colormap) {
+    case PointColorMap::None:
+        return "none";
+    case PointColorMap::HaxbyLinear:
+        return "linear";
+    case PointColorMap::HaxbyEqualized:
+        return "equalized";
+    }
+    return "unknown";
+}
+
+bool parse_point_color_map(const std::string &name, PointColorMap *colormap) {
+    for (const PointColorMap candidate : {PointColorMap::None, PointColorMap::HaxbyLinear, PointColorMap::HaxbyEqualized}) {
+        if (name == point_color_map_name(candidate)) {
+            *colormap = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool write_pointcloud_glb_file(
+    const std::filesystem::path &path,
+    const PointCloud &pointcloud,
+    std::string *error,
+    const GlbContent &content,
+    const std::vector<double> *heights,
+    PointColorMap colormap) {
     if (error != nullptr) {
         error->clear();
+    }
+
+    if (heights != nullptr && colormap != PointColorMap::None && heights->size() == pointcloud.size() && !pointcloud.empty()) {
+        std::vector<double> bounds;
+        const std::vector<float> colors = colors_for_values(*heights, colormap, &bounds);
+        GlbContent colored = content;
+        std::ostringstream description;
+        description << std::fixed << std::setprecision(2) << ", colored by height in the local frame (tangent to the ellipsoid) with the Haxby color table "
+                    << "that mbm_grdplot uses, as \"mbm_grdplot -G5" << (colormap == PointColorMap::HaxbyEqualized ? " -S" : "")
+                    << "\" does: the color changes linearly between these heights, in meters, "
+                    << (colormap == PointColorMap::HaxbyEqualized ? "which divide the points into cells of equal numbers, " : "which are equally spaced, ")
+                    << "from dark blue at the first to white at the last:";
+        for (const double bound : bounds) {
+            description << " " << bound;
+        }
+        colored.description += description.str();
+        // The colors give the points their hue, so the base color is white.
+        return write_single_primitive_glb_file(path, pointcloud, TINYGLTF_MODE_POINTS, "point_cloud", {1.0, 1.0, 1.0, 1.0}, "point cloud", error,
+                                               colored, &colors);
     }
 
     return write_single_primitive_glb_file(
@@ -645,7 +818,7 @@ bool write_track_glb_file(
         line_vertices,
         TINYGLTF_MODE_LINE,
         "sensor_track",
-        {1.0, 0.8, 0.0, 1.0},
+        {0.0, 0.0, 0.0, 1.0},
         "sensor track",
         error,
         content);

@@ -753,6 +753,7 @@ Options parse_options(int argc, char **argv) {
         {"poisson-iterations", required_argument, nullptr, 1022},
         {"geoviewpoint", required_argument, nullptr, 1018},
         {"lifted", required_argument, nullptr, 1023},
+        {"pointcloud-colormap", required_argument, nullptr, 1024},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -908,6 +909,13 @@ Options parse_options(int argc, char **argv) {
 
         case 1020:
             options.x3dom_url = optarg;
+            break;
+
+        case 1024:
+            if (!parse_point_color_map(optarg, &options.pointcloud_colormap)) {
+                LOG_ERROR("invalid --pointcloud-colormap:", std::string("'") + optarg + "' is not one of " + point_color_map_names());
+                std::exit(1);
+            }
             break;
 
         case 1023: {
@@ -1073,10 +1081,14 @@ void print_usage() {
     std::cout << "      --local-xyz              Also write pointcloud-local.xyz\n";
     std::cout << "      --ecef-xyz               Also write pointcloud-ecef.xyz\n";
     std::cout << "      --oriented-ply           Also write oriented-pointcloud-ecef.ply\n";
-    std::cout << "      --pointcloud-glb         Also write pointcloud.glb\n";
+    std::cout << "      --pointcloud-glb         Also write pointcloud.glb, colored by height\n";
+    std::cout << "      --pointcloud-colormap <name>  How pointcloud.glb is colored by height, with the Haxby color table of mbm_grdplot:\n";
+    std::cout << "                               " << point_color_map_names() << " [linear]. linear: 11 equal steps between rounded heights, as\n";
+    std::cout << "                               mbm_grdplot -G5 does; equalized: steps with equal numbers of points, as mbm_grdplot -G5 -S;\n";
+    std::cout << "                               none: one orange. The heights are listed in the file's description\n";
     std::cout << "      --normal-glb             Also write normals.glb\n";
     std::cout << "      --origin-glb             Also write origins.glb\n";
-    std::cout << "      --track-glb              Also write track.glb, the sensor track as a 3D line\n";
+    std::cout << "      --track-glb              Also write track.glb, the sensor track as a black 3D line\n";
     std::cout << "      --tileset                Also write tileset/tileset.json and tileset/tile_I_J.glb, the surface as an OGC 3D\n";
     std::cout << "                               Tiles tileset (a part of it is loaded as needed, so large surveys fit in a browser).\n";
     std::cout << "                               With --html the page shows it with a GeoTileset node, which needs a build of X3DOM\n";
@@ -1175,8 +1187,15 @@ bool write_outputs(
 
     if (options.write_pointcloud_glb) {
         const auto pointcloud_glb_path = options.output_directory / "pointcloud.glb";
+        // The points are colored by their height in the local frame, which is up and in meters.
+        std::vector<double> heights;
+        heights.reserve(points.size());
+        for (const Vec3 &point : points) {
+            heights.push_back(point.z);
+        }
         if (!write_pointcloud_glb_file(pointcloud_glb_path, output_points(points, frame, offset), error,
-                                         GlbContent{"pointcloud", "The soundings used for the reconstruction, as points"})) {
+                                         GlbContent{"pointcloud", "The soundings used for the reconstruction, as points"}, &heights,
+                                       options.pointcloud_colormap)) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + pointcloud_glb_path.string());

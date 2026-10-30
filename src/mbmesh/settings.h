@@ -11,6 +11,7 @@
 #include "algorithms/reconstruction.h"
 #include "algorithms/screened_poisson.h"
 #include "algorithms/support_trimming.h"
+#include "io/glb_writer.h"
 #include "data_types/geometry.h"
 #include "data_types/swathfile.h"
 #include "io/datalist_reader.h"
@@ -43,6 +44,8 @@ struct Options {
     bool write_ecef_xyz = false;
     bool write_oriented_ply = false;
     bool write_pointcloud_glb = false;
+    // --pointcloud-colormap: how pointcloud.glb is colored by height.
+    PointColorMap pointcloud_colormap = PointColorMap::HaxbyLinear;
     bool write_normal_glb = false;
     bool write_origin_glb = false;
     bool write_track_glb = false;
