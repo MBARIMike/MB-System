@@ -108,6 +108,14 @@ ellipsoid. Without an orientation the top of the view is toward local up. The
 the clipboard and in the X3DOM log. The value must be attached to the option, with an
 equals sign and no spaces, for example \fB\-\-geoviewpoint=\-122.4,36.6,\-900,\-122.39,36.61,\-950\fR.
 .TP
+.B \-\-lifted=\fIMETERS\fR
+With \fB\-\-html\fR, or with a directory input, lift everything this many meters above the
+ellipsoid along the local vertical. Each model is written inside a GeoTransform whose translation
+goes up, and the heights of the viewpoints, those of \fB\-\-geoviewpoint\fR too, are raised by the same
+amount. It is for seafloor data, whose negative heights parts of the X3DOM GeoTileset node do not
+handle; use more than the greatest depth. The \fBCopy GeoViewpoint\fR button takes the lift off
+again, so the option it gives is for the true heights.
+.TP
 .B \--chunk-size \fImeters\fR
 Reconstruct in square horizontal tiles of about this size (rounded up to a whole
 number of Poisson cells) instead of in one pass. Chunking turns on

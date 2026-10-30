@@ -94,6 +94,12 @@ struct X3DomWriterOptions {
     // viewpoints, as USER_GEOVIEW_1, USER_GEOVIEW_2 and so on, each with the GeoOrigin if there is one.
     std::vector<X3DomUserViewpoint> user_viewpoints;
 
+    // If not zero, the page lifts everything this many meters above the ellipsoid, along the local vertical: each
+    // model is in a GeoTransform with a translation up, and the heights of the viewpoints, the user's too, have it
+    // added. It is for seafloor data at negative heights, which parts of X3DOM's GeoTileset do not handle. The Copy
+    // GeoViewpoint button takes the lift off again, so its option is for the true heights.
+    double lift_meters = 0.0;
+
     // The X3DOM script the page loads. A GeoTileset needs a build of X3DOM that has it (merged in October 2026),
     // which the build on www.x3dom.org, the default, does not.
     std::string x3dom_url = "https://www.x3dom.org/x3dom/dist/x3dom-full.js";

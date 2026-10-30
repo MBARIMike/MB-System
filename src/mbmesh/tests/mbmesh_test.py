@@ -124,6 +124,26 @@ class MbmeshTest(unittest.TestCase):
       self.assertIn(message, proc.stdout.decode(), args)
       self.assertNotIn('reading datalist', proc.stdout.decode(), args)
 
+  def testLiftedIsValidated(self):
+    # --lifted takes meters above zero and needs --html or a directory input.
+    cases = (
+      (['--html', '--lifted=abc'], 'not a number of meters'),
+      (['--html', '--lifted=-5'], 'not a number of meters'),
+      (['--html', '--lifted=0'], 'not a number of meters'),
+      (['--lifted=100'], 'use --html too'),
+    )
+    for args, message in cases:
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent'] + args,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, args)
+      self.assertIn(message, proc.stdout.decode(), args)
+
+  def testHelpDocumentsLifted(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--lifted', output)
+
   def testHelpDocumentsGeoViewpoint(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

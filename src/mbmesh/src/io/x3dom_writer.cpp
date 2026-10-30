@@ -332,6 +332,9 @@ constexpr const char *page_script = R"JS(
         }
         var position = ecefToGeodetic(camera.x + modelOrigin[0], camera.y + modelOrigin[1], camera.z + modelOrigin[2]);
         var target = ecefToGeodetic(center.x + modelOrigin[0], center.y + modelOrigin[1], center.z + modelOrigin[2]);
+        // A page written with --lifted shows everything liftMeters higher than it is: the option is for the true heights.
+        position[2] -= liftMeters;
+        target[2] -= liftMeters;
 
         // The local frame at the camera in the form X3DOM uses for a GeoViewpoint: X east, Y up, Z south.
         var phi = position[1] * Math.PI / 180, lambda = position[0] * Math.PI / 180;
@@ -1115,10 +1118,24 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     if (options.use_geoorigin) {
         geodetic_to_ecef_array(geo.origin_lon, geo.origin_lat, geo.origin_elevation, origin_ecef);
     }
+    // --lifted raises everything by this many meters along the ellipsoid normal: the models with a GeoTransform, and
+    // the viewpoints by adding it to their heights, so that the view stays where the models are.
+    const double lift = options.lift_meters;
     std::ostringstream position, center, origin_coordinates;
     position << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " " << std::setprecision(1)
-             << (geo.mean_elevation + geo.view_altitude);
-    center << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " " << std::setprecision(2) << geo.mean_elevation;
+             << (geo.mean_elevation + geo.view_altitude + lift);
+    center << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " " << std::setprecision(2)
+           << (geo.mean_elevation + lift);
+    std::ostringstream lift_center;   // where the lifting GeoTransforms are: only the latitude and longitude matter
+    lift_center << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " 0";
+    double local_lift[3] = {0.0, 0.0, 0.0};   // the lift along the local up at the center, in the models' coordinates
+    if (lift != 0.0) {
+        double east[3], north[3], up[3];
+        local_axes(geo.center_lat, geo.center_lon, east, north, up);
+        for (int i = 0; i < 3; i++) {
+            local_lift[i] = up[i] * lift;
+        }
+    }
     origin_coordinates << std::fixed << std::setprecision(6) << geo.origin_lat << " " << geo.origin_lon << " " << std::setprecision(2)
                        << geo.origin_elevation;
 
@@ -1250,21 +1267,17 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                << "          </tr>\n";
     }
 
+    // The three buttons are in one row, in one cell so that the table keeps its two columns. The status message is
+    // as wide as the buttons and wraps, and width:0 with min-width:100% keeps it from making the table wider.
     output << "          <tr>\n"
-           << "            <td>\n"
+           << "            <td colspan='2'>\n"
            << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.showAll();'> Show Everything\n"
            << "              </button>\n"
-           << "            </td>\n"
-           << "            <td>\n"
            << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.resetView();'> Reset View\n"
            << "              </button>\n"
-           << "            </td>\n"
-           << "          </tr>\n"
-           << "          <tr>\n"
-           << "            <td colspan='2'>\n"
            << "              <button onclick='copyGeoViewpoint()' title='Puts the option that gives the current view on the clipboard and in the X3DOM log'> Copy GeoViewpoint\n"
            << "              </button>\n"
-           << "              <div id='copy-status' style='visibility:hidden; font-size:smaller; max-width:18em; min-height:1.2em;'>&nbsp;</div>\n"
+           << "              <div id='copy-status' style='visibility:hidden; font-size:smaller; width:0; min-width:100%; min-height:1.2em;'>&nbsp;</div>\n"
            << "            </td>\n"
            << "          </tr>\n"
            << "        </table>\n"
@@ -1283,10 +1296,11 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     if (geo.has_local_view) {
         output << std::fixed << std::setprecision(3)
                << "        <Viewpoint DEF='OVERVIEW_LOCAL' id='OVERVIEW_LOCAL' description='Overview, Viewpoint in model coordinates' position='"
-               << geo.view_position[0] << " " << geo.view_position[1] << " " << geo.view_position[2] << "' orientation='"
+               << (geo.view_position[0] + local_lift[0]) << " " << (geo.view_position[1] + local_lift[1]) << " "
+               << (geo.view_position[2] + local_lift[2]) << "' orientation='"
                << std::setprecision(8) << geo.view_axis[0] << " " << geo.view_axis[1] << " " << geo.view_axis[2] << " " << geo.view_angle
-               << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(3) << geo.view_center[0] << " " << geo.view_center[1]
-               << " " << geo.view_center[2] << "'></Viewpoint>\n";
+               << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(3) << (geo.view_center[0] + local_lift[0]) << " "
+               << (geo.view_center[1] + local_lift[1]) << " " << (geo.view_center[2] + local_lift[2]) << "'></Viewpoint>\n";
     }
     output << "        <GeoViewpoint DEF='OVERVIEW_GEO' id='OVERVIEW_GEO' description='Overview, GeoViewpoint with geoOrigin' position='"
            << position.str() << "' orientation='1 0 0 -1.5708' fieldOfView='0.785398' centerOfRotation='" << center.str() << "'"
@@ -1310,9 +1324,9 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         const std::string number = std::to_string(i + 1);
         output << std::fixed << "        <GeoViewpoint DEF='USER_GEOVIEW_" << number << "' id='USER_GEOVIEW_" << number
                << "' description='User GeoViewpoint " << number << "' position='" << std::setprecision(7) << user.latitude << " "
-               << user.longitude << " " << std::setprecision(3) << user.elevation << "' orientation='" << std::setprecision(8) << axis[0] << " "
+               << user.longitude << " " << std::setprecision(3) << (user.elevation + lift) << "' orientation='" << std::setprecision(8) << axis[0] << " "
                << axis[1] << " " << axis[2] << " " << angle << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(7)
-               << user.center_latitude << " " << user.center_longitude << " " << std::setprecision(3) << user.center_elevation
+               << user.center_latitude << " " << user.center_longitude << " " << std::setprecision(3) << (user.center_elevation + lift)
                << "' geoSystem='\"GD\" \"WE\"'>";
         if (options.use_geoorigin) {
             output << "\n          <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n        ";
@@ -1335,10 +1349,21 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         output << "        </GeoMetadata>\n";
     }
 
+    // X3DOM's GeoTransform has X east, Y up and Z south in the local frame at its geoCenter, so a translation
+    // along Y is along the ellipsoid normal.
+    std::ostringstream lift_text;
+    lift_text << std::fixed << std::setprecision(3) << lift;
+    const std::string lift_translation = lift_text.str();
+    if (lift != 0.0) {
+        output << "        <!-- Lifted " << lift_translation << " m above the ellipsoid (mbmesh --lifted): every model is in a GeoTransform that\n"
+               << "             translates it up, and the viewpoints are that much higher. -->\n";
+    }
     for (std::size_t i = 0; i < options.models.size(); i++) {
         const X3DomModel &model = options.models[i];
         output << "        <switch id='switch_" << i << "' whichChoice='" << (model.visible ? 0 : -1) << "'>\n"
-               << "          <transform id='transform_" << i << "'>\n";
+               << (lift != 0.0 ? "          <GeoTransform id='transform_" + std::to_string(i) + "' geoSystem='\"GD\" \"WE\"' geoCenter='" +
+                                          lift_center.str() + "' translation='0 " + lift_translation + " 0'>\n"
+                                : "          <transform id='transform_" + std::to_string(i) + "'>\n");
         if (model.is_tileset) {
             // Written whether or not it is shown: tiles are only loaded while the switch shows it.
             output << "            <GeoTileset id='tileset_" << i << "' url='&quot;" << escape_html(model.uri) << "&quot;'>";
@@ -1350,8 +1375,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
             output << "            <Inline id='inline_" << i << "' url='" << escape_html(model.uri) << "' nameSpaceName='model_" << i
                    << "' mapDEFToID='true'></Inline>\n";
         }
-        output << "          </transform>\n"
-               << "        </switch>\n";
+        output << (lift != 0.0 ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
     }
 
     output << "      </scene>\n"
@@ -1388,6 +1412,8 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     output << "      ];\n"
            << std::fixed << std::setprecision(3)
            << "      // The WGS 84 ECEF position of the GeoOrigin that the models are relative to (zeros if they are absolute).\n"
+           << "      // How far above the ellipsoid the page lifts everything (--lifted), in meters; zero if it does not.\n"
+           << "      var liftMeters = " << std::fixed << std::setprecision(3) << options.lift_meters << ";\n"
            << "      var modelOrigin = [" << origin_ecef[0] << ", " << origin_ecef[1] << ", " << origin_ecef[2] << "];\n"
            << page_script << "    </script>\n"
            << "  </body>\n"

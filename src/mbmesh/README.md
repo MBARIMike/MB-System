@@ -103,7 +103,7 @@ The check boxes are in accordions that mirror the directory layout, one inside a
 
 The page gets an initial view as a run's page does, from the georeference (`asset.extras`) of every GLB that has one: the overview (`Viewpoint` in model coordinates, and the `GeoViewpoint`) looks straight down on the middle of the union of their extents, from the height that fits it in a 45 degree view, so it takes in the whole survey. The GeoOrigin is that of the first GLB whose vertices are relative to one. GLBs from runs with another GeoOrigin do not line up with it, so every GLB with a georeference is compared with the GeoOrigin of the page, and each that has another (its center more than 1 cm away), or has absolute vertices, is logged as an `ERROR` that names it and says how far apart the GeoOrigins are; the page is still written. GLBs written before the georeference was recorded give no view, and a page with none opens on the equator.
 
-`--geoviewpoint` works with a directory input, without `--html`, and adds its GeoViewpoints to the survey page's Viewpoint menu (`USER_GEOVIEW_1`, `USER_GEOVIEW_2`, ...), as it does for the page of a run; so does `--x3dom-url`. The viewpoints of the pages of the runs are not carried over.
+`--geoviewpoint` works with a directory input, without `--html`, and adds its GeoViewpoints to the survey page's Viewpoint menu (`USER_GEOVIEW_1`, `USER_GEOVIEW_2`, ...), as it does for the page of a run; so do `--x3dom-url` and `--lifted`. The viewpoints of the pages of the runs are not carried over.
 
 ## Command-Line Interface
 
@@ -134,6 +134,7 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `--origin-glb`, `-origin-glb` | none | Write `origins.glb`. |
 | `--track-glb`, `-track-glb` | none | Write `track.glb`, the sensor track as a 3D line. |
 | `--tileset`, `-tileset` | none | Write `tileset/tileset.json` and `tileset/tile_I_J.glb`, the surface as an OGC 3D Tiles tileset (see "OGC 3D Tiles"). |
+| `--lifted` | `meters` | With `--html`, or a directory input, lift everything this many meters above the ellipsoid along the local vertical: each model is written inside a `GeoTransform` whose `translation` goes up, and the heights of the viewpoints, `--geoviewpoint` ones too, are raised by the same amount. It is for seafloor data, whose negative heights parts of X3DOM's `GeoTileset` do not handle; use more than the greatest depth. The Copy GeoViewpoint button takes the lift off, so the option it gives is for the true heights. |
 | `--x3dom-url` | `url` | The X3DOM script of the `--html` page, and the stylesheet beside it. Defaults to the build on `www.x3dom.org`, which has no `GeoTileset`; use a build of X3DOM master (October 2026 or later) to see a tileset. |
 | `--raw-mesh-glb`, `-raw-mesh-glb` | none | Write `raw_mesh.glb`, the untrimmed mesh before support trimming. |
 | `--diagnostics`, `-diagnostics` | none | Write `pointcloud.glb`, `normals.glb`, and `origins.glb`. |

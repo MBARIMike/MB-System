@@ -36,6 +36,9 @@ struct Options {
 
     // --geoviewpoint, repeatable: GeoViewpoints for the --html page, as given (see parse_user_viewpoint()).
     std::vector<std::string> geoviewpoints;
+
+    // --lifted: meters to lift everything in the --html page, or the survey page, above the ellipsoid; zero is off.
+    double lift_meters = 0.0;
     bool write_local_xyz = false;
     bool write_ecef_xyz = false;
     bool write_oriented_ply = false;

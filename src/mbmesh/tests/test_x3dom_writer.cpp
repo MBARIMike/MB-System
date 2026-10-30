@@ -286,6 +286,22 @@ int main() {
         X3DomWriterOptions without = options;
         without.user_viewpoints.clear();
         ok &= check(!contains(write_page(without), "USER_GEOVIEW"), "no user GeoViewpoints, none in the page");
+
+        // --lifted: the models are in GeoTransforms that translate up (Y in X3DOM's frame), and the heights of the
+        // viewpoints, the user's too, have the lift added.
+        X3DomWriterOptions lifted = options;
+        lifted.lift_meters = 1000.0;
+        const std::string lifted_page = write_page(lifted);
+        ok &= check(contains(lifted_page, "<GeoTransform id='transform_0'") && contains(lifted_page, "translation='0 1000.000 0'") &&
+                        contains(lifted_page, "</GeoTransform>") && !contains(lifted_page, "<transform id='transform_0'>"),
+                    "a lifted page puts each model in a GeoTransform with a translation up");
+        ok &= check(contains(lifted_page, "position='36.6000000 -122.4000000 1050.000'") &&
+                        contains(lifted_page, "centerOfRotation='36.6000000 -122.4000000 1000.000'"),
+                    "the user GeoViewpoint heights have the lift added");
+        ok &= check(contains(lifted_page, "var liftMeters = 1000.000;") && contains(lifted_page, "position[2] -= liftMeters;"),
+                    "Copy GeoViewpoint takes the lift off");
+        ok &= check(contains(write_page(options), "var liftMeters = 0.000;") && !contains(write_page(options), "<GeoTransform"),
+                    "without a lift the page has plain transforms");
     }
 
     // ---- a tileset: a GeoTileset in the page, with the GeoOrigin, and the script that has it

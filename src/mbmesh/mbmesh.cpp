@@ -139,11 +139,13 @@ void print_html_viewer_command(
 namespace {
 
 // The page of a directory input: every GLB beneath it. Returns false after logging an error.
-bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url, const std::vector<std::string> &geoviewpoints) {
+bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url, const std::vector<std::string> &geoviewpoints,
+                       double lift_meters) {
     const std::filesystem::path html_path = survey_page_path();
     X3DomWriterOptions html_options;
     html_options.title = viewer_title(survey_directory);
     html_options.nested_groups = true;
+    html_options.lift_meters = lift_meters;
     if (!x3dom_url.empty()) {
         html_options.x3dom_url = x3dom_url;
     }
@@ -232,7 +234,7 @@ int main(int argc, char **argv) {
     {
         std::error_code directory_error;
         if (std::filesystem::is_directory(options.input_datalist, directory_error)) {
-            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints) ? 0 : 1;
+            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints, options.lift_meters) ? 0 : 1;
         }
     }
 
@@ -620,6 +622,7 @@ int main(int argc, char **argv) {
         html_options.title = viewer_title(web_root);
         html_options.use_geoorigin = placement.use_geoorigin;
         html_options.geo = placement.view;
+        html_options.lift_meters = options.lift_meters;
         for (const std::string &text : options.geoviewpoints) {
             X3DomUserViewpoint viewpoint;
             std::string viewpoint_error;
@@ -749,6 +752,7 @@ Options parse_options(int argc, char **argv) {
         {"poisson-solver", required_argument, nullptr, 1021},
         {"poisson-iterations", required_argument, nullptr, 1022},
         {"geoviewpoint", required_argument, nullptr, 1018},
+        {"lifted", required_argument, nullptr, 1023},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -906,6 +910,16 @@ Options parse_options(int argc, char **argv) {
             options.x3dom_url = optarg;
             break;
 
+        case 1023: {
+            char *end = nullptr;
+            options.lift_meters = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(options.lift_meters) || options.lift_meters <= 0.0) {
+                LOG_ERROR("invalid --lifted:", std::string("'") + optarg + "' is not a number of meters above zero");
+                std::exit(1);
+            }
+            break;
+        }
+
         case 1021:
             if (!parse_poisson_solver(optarg, &options.poisson_solver)) {
                 LOG_ERROR("invalid --poisson-solver:", std::string("'") + optarg + "' is not one of " + poisson_solver_names());
@@ -971,6 +985,10 @@ Options parse_options(int argc, char **argv) {
         LOG_ERROR("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
         std::exit(1);
     }
+    if (options.lift_meters != 0.0 && !options.write_html && !directory_input) {
+        LOG_ERROR("--lifted lifts what the page that --html writes shows; use --html too");
+        std::exit(1);
+    }
 
     // Without -O the output goes beside the datalist, so that a run from a survey directory with
     // "-I multibeam/datalistp.mb-1" writes multibeam/mbmesh_output.
@@ -1027,6 +1045,11 @@ void print_usage() {
     std::cout << "                               with the orientation as an axis and an angle, as a GeoViewpoint takes it. Heights are\n";
     std::cout << "                               above the ellipsoid. The Copy GeoViewpoint button of the page gives the ten-number form.\n";
     std::cout << "                               The value must be attached: --geoviewpoint=-122.4,36.6,-900,...\n";
+    std::cout << "      --lifted <meters>        With --html, or with a directory input, lift everything this many meters above the\n";
+    std::cout << "                               ellipsoid along the local vertical: each model goes in a GeoTransform, and the\n";
+    std::cout << "                               heights of the viewpoints, --geoviewpoint ones too, are raised by the same amount.\n";
+    std::cout << "                               For seafloor data, whose negative heights parts of X3DOM's GeoTileset do not handle;\n";
+    std::cout << "                               use more than the greatest depth. Copy GeoViewpoint takes the lift off again\n";
     std::cout << "      --chunk-size <meters>    Reconstruct in square tiles of about this size, writing tiles/tile_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";
