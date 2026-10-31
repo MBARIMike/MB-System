@@ -1,5 +1,8 @@
 #include "io/datalist_reader.h"
 
+#include "io/point_spill.h"
+#include "util/logger.h"
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -41,6 +44,10 @@ struct ReadContext {
     bool has_reference = false;
     Vec3 reference_ecef;
     Vec3 offset_sum;
+
+    // Once more soundings are accepted than the options allow in memory, they go to this file instead.
+    PointSpill spill;
+    bool spilling = false;
 };
 
 void set_error(std::string *error, const std::string &message) {
@@ -108,7 +115,51 @@ bool append_sounding_to_pointcloud(const Ping &ping, const Sounding &sounding, R
         context->has_reference = true;
     }
     context->offset_sum += collected_point.point - context->reference_ecef;
-    context->result.points.push_back(collected_point);
+    // The sensor position is the same for all the soundings of a ping, so a spilled sounding keeps the number of its
+    // ping, which is the last in the track, instead of the position.
+    const std::uint32_t ping_index = static_cast<std::uint32_t>(context->result.track.size() - 1);
+    if (context->spilling) {
+        if (!context->spill.append(collected_point.point, ping_index, error)) {
+            return false;
+        }
+    } else {
+        context->result.points.push_back(collected_point);
+        if (context->result.points.size() > context->options.spill_points) {
+            // Too many for memory: what has been read so far goes to the file, and so does everything after.
+            std::error_code directory_error;
+            std::filesystem::create_directories(context->options.spill_path.parent_path(), directory_error);
+            if (directory_error) {
+                set_error(error, "unable to create the directory of the spilled soundings: " + directory_error.message());
+                return false;
+            }
+            if (!context->spill.open(context->options.spill_path, error)) {
+                return false;
+            }
+            const std::filesystem::space_info space = std::filesystem::space(context->options.spill_path.parent_path(), directory_error);
+            if (!directory_error) {
+                LOG_INFO("[input]", "spilling the soundings to " + context->options.spill_path.string() + ", " + std::to_string(spill_record_bytes) +
+                                        " bytes each; " + std::to_string(space.available / 1000000000) + " GB of disk is free there");
+            }
+            // The points held so far have their sensor positions in them: find their pings, which are in the track in order.
+            std::size_t ping = 0;
+            for (const CollectedPoint &held : context->result.points) {
+                while (ping < context->result.track.size() && !(context->result.track[ping].position.x == held.origin.x &&
+                                                                  context->result.track[ping].position.y == held.origin.y &&
+                                                                  context->result.track[ping].position.z == held.origin.z)) {
+                    ping++;
+                }
+                if (ping >= context->result.track.size()) {
+                    set_error(error, "internal error: a sounding has a sensor position that is not in the track");
+                    return false;
+                }
+                if (!context->spill.append(held.point, static_cast<std::uint32_t>(ping), error)) {
+                    return false;
+                }
+            }
+            context->spilling = true;
+            CollectedPointCloud().swap(context->result.points);
+        }
+    }
     ++stats.soundings_accepted;
     return true;
 }
@@ -426,15 +477,22 @@ bool read_datalist(const std::filesystem::path &path, const DatalistReaderOption
         return false;
     }
 
-    if (read_result.points.empty()) {
+    if (read_result.stats.soundings_accepted == 0) {
         set_error(error, "Datalist produced no accepted bathymetry soundings: " + datalist_path);
         return false;
+    }
+    if (context.spilling) {
+        if (!context.spill.finish(error)) {
+            return false;
+        }
+        read_result.spilled = true;
+        read_result.spill_path = context.spill.path();
     }
 
     // Choose the reconstruction frame origin now that all soundings have been
     // seen: the point on the ellipsoid below the centroid. This internal frame
     // is independent of --geoorigin, which only sets the output offset.
-    const double count = static_cast<double>(read_result.points.size());
+    const double count = static_cast<double>(read_result.stats.soundings_accepted);
     const Vec3 centroid_ecef = context.reference_ecef + context.offset_sum * (1.0 / count);
     GeodeticPosition origin = ecef_to_geodetic(centroid_ecef);
     origin.elevation = 0.0;

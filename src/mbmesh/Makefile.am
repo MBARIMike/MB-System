@@ -11,6 +11,7 @@ mbmesh_SOURCES = \
 	settings.cpp \
 	src/io/coordinate_frame.cpp \
 	src/io/datalist_reader.cpp \
+	src/io/point_spill.cpp \
 	src/io/xyz_writer.cpp \
 	src/io/track.cpp \
 	src/io/provenance.cpp \

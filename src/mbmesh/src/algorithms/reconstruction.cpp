@@ -1,6 +1,8 @@
 #include "algorithms/reconstruction.h"
 
+#include "io/point_spill.h"
 #include "util/logger.h"
+#include "util/memory.h"
 #include "util/stopwatch.h"
 
 using mbmesh::Stopwatch;
@@ -255,8 +257,12 @@ Mesh crop_mesh_to_tile(const Mesh &mesh, double min_x, double max_x, double min_
     return cropped;
 }
 
-bool reconstruct_chunked(
-    const CollectedPointCloud &points,
+namespace {
+
+// The chunked driver. The points of the tiles come from points, held in memory, or from bins, on disk; exactly one is given.
+bool reconstruct_chunked_from(
+    const CollectedPointCloud *points,
+    const TileBins *bins,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
     const TileCallback &on_tile,
@@ -277,7 +283,7 @@ bool reconstruct_chunked(
         }
         return false;
     }
-    if (points.size() >= std::numeric_limits<std::uint32_t>::max()) {
+    if (points != nullptr && points->size() >= std::numeric_limits<std::uint32_t>::max()) {
         if (error != nullptr) {
             *error = "chunked reconstruction supports fewer than 2^32 points";
         }
@@ -287,7 +293,8 @@ bool reconstruct_chunked(
     // ---------------------------------------------------------------- bin points into tiles
     //
     // A point is stored in the tile that owns it and in every neighboring tile
-    // whose halo reaches it. Only indices are stored, not copies of points.
+    // whose halo reaches it. In memory only indices are stored, not copies of
+    // points; on disk the tile files were written beforehand (see TileBins).
 
     struct Tile {
         std::vector<std::uint32_t> indices;
@@ -295,33 +302,28 @@ bool reconstruct_chunked(
     };
     std::map<std::pair<int, int>, Tile> tiles;
 
-    for (std::size_t n = 0; n < points.size(); n++) {
-        const double x = points[n].point.x;
-        const double y = points[n].point.y;
-
-        const int i_first = static_cast<int>(std::floor((x - halo) / tile)) - 1;
-        const int i_last = static_cast<int>(std::floor((x + halo) / tile)) + 1;
-        const int j_first = static_cast<int>(std::floor((y - halo) / tile)) - 1;
-        const int j_last = static_cast<int>(std::floor((y + halo) / tile)) + 1;
-
-        for (int i = i_first; i <= i_last; i++) {
-            if (x < i * tile - halo || x >= (i + 1) * tile + halo) {
-                continue;
-            }
-            for (int j = j_first; j <= j_last; j++) {
-                if (y < j * tile - halo || y >= (j + 1) * tile + halo) {
-                    continue;
-                }
+    if (points != nullptr) {
+        for (std::size_t n = 0; n < points->size(); n++) {
+            const double x = (*points)[n].point.x;
+            const double y = (*points)[n].point.y;
+            for_each_tile_of_point(x, y, tile, halo, [&](int i, int j, bool owned) {
                 if (chunking.single_tile && (i != chunking.tile_i || j != chunking.tile_j)) {
-                    continue;
+                    return;
                 }
-
                 Tile &entry = tiles[{i, j}];
                 entry.indices.push_back(static_cast<std::uint32_t>(n));
-                if (x >= i * tile && x < (i + 1) * tile && y >= j * tile && y < (j + 1) * tile) {
+                if (owned) {
                     entry.owned++;
                 }
+            });
+        }
+    }
+    else {
+        for (const auto &entry : bins->tiles()) {
+            if (chunking.single_tile && (entry.first.first != chunking.tile_i || entry.first.second != chunking.tile_j)) {
+                continue;
             }
+            tiles[entry.first].owned = entry.second.owned;   // the points stay on disk
         }
     }
 
@@ -401,15 +403,28 @@ bool reconstruct_chunked(
         const std::string name = "tile " + std::to_string(i) + "," + std::to_string(j);
 
         CollectedPointCloud chunk_points;
-        chunk_points.reserve(job.indices.size());
+        if (points != nullptr) {
+            chunk_points.reserve(job.indices.size());
+            for (const std::uint32_t index : job.indices) {
+                chunk_points.push_back((*points)[index]);
+            }
+            std::vector<std::uint32_t>().swap(job.indices);
+        }
+        else {
+            std::string read_error;
+            if (!bins->read_tile(i, j, &chunk_points, &read_error)) {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                failed = true;
+                failure = read_error;
+                return false;
+            }
+        }
         double min_z = std::numeric_limits<double>::max();
         double max_z = std::numeric_limits<double>::lowest();
-        for (const std::uint32_t index : job.indices) {
-            chunk_points.push_back(points[index]);
-            min_z = std::min(min_z, points[index].point.z);
-            max_z = std::max(max_z, points[index].point.z);
+        for (const CollectedPoint &chunk_point : chunk_points) {
+            min_z = std::min(min_z, chunk_point.point.z);
+            max_z = std::max(max_z, chunk_point.point.z);
         }
-        std::vector<std::uint32_t>().swap(job.indices);
 
         // The grid covers the tile, its halo and the Poisson padding, with every
         // face on the global cell lattice so neighboring tiles share grid nodes.
@@ -546,7 +561,7 @@ bool reconstruct_chunked(
                              << mbmesh::format_minutes(elapsed) << " elapsed, about "
                              << mbmesh::format_minutes(elapsed * static_cast<double>(jobs.size() - completed_jobs) /
                                                        static_cast<double>(completed_jobs))
-                             << " left";
+                             << " left, " << mbmesh::peak_memory_text();
                     LOG_INFO("[chunking]", progress.str());
                 }
             }
@@ -603,4 +618,26 @@ bool reconstruct_chunked(
                                    mbmesh::format_duration(stage_totals.trimming));
     }
     return true;
+}
+
+} // namespace
+
+bool reconstruct_chunked(
+    const CollectedPointCloud &points,
+    const ReconstructionOptions &options,
+    const ChunkingOptions &chunking,
+    const TileCallback &on_tile,
+    ChunkingStats *stats,
+    std::string *error) {
+    return reconstruct_chunked_from(&points, nullptr, options, chunking, on_tile, stats, error);
+}
+
+bool reconstruct_chunked(
+    const TileBins &bins,
+    const ReconstructionOptions &options,
+    const ChunkingOptions &chunking,
+    const TileCallback &on_tile,
+    ChunkingStats *stats,
+    std::string *error) {
+    return reconstruct_chunked_from(nullptr, &bins, options, chunking, on_tile, stats, error);
 }

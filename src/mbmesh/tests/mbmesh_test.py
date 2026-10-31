@@ -139,6 +139,21 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotEqual(proc.returncode, 0, args)
       self.assertIn(message, proc.stdout.decode(), args)
 
+  def testSpillPointsIsValidated(self):
+    # --spill-points takes a whole number of soundings, zero or more.
+    for value in ('abc', '-5', '1.5', ''):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--spill-points=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('not a whole number of soundings', proc.stdout.decode(), value)
+
+  def testHelpDocumentsSpillPoints(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--spill-points', output)
+    self.assertIn('mbmesh_work', output)
+
   def testPointcloudColormapIsValidated(self):
     proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--pointcloud-colormap=rainbow'],
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

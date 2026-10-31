@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <unistd.h>
 #include <string>
 #include <utility>
 #include <vector>
@@ -345,6 +347,61 @@ int main() {
                         return true;
                     }, &stats, &error) && seen == 2,
                     "--max-chunks limits the number of tiles");
+    }
+
+    // The same survey from tile files on disk gives the same tiles as from memory.
+    {
+        const std::filesystem::path directory = std::filesystem::temp_directory_path() / ("mbmesh_test_chunking_bins_" + std::to_string(getpid()));
+        TileBins bins(directory, tile_size, halo, 1000);   // a small buffer, so that the tile files are appended to several times
+        std::string bins_error;
+        bool binned = bins.open(&bins_error);
+        for (const CollectedPoint &point : points) {
+            binned = binned && bins.add(point, &bins_error);
+        }
+        binned = binned && bins.finish(&bins_error);
+        ok &= check(binned, "the points can be sorted into tile files: " + bins_error);
+        ok &= check(bins.owned_point_count() == points.size(), "the tile files own every point once");
+
+        std::vector<TileResult> memory_tiles;
+        ok &= check(reconstruct_chunked(points, options, chunking, [&](TileResult &tile) {
+                        memory_tiles.push_back(tile);
+                        return true;
+                    }, &stats, &error), "chunked reconstruction from memory succeeds: " + error);
+        std::vector<TileResult> disk_tiles;
+        ChunkingStats disk_stats;
+        ok &= check(reconstruct_chunked(bins, options, chunking, [&](TileResult &tile) {
+                        disk_tiles.push_back(tile);
+                        return true;
+                    }, &disk_stats, &error), "chunked reconstruction from tile files succeeds: " + error);
+        ok &= check(disk_stats.tiles_processed == stats.tiles_processed && disk_tiles.size() == memory_tiles.size(),
+                    "tile files give the same number of tiles as memory");
+        bool same = disk_tiles.size() == memory_tiles.size();
+        for (std::size_t n = 0; same && n < disk_tiles.size(); n++) {
+            const Mesh &a = disk_tiles[n].result.mesh;
+            const Mesh &b = memory_tiles[n].result.mesh;
+            same = disk_tiles[n].i == memory_tiles[n].i && disk_tiles[n].j == memory_tiles[n].j &&
+                   disk_tiles[n].input_points == memory_tiles[n].input_points && a.indices == b.indices && a.vertices.size() == b.vertices.size();
+            for (std::size_t v = 0; same && v < a.vertices.size(); v++) {
+                same = a.vertices[v].x == b.vertices[v].x && a.vertices[v].y == b.vertices[v].y && a.vertices[v].z == b.vertices[v].z;
+            }
+        }
+        ok &= check(same, "tiles reconstructed from tile files are identical to those from memory");
+
+        // --chunk from tile files keeps one tile, as from memory.
+        TileBins one_bins(directory / "one", tile_size, halo);
+        one_bins.keep_only_tile(1, 1);
+        bool one_binned = one_bins.open(&bins_error);
+        for (const CollectedPoint &point : points) {
+            one_binned = one_binned && one_bins.add(point, &bins_error);
+        }
+        one_binned = one_binned && one_bins.finish(&bins_error);
+        ok &= check(one_binned && one_bins.tiles().size() == 1 && one_bins.tiles().begin()->first == std::make_pair(1, 1),
+                    "only the requested tile is kept when one tile is asked for");
+
+        bins.remove();
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+        ok &= check(!std::filesystem::exists(directory), "removing the bins deletes their directory");
     }
 
     std::printf(ok ? "chunking tests passed\n" : "chunking tests FAILED\n");

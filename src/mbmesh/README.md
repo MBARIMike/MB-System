@@ -122,6 +122,7 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `--poisson-solver` | `name` | How the Poisson grid equation is solved: `sor` (the default) or `jacobi`. `sor` is red-black successive over-relaxation, updated in place, with the over-relaxation factor chosen from the grid size (about 1.95 for a grid of a hundred cells across). One iteration of either costs about the same, but `sor` converges in far fewer, so it chooses its own, smaller number of iterations. See "Poisson solvers". |
 | `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000, for either solver. By default `sor` takes one iteration per cell across the longest edge of each tile's grid, but at least 50, and `jacobi` takes a count chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
+| `--spill-points` | `n` | A survey with more than `n` accepted soundings (default 50,000,000) is not held in memory: the soundings go to a file in `mbmesh_work` beside the results and are sorted into one file per tile, so memory follows the size of a tile and not of the survey. `0` always does. See [Surveys larger than memory](#surveys-larger-than-memory). |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
 | `--html`, `-html` | none | Write an X3DOM viewer page, with a heads-up display, a check box for each GLB and the processing log, in the parent of the output directory (`mbmesh_output.html`), and print the command to serve and view it. |
@@ -487,9 +488,27 @@ Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 
 
 On the same file at `-L 2` with automatic tiling, 4 threads took 66 s for 8 tiles with points, 8 threads 45 s for 16 tiles, and 12 threads 48 s for 20 tiles, so beyond about 8 threads the gain stops.
 
+### Surveys larger than memory
+
+Chunking alone bounds the Poisson grids, not the soundings. A `CollectedPoint` is 48 bytes (the sounding and the sensor position that measured it, three doubles each), and growing the vector that holds them as they are read can need about two and a half times that at its peak. One 600 MB swath file with 650,000 accepted soundings is nothing, but a survey of 515 million soundings is 25 GB of points and well over 60 GB at the peak, and the operating system ends a run that asks for that. On 28 files with 18 million soundings the peak after reading was 2.3 GB, which is 127 bytes per sounding.
+
+So a survey with more accepted soundings than `--spill-points` (50 million unless it is changed; 0 always does) does not keep them in memory:
+
+1. **Reading.** The soundings read so far are written to `mbmesh_work/soundings.bin`, as absolute ECEF, and so is each one after them. The log gives the free disk space there when the spilling starts. The reading itself is as slow as ever, but its memory no longer grows. (The first 50 million soundings are held and written when the 50 millionth is passed; the vector that holds them grows to about 2.4 GB first.)
+2. **Measuring.** One pass over the file, in pieces of 4 million points, puts the points in the local frame and finds what an in-memory run finds from its points: the bounds, the geodetic bounds and mean elevation, the point spacing (from the same blocks of consecutive points, picked out of the pieces as they go by, so the result is the same), and a sample of about a million points from which the tile size is chosen. From these the level of detail, the Poisson cell and the tile size are chosen as always. A survey that turns out to need no chunking is read back into memory, since it is small enough.
+3. **Binning.** A second pass sorts the points into one file per tile in `mbmesh_work/tiles`, each holding the points the tile owns and those in its halo, so that points near a tile edge are in more than one file (about 1.3 times the soundings in all for a 3 m tile with a 0.3 m halo). If `--decimate` is on, the points are averaged into voxels first, in the same way and with the same voxels as `point_decimation` in memory, so memory then follows the number of occupied voxels. The spill file is deleted when the pass is done.
+4. **Reconstruction.** Each tile reads its own file, so only the tiles being worked on are in memory, and gives exactly the mesh it gives from memory (the tests compare them).
+5. **Cleaning up.** `mbmesh_work` is deleted when the run ends, however it ends.
+
+The disk needs 28 bytes for each sounding for the spill file (the position as three doubles and the number of its ping, since the sensor position is the same for all the soundings of a ping and is kept once, in the track), so 14 GB for 515 million soundings. The tile files hold 48 bytes for each point, about 1.3 times as many as there are points because of the halos, and they exist while the spill file does, so with `--decimate` they are small and without it they are larger than the spill file. If the disk fills, the run stops with an error that says so; use `-O` to put the results, and with them `mbmesh_work`, on a disk with room. The work directory is beside the results so that it is on a disk with room for them.
+
+The outputs that hold points in one file are limited, since they are written from memory. `pointcloud-local.xyz` and `pointcloud-ecef.xyz` are written in full, a tile at a time, but `pointcloud.glb`, `origins.glb`, `normals.glb` and `oriented-pointcloud-ecef.ply` hold one point in n, chosen so that there are at most 5 million, and the log says which n. `--all-outputs` therefore works on a survey of any size, but writes text files that are as large as the data.
+
+Each stage logs the peak memory of the process so far (`peak memory 2.3 GB`, from `getrusage`), at the end of reading, after measuring, after binning, with each progress line of the chunking, at the end of the reconstruction and at the end of the run, so that the stage that needs the memory is the one the line follows.
+
 Current limitations:
 
-- All soundings are still read into memory before tiling; only the Poisson grids are chunked. A survey too large to hold in memory still needs a spill-to-disk binning pass.
+- A survey of up to `--spill-points` soundings (default 50 million) is read into memory before tiling, and only the Poisson grids are chunked. A larger one is spilled to disk and binned into tile files; see [Surveys larger than memory](#surveys-larger-than-memory).
 - Each tile computes its own iso-value shift from its own samples, and the tiles are not welded, so there can be small steps or cracks at tile edges. The halo keeps these small; they have been checked on a synthetic surface and one real file only.
 - Per-tile run time is not reduced, only memory per run, so small surveys can run slower chunked on one thread than in one pass because the halo and padding are reconstructed more than once.
 - Boundary triangles are assigned by centroid and are not clipped at tile edges.
@@ -520,7 +539,7 @@ Important limitations:
 
 - Reconstruction is a single end-to-end run; there is no reusable preprocessing artifact yet.
 - Decimation is available through `--decimate`, but remains off by default because it trades reconstruction detail for lower downstream cost.
-- Screened Poisson uses a regular grid, so memory per run grows with grid size. Chunked reconstruction bounds this per tile, but all soundings are still held in memory.
+- Screened Poisson uses a regular grid, so memory per run grows with grid size. Chunked reconstruction bounds this per tile, and a survey with more than `--spill-points` soundings is kept on disk, so memory follows the size of a tile; a survey of fewer soundings is held in memory.
 - Normal estimation is sensitive to sparse data, sharp edges, and inconsistent spacing.
 - Support trimming can over-trim when normals or thresholds are poor.
 - Boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
@@ -530,7 +549,7 @@ High-value future work:
 
 - Write a 3D Tiles `tileset.json` with an ENU-to-ECEF `transform`, so tiles do not depend on the glb vertex offsets.
 - Expose selected reconstruction parameters as documented CLI options.
-- Bin soundings to per-tile files on disk so surveys larger than memory can be chunked.
+- Decimate while reading, and write the point outputs of a survey on disk in full, which are limited to 5 million points now.
 - Weld or clip tile edges, and make the iso-value shift consistent across tiles.
 - Investigate octree/adaptive Poisson reconstruction.
 - Improve normal estimation near boundaries and sharp orientation changes.
@@ -663,13 +682,13 @@ INFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] input=datalist.mb-1
 DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chunking] tile_size=6.05 m, halo=0.72 m, 6 tiles contain points
 ```
 
-A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s`, `[reconstruction] completed in 1 min 7.5 s on 4 threads`, `[complete] ..., total 1 min 9.0 s`).
+A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s, peak memory 0.5 GB`, `[reconstruction] completed in 1 min 7.5 s on 4 threads, peak memory 0.8 GB`, `[complete] ..., total 1 min 9.0 s, peak memory 0.8 GB`). The peak memory is the largest amount of physical memory the process has had in use at one time.
 
 The long wait in between is reported at `INFO` level, so that a run without `-V` shows its progress, but sparingly. When chunking, at most one short line a minute says how many tiles are finished, the percentage, the elapsed time and an estimate of the time left, and a last line gives the time spent in each stage added up over all the tiles and threads, which shows which stage the run waits for. The tiles run on several threads and the largest start first, so the estimate is pessimistic early in the run:
 
 ```text
-INFO ... [chunking]  40 of 624 tiles,  6%,   3.2 min elapsed, about  46.6 min left
-INFO ... [chunking]  52 of 624 tiles,  8%,   4.4 min elapsed, about  48.1 min left
+INFO ... [chunking]  40 of 624 tiles,  6%,   3.2 min elapsed, about  46.6 min left, peak memory 2.5 GB
+INFO ... [chunking]  52 of 624 tiles,  8%,   4.4 min elapsed, about  48.1 min left, peak memory 2.5 GB
 INFO ... [chunking] time summed over all tiles and threads: normals 7 min 2.0 s, poisson 112 min 1.0 s, marching cubes 2 min 4.1 s, trimming 6 min 51.9 s
 ```
 

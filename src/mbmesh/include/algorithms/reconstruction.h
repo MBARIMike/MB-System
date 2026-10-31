@@ -5,6 +5,7 @@
 #include <string>
 
 #include "../data_types/geometry.h"
+#include "../io/point_spill.h"
 #include "marching_cubes.h"
 #include "normal_estimation.h"
 #include "screened_poisson.h"
@@ -136,6 +137,16 @@ using TileCallback = std::function<bool(TileResult &)>;
 // error.
 [[nodiscard]] bool reconstruct_chunked(
     const CollectedPointCloud &points,
+    const ReconstructionOptions &options,
+    const ChunkingOptions &chunking,
+    const TileCallback &on_tile,
+    ChunkingStats *stats,
+    std::string *error);
+
+// The same, from points sorted into tile files beforehand (see io/point_spill.h), so that only the tiles being
+// reconstructed are in memory. The tile size and halo of the bins are the ones to use in chunking.
+[[nodiscard]] bool reconstruct_chunked(
+    const TileBins &bins,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
     const TileCallback &on_tile,

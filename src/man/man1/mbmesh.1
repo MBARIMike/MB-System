@@ -143,6 +143,21 @@ grid, so memory use grows with this value. With automatic tiling, a larger value
 also gives smaller tiles, since at least two tiles per thread are wanted. The
 output does not depend on it.
 .TP
+.B \--spill-points \fIn\fR
+A survey with more than \fIn\fR accepted soundings (default 50000000) is not held
+in memory. The soundings are written to a file in a directory \fBmbmesh_work\fR
+beside the results, and then sorted into one file per tile, each holding the
+points of the tile and of its halo, so that memory use follows the size of a tile
+and not of the survey. Each tile is reconstructed from its file and gives the same
+mesh as from memory. The directory is deleted when the run ends. The disk needs
+28 bytes for each sounding for the spill file, and 48 bytes for each point,
+about 1.3 times as many as there are, for the tile files, which are small when
+\fB\--decimate\fR is on. Use \fB-O\fR to put the work directory on a disk with room. 0 always spills. Chunking, which this needs, is turned on for such a
+survey. The files that hold points as one file, \fBpointcloud.glb\fR,
+\fBorigins.glb\fR, \fBnormals.glb\fR and the oriented PLY, then hold one point in n,
+so that there are at most 5 million; the xyz files hold every point. The log gives
+the peak memory of the process after each stage.
+.TP
 .B \--poisson-solver \fIname\fR
 Select how the Poisson grid equation is solved: \fBsor\fR, the default, which is
 red-black successive over-relaxation, updated in place, or \fBjacobi\fR. An iteration

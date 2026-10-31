@@ -22,7 +22,7 @@ bool is_finite_vec3(const Vec3 &value) {
 
 } // namespace
 
-bool write_local_xyz_pointcloud(const PointCloud &pointcloud, const std::string &path, std::string *error_message) {
+bool write_local_xyz_pointcloud(const PointCloud &pointcloud, const std::string &path, std::string *error_message, bool append) {
     if (error_message != nullptr) {
         error_message->clear();
     }
@@ -32,7 +32,7 @@ bool write_local_xyz_pointcloud(const PointCloud &pointcloud, const std::string 
         return false;
     }
 
-    std::ofstream output(path);
+    std::ofstream output(path, append ? std::ios::app : std::ios::out);
     if (!output) {
         set_error(error_message, "Unable to create XYZ file: " + path);
         return false;
@@ -60,7 +60,8 @@ bool write_ecef_xyz_pointcloud(
     const PointCloud &pointcloud,
     const CoordinateFrame &frame,
     const std::string &path,
-    std::string *error_message) {
+    std::string *error_message,
+    bool append) {
     if (error_message != nullptr) {
         error_message->clear();
     }
@@ -75,7 +76,7 @@ bool write_ecef_xyz_pointcloud(
         return false;
     }
 
-    std::ofstream output(path);
+    std::ofstream output(path, append ? std::ios::app : std::ios::out);
     if (!output) {
         set_error(error_message, "Unable to create ECEF XYZ file: " + path);
         return false;

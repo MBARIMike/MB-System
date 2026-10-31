@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -24,6 +25,8 @@
 #include "io/xyz_writer.h"
 #include "io/glb_writer.h"
 #include "io/tileset_writer.h"
+#include "io/point_spill.h"
+#include "util/memory.h"
 #include "io/track.h"
 #include "io/x3dom_writer.h"
 
@@ -118,6 +121,21 @@ struct OutputPlacement {
     X3DomGeoOrigin view;
 };
 
+// The point-based outputs of a survey whose points are on disk hold at most this many points, every nth of them, because
+// they are written from memory (the xyz files are written in full, from the tile files).
+constexpr std::size_t maximum_output_points = 5000000;
+
+// Deletes the temporary files of a run that spilled its soundings to disk, however the run ends.
+struct WorkDirectoryCleanup {
+    std::filesystem::path directory;
+    ~WorkDirectoryCleanup() {
+        std::error_code ignored;
+        std::filesystem::remove(directory / "soundings.bin", ignored);
+        std::filesystem::remove_all(directory / "tiles", ignored);
+        std::filesystem::remove(directory, ignored);   // only if nothing else is in it
+    }
+};
+
 bool write_outputs(
     const Mesh &mesh,
     const Mesh &raw_mesh,
@@ -128,6 +146,7 @@ bool write_outputs(
     const OutputPlacement &placement,
     const std::vector<TrackPoint> &track,
     const Options &options,
+    const TileBins *bins,
     std::string *error);
 
 void print_html_viewer_command(
@@ -242,16 +261,17 @@ int main(int argc, char **argv) {
 
     std::string error;
     PreprocessedDatalist preprocessed;
+    const WorkDirectoryCleanup work_cleanup{work_directory(options)};
     const Stopwatch input_timer;
     if (!preprocess_datalist(options, &preprocessed, &error)) {
         LOG_ERROR(error);
         return 1;
     }
 
-    LOG_INFO("[input]", "completed: accepted " + std::to_string(preprocessed.read_result.points.size()) +
+    LOG_INFO("[input]", "completed: accepted " + std::to_string(preprocessed.read_result.stats.soundings_accepted) +
                             " of " + std::to_string(preprocessed.read_result.stats.soundings_read) +
                             " soundings from " + std::to_string(preprocessed.read_result.stats.files_read) +
-                            " files in " + input_timer.text());
+                            " files in " + input_timer.text() + ", " + mbmesh::peak_memory_text());
 
     if (options.metadata_requested) {
         print_datalist_metadata(preprocessed, options);
@@ -458,6 +478,49 @@ int main(int argc, char **argv) {
     CollectedPointCloud collected_points = std::move(preprocessed.read_result.points);
 
     // ====================================================================================================
+    // Points on disk: a survey with more soundings than fit in memory is sorted into one file per tile, with the
+    // decimation applied on the way, and only the tiles being reconstructed are in memory.
+    // ====================================================================================================
+
+    std::unique_ptr<TileBins> bins;
+    std::size_t binned_points = 0;
+    if (preprocessed.read_result.spilled) {
+        const Stopwatch binning_timer;
+        bins = std::make_unique<TileBins>(work_directory(options) / "tiles", options.chunking.tile_size, options.chunking.halo);
+        if (options.chunking.single_tile) {
+            bins->keep_only_tile(options.chunking.tile_i, options.chunking.tile_j);
+        }
+        if (!options.decimation.decimate && !options.chunking.single_tile) {
+            // Every sounding goes into a tile file, and into the halos of its neighbors too.
+            const double tile = options.chunking.tile_size;
+            const double halo = options.chunking.halo;
+            const double need = static_cast<double>(preprocessed.read_result.stats.soundings_accepted) * spilled_point_bytes *
+                                ((tile + 2 * halo) * (tile + 2 * halo)) / (tile * tile);
+            std::error_code space_error;
+            const auto space = std::filesystem::space(work_directory(options), space_error);
+            if (!space_error && need > static_cast<double>(space.available)) {
+                LOG_ERROR("the tile files of " + std::to_string(preprocessed.read_result.stats.soundings_accepted) + " soundings need about " +
+                          mbmesh::format_bytes(need) + " but only " + mbmesh::format_bytes(static_cast<double>(space.available)) +
+                          " of disk is free. Average the soundings with --decimate (a cell size in meters near the level of detail, "
+                          "which makes the files far smaller), or use -O to put the results on a disk with room");
+                return 1;
+            }
+        }
+        if (!bins->open(&error) || !bin_spilled_points(options, &preprocessed, bins.get(), &binned_points, &error)) {
+            LOG_ERROR(error);
+            return 1;
+        }
+        std::size_t halo_points = 0;
+        for (const auto &entry : bins->tiles()) {
+            halo_points += entry.second.total;
+        }
+        LOG_INFO("[binning]", "sorted " + std::to_string(binned_points) + " points into " + std::to_string(bins->tiles().size()) +
+                                  " tile files, " + std::to_string(halo_points) + " points with the halos (" +
+                                  mbmesh::format_bytes(static_cast<double>(halo_points) * static_cast<double>(spilled_point_bytes)) + ") in " +
+                                  binning_timer.text() + ", " + mbmesh::peak_memory_text());
+    }
+
+    // ====================================================================================================
     // Point Decimation
     // ====================================================================================================
 
@@ -465,7 +528,9 @@ int main(int argc, char **argv) {
 
     CollectedPointCloud decimated_points;
 
-    if (options.decimation.decimate) {
+    if (bins != nullptr) {
+        LOG_DEBUG("[decimation]", options.decimation.decimate ? "done while sorting the points into tiles" : "disabled");
+    } else if (options.decimation.decimate) {
 
         LOG_DEBUG("[decimation]", "starting: cell_size=" + std::to_string(options.decimation.cell_size));
 
@@ -507,6 +572,9 @@ int main(int argc, char **argv) {
     else {
         const bool keep_raw_mesh = options.write_raw_mesh_glb;
         const bool keep_oriented_points = options.write_normal_glb || options.write_oriented_ply;
+        // Points on disk: the point outputs are written from memory, so they hold every nth point.
+        const std::size_t output_stride = bins != nullptr ? std::max<std::size_t>(1, (binned_points + maximum_output_points - 1) / maximum_output_points) : 1;
+        std::size_t oriented_seen = 0;
 
         const std::filesystem::path tiles_directory = options.output_directory / "tiles";
         std::error_code filesystem_error;
@@ -536,13 +604,23 @@ int main(int argc, char **argv) {
                 append_mesh(&raw_mesh, tile.result.raw_mesh);
             }
             if (keep_oriented_points) {
-                oriented_points.insert(oriented_points.end(), tile.result.oriented_points.begin(), tile.result.oriented_points.end());
+                if (output_stride == 1) {
+                    oriented_points.insert(oriented_points.end(), tile.result.oriented_points.begin(), tile.result.oriented_points.end());
+                } else {
+                    for (const OrientedPoint &oriented : tile.result.oriented_points) {
+                        if (oriented_seen++ % output_stride == 0) {
+                            oriented_points.push_back(oriented);
+                        }
+                    }
+                }
             }
             return true;
         };
 
         ChunkingStats chunking_stats;
-        if (!reconstruct_chunked(decimated_points, reconstruction, options.chunking, on_tile, &chunking_stats, &error)) {
+        const bool reconstructed = bins != nullptr ? reconstruct_chunked(*bins, reconstruction, options.chunking, on_tile, &chunking_stats, &error)
+                                                    : reconstruct_chunked(decimated_points, reconstruction, options.chunking, on_tile, &chunking_stats, &error);
+        if (!reconstructed) {
             LOG_ERROR(error);
             return 1;
         }
@@ -579,9 +657,33 @@ int main(int argc, char **argv) {
     }
 
     PointCloud output_points;
-    output_points.reserve(decimated_points.size());
-    for (const CollectedPoint &collected_point : decimated_points) {
-        output_points.push_back(collected_point.point);
+    if (bins != nullptr) {
+        // Every nth point, from the tile files, for the outputs that are written from memory.
+        const std::size_t stride = std::max<std::size_t>(1, (binned_points + maximum_output_points - 1) / maximum_output_points);
+        std::size_t seen = 0;
+        const bool needed = options.write_pointcloud_glb || options.write_origin_glb;
+        if (needed && !bins->for_each_owned([&](const CollectedPointCloud &owned) {
+                for (const CollectedPoint &point : owned) {
+                    if (seen++ % stride == 0) {
+                        decimated_points.push_back(point);
+                        output_points.push_back(point.point);
+                    }
+                }
+                return true;
+            }, &error)) {
+            LOG_ERROR(error);
+            return 1;
+        }
+        if (stride > 1 && (needed || options.write_normal_glb || options.write_oriented_ply)) {
+            LOG_INFO("[output]", "the points are on disk: pointcloud.glb, origins.glb, normals.glb and the oriented PLY hold one point in " + std::to_string(stride) +
+                                     " of the " + std::to_string(binned_points) + " (at most " + std::to_string(maximum_output_points) +
+                                     "); the xyz files hold them all");
+        }
+    } else {
+        output_points.reserve(decimated_points.size());
+        for (const CollectedPoint &collected_point : decimated_points) {
+            output_points.push_back(collected_point.point);
+        }
     }
 
     if (options.write_tileset) {
@@ -597,15 +699,17 @@ int main(int argc, char **argv) {
         LOG_INFO("[tileset]", "wrote " + (tileset_directory / "tileset.json").string() + " with " + std::to_string(tileset_tiles.size()) + " tiles");
     }
 
-    LOG_INFO("[reconstruction]", "completed in " + reconstruction_timer.text() + (options.use_chunking ? " on " + std::to_string(options.chunking.threads) + " threads" : std::string(", single pass")));
+    LOG_INFO("[reconstruction]", "completed in " + reconstruction_timer.text() + (options.use_chunking ? " on " + std::to_string(options.chunking.threads) + " threads" : std::string(", single pass")) +
+                                     ", " + mbmesh::peak_memory_text());
 
-    if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, preprocessed.read_result.track, options, &error)) {
+    if (!write_outputs(clean_mesh, raw_mesh, output_points, oriented_points, decimated_points, preprocessed.read_result.frame, placement, preprocessed.read_result.track, options, bins.get(), &error)) {
         LOG_ERROR(error);
         return 1;
     }
+    bins.reset();
 
     LOG_DEBUG("[output]", "completed");
-    LOG_INFO("[complete]", "wrote " + (options.output_directory / "mesh.glb").string() + ", total " + run_timer.text());
+    LOG_INFO("[complete]", "wrote " + (options.output_directory / "mesh.glb").string() + ", total " + run_timer.text() + ", " + mbmesh::peak_memory_text());
 
     // ====================================================================================================
     // X3DOM Viewer
@@ -754,6 +858,7 @@ Options parse_options(int argc, char **argv) {
         {"geoviewpoint", required_argument, nullptr, 1018},
         {"lifted", required_argument, nullptr, 1023},
         {"pointcloud-colormap", required_argument, nullptr, 1024},
+        {"spill-points", required_argument, nullptr, 1025},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -918,6 +1023,17 @@ Options parse_options(int argc, char **argv) {
             }
             break;
 
+        case 1025: {
+            char *end = nullptr;
+            const unsigned long long count = std::strtoull(optarg, &end, 10);
+            if (end == optarg || *end != '\0' || optarg[0] == '-') {
+                LOG_ERROR("invalid --spill-points:", std::string("'") + optarg + "' is not a whole number of soundings, zero or more");
+                std::exit(1);
+            }
+            options.spill_points = static_cast<std::size_t>(count);
+            break;
+        }
+
         case 1023: {
             char *end = nullptr;
             options.lift_meters = std::strtod(optarg, &end);
@@ -1065,6 +1181,10 @@ void print_usage() {
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
     std::cout << "      --max-chunks <n>         Stop after n tiles (for testing)\n";
     std::cout << "      --threads <n>            Tiles reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
+    std::cout << "      --spill-points <n>       A survey of more than n soundings [50000000] is not held in memory: the soundings go to a\n";
+    std::cout << "                               file in mbmesh_work, beside the results, and are sorted into one file per tile, so that\n";
+    std::cout << "                               memory follows the size of a tile, not of the survey; 0 always does. Needs chunking, which\n";
+    std::cout << "                               it turns on for such a survey. The point outputs then hold at most 5 million points\n";
     std::cout << "      --poisson-solver <name>  How the Poisson grid equation is solved: " << poisson_solver_names() << " [sor]\n";
     std::cout << "      --poisson-iterations <n> Iterations of the solver, for either solver [sor: one per cell across the longest grid edge,\n";
     std::cout << "                               at least 50; jacobi: chosen from the level of detail, 200 to 500]. The\n";
@@ -1140,6 +1260,7 @@ bool write_outputs(
     const OutputPlacement &placement,
     const std::vector<TrackPoint> &track,
     const Options &options,
+    const TileBins *bins,
     std::string *error)
 {
     const Vec3 offset = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
@@ -1161,9 +1282,30 @@ bool write_outputs(
         return false;
     }
 
+    // The xyz files hold every point. When the points are on disk they are written a tile at a time.
+    const auto write_xyz = [&](const std::filesystem::path &path, bool ecef) {
+        if (bins == nullptr) {
+            return ecef ? write_ecef_xyz_pointcloud(points, frame, path.string(), error) : write_local_xyz_pointcloud(points, path.string(), error);
+        }
+        bool first = true;
+        bool ok = true;
+        const bool read = bins->for_each_owned([&](const CollectedPointCloud &owned) {
+            PointCloud tile_points;
+            tile_points.reserve(owned.size());
+            for (const CollectedPoint &point : owned) {
+                tile_points.push_back(point.point);
+            }
+            ok = ecef ? write_ecef_xyz_pointcloud(tile_points, frame, path.string(), error, !first)
+                      : write_local_xyz_pointcloud(tile_points, path.string(), error, !first);
+            first = false;
+            return ok;
+        }, error);
+        return read && ok;
+    };
+
     if (options.write_ecef_xyz) {
         const auto ecef_xyz_path = options.output_directory / "pointcloud-ecef.xyz";
-        if (!write_ecef_xyz_pointcloud(points, frame, ecef_xyz_path.string(), error)) {
+        if (!write_xyz(ecef_xyz_path, true)) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + ecef_xyz_path.string());
@@ -1171,7 +1313,7 @@ bool write_outputs(
 
     if (options.write_local_xyz) {
         const auto local_xyz_path = options.output_directory / "pointcloud-local.xyz";
-        if (!write_local_xyz_pointcloud(points, local_xyz_path.string(), error)) {
+        if (!write_xyz(local_xyz_path, false)) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + local_xyz_path.string());

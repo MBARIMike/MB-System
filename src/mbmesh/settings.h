@@ -15,6 +15,7 @@
 #include "data_types/geometry.h"
 #include "data_types/swathfile.h"
 #include "io/datalist_reader.h"
+#include "io/point_spill.h"
 
 enum class GeoOriginMode {
     None,       // absolute ECEF vertices (default)
@@ -88,6 +89,10 @@ struct Options {
     PoissonSolver poisson_solver = PoissonSolver::Sor;
     int poisson_iterations = 0;
 
+    // --spill-points: more accepted soundings than this are kept in a file on disk, in the work directory, instead of
+    // in memory, and sorted into one file per tile (see io/point_spill.h). Zero spills them all.
+    std::size_t spill_points = 50000000;
+
     PointDecimationOptions decimation;
     NormalEstimationOptions normals;
     ScreenedPoissonOptions poisson;
@@ -127,6 +132,10 @@ struct DatalistMetadata {
 struct PreprocessedDatalist {
     DatalistReadResult read_result;
     DatalistMetadata metadata;
+
+    // About a million of the soundings, evenly spread, in the local frame, when read_result.points is empty because
+    // they were spilled: enough to choose the tile size from.
+    CollectedPointCloud sample;
 };
 
 // Resolves the GeoOrigin that --geoorigin selects. Returns false (and leaves
@@ -152,6 +161,21 @@ bool adjust_poisson_grid_to_budget(Options &options, const DatalistMetadata &met
 bool preprocess_datalist(
     Options &options,
     PreprocessedDatalist *preprocessed,
+    std::string *error);
+
+// The directory for the temporary files of a run that spills its soundings: beside the results, so that it is on a disk
+// with room for them.
+[[nodiscard]] std::filesystem::path work_directory(const Options &options);
+
+// With spilled soundings and chunked reconstruction: reads the spill file, applies the decimation if it is on, and
+// sorts the points into one file per tile in bins (which must be open, with the tile size and halo of
+// options.chunking). *point_count is the number of points, after decimation, that the tiles own. The spill file is
+// deleted afterward.
+[[nodiscard]] bool bin_spilled_points(
+    const Options &options,
+    PreprocessedDatalist *preprocessed,
+    TileBins *bins,
+    std::size_t *point_count,
     std::string *error);
 
 void print_datalist_metadata(

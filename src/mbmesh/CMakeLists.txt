@@ -14,6 +14,7 @@ set(MBMESH_SOURCES
   settings.cpp
   src/io/coordinate_frame.cpp
   src/io/datalist_reader.cpp
+  src/io/point_spill.cpp
   src/io/xyz_writer.cpp
   src/io/track.cpp
   src/io/provenance.cpp
@@ -61,6 +62,7 @@ if(buildTests)
     settings.cpp
     src/io/coordinate_frame.cpp
     src/io/datalist_reader.cpp
+    src/io/point_spill.cpp
     src/algorithms/point_decimation.cpp
     src/algorithms/normal_estimation.cpp
     src/algorithms/screened_poisson.cpp
@@ -76,6 +78,14 @@ if(buildTests)
   target_link_libraries(mbmesh_test_settings PRIVATE mbio Threads::Threads)
   add_test(NAME mbmesh_settings COMMAND mbmesh_test_settings)
 
+  add_executable(mbmesh_test_point_spill
+    tests/test_point_spill.cpp
+    src/io/point_spill.cpp)
+  target_compile_features(mbmesh_test_point_spill PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_point_spill PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mbmesh_point_spill COMMAND mbmesh_test_point_spill)
+
   add_executable(mbmesh_test_coordinate_frame
     tests/test_coordinate_frame.cpp
     src/io/coordinate_frame.cpp)
@@ -86,6 +96,7 @@ if(buildTests)
 
   add_executable(mbmesh_test_chunking
     tests/test_chunking.cpp
+    src/io/point_spill.cpp
     src/algorithms/reconstruction.cpp
     src/algorithms/normal_estimation.cpp
     src/algorithms/screened_poisson.cpp

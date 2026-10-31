@@ -3,9 +3,14 @@
 #include "util/logger.h"
 
 #include "math/kdtree.h"
+#include "util/memory.h"
+#include "util/stopwatch.h"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <limits>
+#include <system_error>
 #include <thread>
 #include <iomanip>
 #include <iostream>
@@ -100,44 +105,27 @@ GeodeticBounds collected_geodetic_bounds(const CollectedPointCloud &points, cons
     return bounds;
 }
 
-// Estimates the spacing of the soundings from nearest-neighbor distances.
-//
-// Consecutive soundings are spatially adjacent, since they come from consecutive
-// beams of consecutive pings, so a block of consecutive points holds real
-// neighborhoods and its nearest-neighbor distances are the true local spacing.
-// Searching a subsample spread over the whole dataset instead, as this once did
-// with 8192 points, finds neighbors that are far apart and overstates the
-// spacing by about sqrt(N / 8192), so that a dense survey looked sparse and the
-// reconstruction was far coarser than the data. Soundings from other, overlapping
-// lines are not in the same block, so this is the spacing along one line, which
-// is the conservative choice.
-SpacingMetadata estimate_point_spacing_in_blocks(const CollectedPointCloud &points) {
-    SpacingMetadata metadata;
-    if (points.size() < 2) {
-        return metadata;
-    }
-
-    // Blocks of consecutive points: the whole dataset if it is small, otherwise
-    // spacing_block_count blocks spread evenly through it.
-    std::vector<std::pair<std::size_t, std::size_t>> blocks;   // first index, count
-    if (points.size() <= spacing_block_size * spacing_block_count) {
-        blocks.push_back({0, points.size()});
+// The blocks the spacing is measured in, as the index of the first point and the number of points: the whole
+// dataset if it is small, otherwise spacing_block_count blocks spread evenly through it.
+std::vector<std::pair<std::size_t, std::size_t>> spacing_blocks(std::size_t size) {
+    std::vector<std::pair<std::size_t, std::size_t>> blocks;
+    if (size <= spacing_block_size * spacing_block_count) {
+        blocks.push_back({0, size});
     }
     else {
         for (std::size_t b = 0; b < spacing_block_count; b++) {
-            const std::size_t first = b * (points.size() - spacing_block_size) / (spacing_block_count - 1);
+            const std::size_t first = b * (size - spacing_block_size) / (spacing_block_count - 1);
             blocks.push_back({first, spacing_block_size});
         }
     }
+    return blocks;
+}
 
+// The nearest-neighbor distances within each block of positions.
+SpacingMetadata spacing_from_blocks(const std::vector<std::vector<Vec3>> &blocks) {
+    SpacingMetadata metadata;
     std::vector<double> distances;
-    for (const auto &block : blocks) {
-        std::vector<Vec3> positions;
-        positions.reserve(block.second);
-        for (std::size_t i = 0; i < block.second; i++) {
-            positions.push_back(points[block.first + i].point);
-        }
-
+    for (const std::vector<Vec3> &positions : blocks) {
         const KDTree tree(positions);
         for (std::size_t i = 0; i < positions.size(); i++) {
             const std::vector<KDTree::Neighbor> neighbors = tree.k_nearest(positions[i], 1, i);
@@ -165,6 +153,114 @@ SpacingMetadata estimate_point_spacing_in_blocks(const CollectedPointCloud &poin
     metadata.average = distance_sum / static_cast<double>(distances.size());
     metadata.median = distances[distances.size() / 2];
     return metadata;
+}
+
+// Estimates the spacing of the soundings from nearest-neighbor distances.
+//
+// Consecutive soundings are spatially adjacent, since they come from consecutive
+// beams of consecutive pings, so a block of consecutive points holds real
+// neighborhoods and its nearest-neighbor distances are the true local spacing.
+// Searching a subsample spread over the whole dataset instead, as this once did
+// with 8192 points, finds neighbors that are far apart and overstates the
+// spacing by about sqrt(N / 8192), so that a dense survey looked sparse and the
+// reconstruction was far coarser than the data. Soundings from other, overlapping
+// lines are not in the same block, so this is the spacing along one line, which
+// is the conservative choice.
+SpacingMetadata estimate_point_spacing_in_blocks(const CollectedPointCloud &points) {
+    if (points.size() < 2) {
+        return SpacingMetadata();
+    }
+
+    std::vector<std::vector<Vec3>> blocks;
+    for (const auto &block : spacing_blocks(points.size())) {
+        std::vector<Vec3> positions;
+        positions.reserve(block.second);
+        for (std::size_t i = 0; i < block.second; i++) {
+            positions.push_back(points[block.first + i].point);
+        }
+        blocks.push_back(std::move(positions));
+    }
+    return spacing_from_blocks(blocks);
+}
+
+// The statistics that preprocess_datalist() takes from the points, taken instead from the file of spilled soundings, which
+// is read once in pieces: the bounds, the geodetic bounds and mean elevation, the spacing (from the same blocks of
+// consecutive points, picked out of the pieces as they go by) and a sample of the points.
+// The sensor position of each ping, in the local frame, which the spilled soundings name instead of holding.
+std::vector<Vec3> ping_origins(const DatalistReadResult &read_result) {
+    std::vector<Vec3> origins;
+    origins.reserve(read_result.track.size());
+    for (const TrackPoint &track_point : read_result.track) {
+        origins.push_back(track_point.position);
+    }
+    return origins;
+}
+
+bool spilled_statistics(const DatalistReadResult &read_result, DatalistMetadata *metadata, CollectedPointCloud *sample, std::string *error) {
+    constexpr std::size_t piece_points = 4000000;
+    constexpr std::size_t maximum_samples = 1000000;
+    const std::size_t total = read_result.stats.soundings_accepted;
+    const std::size_t stride = std::max<std::size_t>(1, total / maximum_samples);
+
+    const std::vector<std::pair<std::size_t, std::size_t>> blocks = spacing_blocks(total);
+    std::vector<std::vector<Vec3>> block_positions(blocks.size());
+
+    bool first_point = true;
+    Bounds3D bounds;
+    GeodeticBounds geodetic;
+    double elevation_sum = 0.0;
+    sample->clear();
+    sample->reserve(maximum_samples + 1);
+
+    const std::vector<Vec3> origins = ping_origins(read_result);
+    const bool read = read_spill_chunks(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t first_index) {
+        for (std::size_t n = 0; n < piece.size(); n++) {
+            CollectedPoint &point = piece[n];
+            point.point = ecef_to_local(point.point, read_result.frame);
+
+            const GeodeticPosition position = local_to_geodetic(point.point, read_result.frame);
+            elevation_sum += position.elevation;
+            if (first_point) {
+                bounds = Bounds3D(point.point, point.point);
+                geodetic = {position.longitude, position.longitude, position.latitude, position.latitude};
+                first_point = false;
+            }
+            else {
+                bounds.include(point.point);
+                geodetic.min_lon = std::min(geodetic.min_lon, position.longitude);
+                geodetic.max_lon = std::max(geodetic.max_lon, position.longitude);
+                geodetic.min_lat = std::min(geodetic.min_lat, position.latitude);
+                geodetic.max_lat = std::max(geodetic.max_lat, position.latitude);
+            }
+
+            const std::size_t index = first_index + n;
+            if (index % stride == 0) {
+                sample->push_back(point);
+            }
+            for (std::size_t b = 0; b < blocks.size(); b++) {
+                if (index >= blocks[b].first && index < blocks[b].first + blocks[b].second) {
+                    block_positions[b].push_back(point.point);
+                }
+            }
+        }
+        return true;
+    }, error);
+    if (!read) {
+        return false;
+    }
+    if (first_point) {
+        if (error != nullptr) {
+            *error = "the file of spilled soundings is empty";
+        }
+        return false;
+    }
+
+    metadata->point_count = total;
+    metadata->bounds = bounds;
+    metadata->geodetic_bounds = geodetic;
+    metadata->mean_elevation = elevation_sum / static_cast<double>(total);
+    metadata->spacing = total < 2 ? SpacingMetadata() : spacing_from_blocks(block_positions);
+    return true;
 }
 
 // Number of tiles of this size that the survey's horizontal extent touches.
@@ -489,33 +585,134 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
     reader_options.use_bounds = options.use_bounds;
     reader_options.bounds = options.bounds;
     reader_options.verbose = options.verbose ? 1 : 0;
+    reader_options.spill_points = options.spill_points;
+    reader_options.spill_path = work_directory(options) / "soundings.bin";
 
     if (!read_datalist(options.input_datalist, reader_options, &preprocessed->read_result, error)) {
         return false;
     }
 
-    if (preprocessed->read_result.points.empty()) {
+    if (preprocessed->read_result.stats.soundings_accepted == 0) {
         if (error != nullptr) {
             *error = "input contains no accepted soundings";
         }
         return false;
     }
 
-    preprocessed->metadata.point_count = preprocessed->read_result.points.size();
-    preprocessed->metadata.bounds = collected_point_bounds(preprocessed->read_result.points);
-    preprocessed->metadata.geodetic_bounds = collected_geodetic_bounds(
-        preprocessed->read_result.points, preprocessed->read_result.frame, &preprocessed->metadata.mean_elevation);
-    preprocessed->metadata.spacing = estimate_point_spacing(preprocessed->read_result.points);
+    // Soundings that are too many for memory are on disk: their statistics are taken in one pass over the file, and
+    // the tile size from a sample.
+    const bool spilled = preprocessed->read_result.spilled;
+    const CollectedPointCloud *tile_sample = &preprocessed->read_result.points;
+    if (spilled) {
+        const mbmesh::Stopwatch timer;
+        LOG_INFO("[input]", "more than " + std::to_string(options.spill_points) + " soundings: " +
+                                std::to_string(preprocessed->read_result.stats.soundings_accepted) + " are on disk in " +
+                                preprocessed->read_result.spill_path.string() + " (" +
+                                mbmesh::format_bytes(static_cast<double>(preprocessed->read_result.stats.soundings_accepted) *
+                                                     static_cast<double>(spill_record_bytes)) + ")");
+        if (!spilled_statistics(preprocessed->read_result, &preprocessed->metadata, &preprocessed->sample, error)) {
+            return false;
+        }
+        tile_sample = &preprocessed->sample;
+        LOG_INFO("[input]", "measured the spilled soundings in " + timer.text() + ", " + mbmesh::peak_memory_text());
+    }
+    else {
+        preprocessed->metadata.point_count = preprocessed->read_result.points.size();
+        preprocessed->metadata.bounds = collected_point_bounds(preprocessed->read_result.points);
+        preprocessed->metadata.geodetic_bounds = collected_geodetic_bounds(
+            preprocessed->read_result.points, preprocessed->read_result.frame, &preprocessed->metadata.mean_elevation);
+        preprocessed->metadata.spacing = estimate_point_spacing(preprocessed->read_result.points);
+    }
 
     apply_spacing_driven_defaults(options, &preprocessed->metadata);
-    if (!resolve_chunking(options, preprocessed->metadata, &preprocessed->read_result.points, error)) {
+    if (!resolve_chunking(options, preprocessed->metadata, tile_sample, error)) {
         return false;
+    }
+
+    // A survey that needs no chunking is small enough for memory whatever the threshold: read it back.
+    if (spilled && !options.use_chunking && !options.metadata_requested) {
+        DatalistReadResult &read_result = preprocessed->read_result;
+        read_result.points.reserve(read_result.stats.soundings_accepted);
+        const bool read = read_spill_chunks(read_result.spill_path, ping_origins(read_result), 4000000, [&](CollectedPointCloud &piece, std::size_t) {
+            for (CollectedPoint &point : piece) {
+                point.point = ecef_to_local(point.point, read_result.frame);
+            }
+            read_result.points.insert(read_result.points.end(), piece.begin(), piece.end());
+            return true;
+        }, error);
+        if (!read) {
+            return false;
+        }
+        std::error_code remove_error;
+        std::filesystem::remove(read_result.spill_path, remove_error);
+        read_result.spilled = false;
     }
     if (!options.use_chunking && !adjust_poisson_grid_to_budget(options, preprocessed->metadata, error)) {
         return false;
     }
     print_warnings(options, preprocessed->metadata);
 
+    return true;
+}
+
+std::filesystem::path work_directory(const Options &options) {
+    return options.output_directory / "mbmesh_work";
+}
+
+bool bin_spilled_points(const Options &options, PreprocessedDatalist *preprocessed, TileBins *bins, std::size_t *point_count, std::string *error) {
+    DatalistReadResult &read_result = preprocessed->read_result;
+    constexpr std::size_t piece_points = 4000000;
+
+    const std::vector<Vec3> origins = ping_origins(read_result);
+    const auto to_local = [&](CollectedPointCloud &piece) {
+        for (CollectedPoint &point : piece) {
+            point.point = ecef_to_local(point.point, read_result.frame);
+        }
+    };
+
+    bool ok = true;
+    if (options.decimation.decimate) {
+        // The voxels are counted from the minimum corner of the bounds, as point_decimation() does, so the points are the same.
+        PointDecimator decimator(preprocessed->metadata.bounds.min, options.decimation.cell_size);
+        ok = read_spill_chunks(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t) {
+            to_local(piece);
+            for (const CollectedPoint &point : piece) {
+                decimator.add(point);
+            }
+            return true;
+        }, error);
+        if (ok) {
+            LOG_INFO("[decimation]", "averaged " + std::to_string(read_result.stats.soundings_accepted) + " soundings into " +
+                                         std::to_string(decimator.cell_count()) + " points, " + mbmesh::peak_memory_text());
+            decimator.for_each([&](const CollectedPoint &point) {
+                if (ok) {
+                    ok = bins->add(point, error);
+                }
+            });
+        }
+    }
+    else {
+        ok = read_spill_chunks(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t) {
+            to_local(piece);
+            for (const CollectedPoint &point : piece) {
+                if (!bins->add(point, error)) {
+                    return false;
+                }
+            }
+            return true;
+        }, error);
+    }
+    if (ok) {
+        ok = bins->finish(error);
+    }
+    if (!ok) {
+        return false;
+    }
+
+    std::error_code remove_error;
+    std::filesystem::remove(read_result.spill_path, remove_error);
+    read_result.spilled = false;
+    *point_count = bins->owned_point_count();
     return true;
 }
 
@@ -560,7 +757,7 @@ void print_datalist_metadata(const PreprocessedDatalist &preprocessed, const Opt
         const double side = (tile + 2.0 * (halo + options.poisson.padding)) / options.poisson.cell_size + 1.0;
         std::cout << "  tile_size: " << tile << '\n';
         std::cout << "  halo: " << halo << '\n';
-        std::cout << "  tiles_with_points: " << tiles_occupied(preprocessed.read_result.points, tile)
+        std::cout << "  tiles_with_points: " << tiles_occupied(preprocessed.read_result.spilled ? preprocessed.sample : preprocessed.read_result.points, tile)
                   << " (of " << tiles_covering(metadata.bounds, tile) << " in the survey's bounding box)\n";
         std::cout << "  threads: " << options.chunking.threads << '\n';
         std::cout << "  tile_grid_columns: " << side * side << '\n';
