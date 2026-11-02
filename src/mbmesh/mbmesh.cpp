@@ -350,6 +350,108 @@ int main(int argc, char **argv) {
         }
         LOG_INFO("[settings]", settings.str());
 
+        // The rest of the settings, in plain language, with the option that sets each one.
+        auto join = [](const std::vector<std::string> &names) {
+            std::string text;
+            for (const std::string &name : names) {
+                text += (text.empty() ? "" : ", ") + name;
+            }
+            return text.empty() ? std::string("none") : text;
+        };
+        {
+            std::ostringstream text;
+            text << std::setprecision(6) << "area: ";
+            if (options.use_bounds) {
+                text << "only soundings within W " << options.bounds.degrees_W << " E " << options.bounds.degrees_E << " S " << options.bounds.degrees_S
+                     << " N " << options.bounds.degrees_N << " degrees (-R)";
+            } else {
+                text << "all of the soundings in the datalist (no -R)";
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
+            text << std::setprecision(6) << "soundings: ";
+            if (options.decimation.decimate) {
+                text << "averaged within cells of " << options.decimation.cell_size << " m before reconstruction (--decimate)";
+            } else {
+                text << "all used, none averaged (no --decimate)";
+            }
+            text << "; more than " << options.spill_points << " are kept on disk instead of in memory (--spill-points)";
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
+            text << std::setprecision(6) << "normals: estimated from the soundings within " << options.normals.search_radius << " m, using up to "
+                 << options.normals.k << " neighbors and at least " << options.normals.minimum_neighbors << "; Poisson: padding " << options.poisson.padding
+                 << " m around the data, normals spread over " << options.poisson.normal_splat_radius << " m, screening weight "
+                 << options.poisson.screening_weight;
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
+            text << std::setprecision(6) << "trimming: " << (options.trimming.enabled ? "mesh is removed where the soundings do not support it" : "off")
+                 << "; a vertex needs " << options.trimming.minimum_neighbors << " soundings within " << options.trimming.support_radius
+                 << " m and an average distance from them, along the surface normal, of at most " << options.trimming.max_normal_offset << " m";
+            if (options.trimming.minimum_normal_alignment > 0.0) {
+                text << " and normals that agree to " << options.trimming.minimum_normal_alignment;
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
+            text << std::setprecision(6);
+            if (options.void_size > 0.0) {
+                text << "voids: gaps in the surveyed surface up to " << options.void_size
+                     << " m across are filled in the mesh (--void-size) where soundings surround them; mesh more than " << 0.5 * options.void_size
+                     << " m from any sounding stays trimmed, as do pieces smaller than " << 0.25 * 3.141592653589793 * 0.25 * options.void_size * options.void_size
+                     << " square meters that are not joined to the rest";
+            } else {
+                text << "voids: not filled (--void-size 0); the mesh is trimmed wherever the soundings are sparse";
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
+            text << std::setprecision(6) << "chunks: ";
+            if (options.chunk_tile_requested) {
+                text << "only tile " << options.chunk_tile_i << "," << options.chunk_tile_j << " is reconstructed (--chunk)";
+            } else {
+                text << "all tiles are reconstructed";
+            }
+            if (options.max_chunks > 0) {
+                text << ", at most " << options.max_chunks << " of them (--max-chunks)";
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
+            text << std::setprecision(6) << "placement: ";
+            if (options.geoorigin_mode == GeoOriginMode::None) {
+                text << "vertices are absolute Earth-centered coordinates (no --geoorigin)";
+            } else {
+                text << "vertices are offsets from the GeoOrigin lon " << placement.geoorigin.longitude << " lat " << placement.geoorigin.latitude
+                     << " elevation " << placement.geoorigin.elevation << " m (--geoorigin" << (options.geoorigin_mode == GeoOriginMode::Auto ? ", chosen from the data" : "") << ")";
+            }
+            if (options.lift_meters != 0.0) {
+                text << "; viewer page lifted " << options.lift_meters << " m above the ellipsoid (--lifted)";
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::vector<std::string> outputs;
+            if (options.write_html) outputs.push_back("viewer page (--html)");
+            if (options.write_tileset) outputs.push_back("3D Tiles tileset (--tileset)");
+            if (options.write_raw_mesh_glb) outputs.push_back("raw mesh (--raw-mesh-glb)");
+            if (options.write_pointcloud_glb) outputs.push_back(std::string("point cloud colored by ") + point_color_map_name(options.pointcloud_colormap) + " (--pointcloud-glb)");
+            if (options.write_normal_glb) outputs.push_back("normals (--normal-glb)");
+            if (options.write_origin_glb) outputs.push_back("sensor positions (--origin-glb)");
+            if (options.write_track_glb) outputs.push_back("track (--track-glb)");
+            if (options.write_local_xyz) outputs.push_back("local XYZ (--local-xyz)");
+            if (options.write_ecef_xyz) outputs.push_back("Earth-centered XYZ (--ecef-xyz)");
+            if (options.write_oriented_ply) outputs.push_back("oriented PLY (--oriented-ply)");
+            LOG_INFO("[settings]", "outputs, besides mesh.glb and the tiles: " + join(outputs) + "; into " + options.output_directory.string());
+        }
     }
 
     // What is recorded in every GLB and in the HTML page about where the models are
