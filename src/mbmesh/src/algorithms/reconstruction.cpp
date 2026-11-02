@@ -1,5 +1,6 @@
 #include "algorithms/reconstruction.h"
 
+#include "algorithms/seam_blending.h"
 #include "io/point_spill.h"
 #include "util/logger.h"
 #include "util/memory.h"
@@ -8,12 +9,16 @@
 using mbmesh::Stopwatch;
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -136,6 +141,12 @@ ReconstructionResult reconstruct_chunk(
             message << " -> " << poisson_diagnostics.residual_final << " (after " << poisson_diagnostics.iterations << ")";
         }
         log_stage_completed("[poisson]", label, message.str());
+    }
+    if (options.adjust_field) {
+        // Not in the time of the Poisson stage or of marching cubes: for a chunk it is mostly waiting for the neighbors.
+        const Stopwatch adjust_timer;
+        options.adjust_field(&poisson_surface);
+        result.times.seams = adjust_timer.seconds();
     }
     stage_timer = Stopwatch();
 
@@ -380,13 +391,39 @@ bool reconstruct_chunked_from(
     // Start the chunks with the most points first. The last chunks to start decide
     // when the run ends, so starting small ones last keeps the threads evenly
     // loaded. Delivery stays in chunk order regardless.
+    //
+    // With the seams blended a chunk waits for the chunks to its west and south, which come before it in chunk order, so
+    // the chunks must be started in that order: otherwise every thread could be holding a chunk that waits for one that
+    // no thread has started.
+    const bool blend_seams = chunking.seam_blend > 0.0;
     std::vector<std::size_t> start_order(jobs.size());
     for (std::size_t n = 0; n < start_order.size(); n++) {
         start_order[n] = n;
     }
-    std::stable_sort(start_order.begin(), start_order.end(), [&](std::size_t a, std::size_t b) {
-        return jobs[a].owned > jobs[b].owned;
-    });
+    if (!blend_seams) {
+        std::stable_sort(start_order.begin(), start_order.end(), [&](std::size_t a, std::size_t b) {
+            return jobs[a].owned > jobs[b].owned;
+        });
+    }
+
+    // The final field of each chunk on its east and north edges, kept until the chunks to its east and north have taken it.
+    struct SeamPlanes {
+        std::mutex mutex;
+        std::condition_variable changed;
+        std::set<std::pair<int, int>> finished;   // chunks that have published their edges, or never will
+        std::map<std::pair<int, int>, std::shared_ptr<FieldPlane>> east;
+        std::map<std::pair<int, int>, std::shared_ptr<FieldPlane>> north;
+    } seam;
+    std::set<std::pair<int, int>> job_chunks;
+    for (const Job &job : jobs) {
+        job_chunks.insert({job.i, job.j});
+    }
+    std::atomic<bool> abandoned{false};   // a run that has failed or stopped does not wait for neighbors
+    const auto abandon_seams = [&]() {
+        abandoned = true;
+        std::lock_guard<std::mutex> lock(seam.mutex);
+        seam.changed.notify_all();
+    };
 
     std::mutex state_mutex;
     std::size_t completed_jobs = 0;
@@ -419,6 +456,7 @@ bool reconstruct_chunked_from(
                 std::lock_guard<std::mutex> lock(state_mutex);
                 failed = true;
                 failure = read_error;
+                abandon_seams();
                 return false;
             }
         }
@@ -451,6 +489,7 @@ bool reconstruct_chunked_from(
             std::lock_guard<std::mutex> lock(state_mutex);
             failed = true;
             failure = message.str();
+            abandon_seams();
             return false;
         }
 
@@ -462,6 +501,67 @@ bool reconstruct_chunked_from(
         chunk_result.j = j;
         chunk_result.owned_points = job.owned;
         chunk_result.input_points = chunk_points.size();
+
+        // Whatever happens to this chunk, the chunks that wait for it are let go.
+        struct SeamRelease {
+            SeamRelease(SeamPlanes &planes, std::pair<int, int> chunk_key) : seam(planes), key(chunk_key) {}
+            SeamRelease(const SeamRelease &) = delete;
+            SeamRelease &operator=(const SeamRelease &) = delete;
+            ~SeamRelease() {
+                std::lock_guard<std::mutex> lock(seam.mutex);
+                seam.finished.insert(key);
+                seam.changed.notify_all();
+            }
+            SeamPlanes &seam;
+            std::pair<int, int> key;
+        };
+        std::unique_ptr<SeamRelease> release;
+        if (blend_seams) {
+            release = std::make_unique<SeamRelease>(seam, std::make_pair(i, j));
+            chunk_options.adjust_field = [&](ScalarGrid3D *grid) {
+                // The final fields of the chunks to the west and the south, on the edges they share with this chunk.
+                std::shared_ptr<FieldPlane> west;
+                std::shared_ptr<FieldPlane> south;
+                {
+                    std::unique_lock<std::mutex> lock(seam.mutex);
+                    for (const std::pair<int, int> &neighbor : {std::make_pair(i - 1, j), std::make_pair(i, j - 1)}) {
+                        if (job_chunks.count(neighbor) != 0) {
+                            seam.changed.wait(lock, [&] { return abandoned.load() || seam.finished.count(neighbor) != 0; });
+                        }
+                    }
+                    if (abandoned) {
+                        return;
+                    }
+                    const auto east_of_west = seam.east.find({i - 1, j});
+                    if (east_of_west != seam.east.end()) {
+                        west = east_of_west->second;
+                        seam.east.erase(east_of_west);
+                    }
+                    const auto north_of_south = seam.north.find({i, j - 1});
+                    if (north_of_south != seam.north.end()) {
+                        south = north_of_south->second;
+                        seam.north.erase(north_of_south);
+                    }
+                }
+                const SeamBlendResult blended = blend_field_to_planes(grid, west.get(), south.get(), chunking.seam_blend);
+                LOG_DEBUG("[chunking]", name + ": field matched to " + std::string(west ? "the west " : "") + std::string(west && south ? "and " : "") +
+                                            std::string(south ? "the south " : "") + std::string(west || south ? "neighbor, " : "no neighbor, ") +
+                                            std::to_string(blended.nodes_changed) + " nodes changed, by at most " + std::to_string(blended.largest_correction));
+
+                // This chunk's own final field on its east and north edges, for the chunks that come after it.
+                const long east_edge = std::lround((i + 1) * chunk / cell);
+                const long north_edge = std::lround((j + 1) * chunk / cell);
+                const long west_edge = std::lround(i * chunk / cell);
+                const long south_edge = std::lround(j * chunk / cell);
+                auto east = std::make_shared<FieldPlane>(extract_field_plane(*grid, 0, east_edge, south_edge, north_edge));
+                auto north = std::make_shared<FieldPlane>(extract_field_plane(*grid, 1, north_edge, west_edge, east_edge));
+                std::lock_guard<std::mutex> lock(seam.mutex);
+                seam.east[{i, j}] = std::move(east);
+                seam.north[{i, j}] = std::move(north);
+                seam.finished.insert({i, j});
+                seam.changed.notify_all();
+            };
+        }
         chunk_result.result = reconstruct_chunk(chunk_points, chunk_options, name);
         chunk_points = CollectedPointCloud();
 
@@ -533,6 +633,7 @@ bool reconstruct_chunked_from(
                 stage_totals.poisson_solve += times.poisson_solve;
                 stage_totals.marching_cubes += times.marching_cubes;
                 stage_totals.trimming += times.trimming;
+                stage_totals.seams += times.seams;
 
                 // One line per chunk at DEBUG; at INFO only a short progress line, and
                 // not more than one a minute, because a survey can have hundreds of chunks.
@@ -550,7 +651,7 @@ bool reconstruct_chunked_from(
                 message << " (normals " << mbmesh::format_duration(times.normals) << ", poisson "
                         << mbmesh::format_duration(times.poisson) << ", marching cubes "
                         << mbmesh::format_duration(times.marching_cubes) << ", trimming "
-                        << mbmesh::format_duration(times.trimming) << ")";
+                        << mbmesh::format_duration(times.trimming) << (blend_seams ? ", seams " + mbmesh::format_duration(times.seams) : std::string()) << ")";
                 LOG_DEBUG("[chunking]", message.str());
 
                 const double elapsed = reconstruction_timer.seconds();
@@ -582,6 +683,7 @@ bool reconstruct_chunked_from(
                     counts.chunks_processed++;
                     if (on_chunk && !on_chunk(ready.chunk)) {
                         stop = true;
+                        abandon_seams();
                     }
                     break;
                 case Disposition::Pending:

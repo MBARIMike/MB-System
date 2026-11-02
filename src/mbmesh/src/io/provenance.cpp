@@ -271,6 +271,7 @@ MetaValue program_block(const RunInfo &run) {
     if (run.chunked) {
         reconstruction.set("chunkSize", MetaValue::from_number(run.chunk_size));
         reconstruction.set("halo", MetaValue::from_number(run.halo));
+        reconstruction.set("seamBlend", MetaValue::from_number(run.seam_blend));
         reconstruction.set("threads", MetaValue::from_number(static_cast<double>(run.threads)));
     }
     block.set("reconstruction", reconstruction);

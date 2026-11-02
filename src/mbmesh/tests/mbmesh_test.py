@@ -68,7 +68,7 @@ class MbmeshTest(unittest.TestCase):
   def testHelpDocumentsChunking(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()
-    for option in ('--chunk-size', '--chunk-halo', '--chunk <i,j>', '--max-chunks', '--label-chunks', '--threads'):
+    for option in ('--chunk-size', '--chunk-halo', '--seam-blend', '--chunk <i,j>', '--max-chunks', '--label-chunks', '--threads'):
       self.assertIn(option, output)
 
   def testInfoOptionIsDocumented(self):
@@ -174,6 +174,15 @@ class MbmeshTest(unittest.TestCase):
                            stderr=subprocess.STDOUT, check=False)
     self.assertNotEqual(proc.returncode, 0)
     self.assertIn('use --html too', proc.stdout.decode())
+
+  def testSeamBlendIsValidated(self):
+    # --seam-blend takes a width in meters, zero or more
+    for value in ('abc', '-1', ''):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--seam-blend=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('not a width in meters', proc.stdout.decode(), value)
 
   def testHelpDocumentsVoidSize(self):
     output = subprocess.check_output([self.cmd, '-h'],

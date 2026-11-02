@@ -26,6 +26,7 @@ set(MBMESH_SOURCES
   src/algorithms/screened_poisson.cpp
   src/algorithms/marching_cubes.cpp
   src/algorithms/support_trimming.cpp
+  src/algorithms/seam_blending.cpp
   src/algorithms/reconstruction.cpp)
 
 find_package(Threads REQUIRED)
@@ -68,6 +69,7 @@ if(buildTests)
     src/algorithms/screened_poisson.cpp
     src/algorithms/marching_cubes.cpp
     src/algorithms/support_trimming.cpp
+    src/algorithms/seam_blending.cpp
     src/algorithms/reconstruction.cpp)
   target_compile_features(mbmesh_test_settings PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_settings PRIVATE
@@ -85,6 +87,15 @@ if(buildTests)
   target_include_directories(mbmesh_test_coverage_footprint PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME mbmesh_coverage_footprint COMMAND mbmesh_test_coverage_footprint)
+
+  add_executable(mbmesh_test_seam_blending
+    tests/test_seam_blending.cpp
+    src/algorithms/seam_blending.cpp
+    src/algorithms/marching_cubes.cpp)
+  target_compile_features(mbmesh_test_seam_blending PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_seam_blending PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mbmesh_seam_blending COMMAND mbmesh_test_seam_blending)
 
   add_executable(mbmesh_test_point_spill
     tests/test_point_spill.cpp
@@ -106,6 +117,7 @@ if(buildTests)
     tests/test_chunking.cpp
     src/io/point_spill.cpp
     src/algorithms/reconstruction.cpp
+    src/algorithms/seam_blending.cpp
     src/algorithms/normal_estimation.cpp
     src/algorithms/screened_poisson.cpp
     src/algorithms/marching_cubes.cpp

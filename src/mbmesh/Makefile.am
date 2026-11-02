@@ -23,12 +23,19 @@ mbmesh_SOURCES = \
 	src/algorithms/screened_poisson.cpp \
 	src/algorithms/marching_cubes.cpp \
 	src/algorithms/support_trimming.cpp \
+	src/algorithms/seam_blending.cpp \
 	src/algorithms/reconstruction.cpp
 
 mbmesh_LDADD = $(top_builddir)/src/mbio/libmbio.la -lpthread
 
-check_PROGRAMS = mbmesh_test_support_trimming mbmesh_test_coverage_footprint
-TESTS = mbmesh_test_support_trimming mbmesh_test_coverage_footprint
+check_PROGRAMS = mbmesh_test_support_trimming mbmesh_test_coverage_footprint mbmesh_test_seam_blending
+TESTS = mbmesh_test_support_trimming mbmesh_test_coverage_footprint mbmesh_test_seam_blending
+
+mbmesh_test_seam_blending_CXXFLAGS = -std=c++17
+mbmesh_test_seam_blending_SOURCES = \
+	tests/test_seam_blending.cpp \
+	src/algorithms/seam_blending.cpp \
+	src/algorithms/marching_cubes.cpp
 
 mbmesh_test_coverage_footprint_CXXFLAGS = -std=c++17
 mbmesh_test_coverage_footprint_SOURCES = \

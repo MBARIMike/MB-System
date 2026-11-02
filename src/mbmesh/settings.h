@@ -86,6 +86,10 @@ struct Options {
     // --chunk-halo: meters of neighboring points each chunk reads beyond its edge. Zero chooses it (see resolve_chunking()).
     bool chunk_halo_requested = false;
     double chunk_halo = 0.0;
+    // --seam-blend: meters over which the field of a chunk is matched to its neighbors' on the edges it shares with them;
+    // zero does not. Unless given, resolve_chunking() chooses it.
+    bool seam_blend_requested = false;
+    double seam_blend = 0.0;
     std::size_t threads = 0;   // chunks reconstructed at once; 0 chooses automatically
     bool use_chunking = false;
     ChunkingOptions chunking;

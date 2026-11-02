@@ -30,6 +30,10 @@ struct ReconstructionOptions {
     ScreenedPoissonOptions poisson;
     MarchingCubesOptions marching_cubes;
     SupportTrimmingOptions trimming;
+
+    // Called with the Poisson field before marching cubes, and may change it. The chunked driver uses it to make
+    // the field of a chunk agree with those of its neighbors where they meet (see seam_blending.h).
+    std::function<void(ScalarGrid3D *)> adjust_field;
 };
 
 enum class ReconstructionStatus {
@@ -50,6 +54,7 @@ struct ReconstructionTimes {
     double poisson_solve = 0.0;   // the part of poisson spent in the solver iterations
     double marching_cubes = 0.0;
     double trimming = 0.0;
+    double seams = 0.0;   // waiting for the neighbors, and matching their fields
 };
 
 struct ReconstructionResult {
@@ -90,6 +95,12 @@ struct ChunkingOptions {
     // this, since each chunk holds its own Poisson grid. Chunks are delivered to
     // the callback in chunk order whatever the thread count.
     std::size_t threads = 1;
+
+    // Over this many meters, on both sides of each edge that a chunk shares with a chunk that was finished before it (the
+    // one to its west and the one to its south), the field of the chunk is made to have the neighbor's values on the
+    // edge, so that the two meshes meet exactly (see seam_blending.h). Zero leaves the chunks as they are solved, and
+    // lets them be started in any order.
+    double seam_blend = 0.0;
 
     // Testing aids: process only these chunks (all of them if the set is empty), or stop after a number of chunks.
     std::set<std::pair<int, int>> only_chunks;

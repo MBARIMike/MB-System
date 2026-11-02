@@ -136,6 +136,18 @@ trimming. A halo smaller than that reach is used, with a warning. A larger halo 
 disk and time, because every chunk reconstructs its halo again, and it changes the chunk size; it
 did not improve the match of neighboring chunks at their edges. It has an effect only when the run is chunked.
 .TP
+.B \--seam-blend \fImeters\fR
+Over this width on each side of an edge between two chunks, the Poisson field of a chunk is made
+to match the final field of the chunk to its west or to its south on that edge, so that the two
+meshes meet exactly, with no step and no gap. The fields of neighboring chunks are solved apart and
+differ where they meet (by about 2 cm on one multibeam survey at \fB-L 0.1\fR). The chunks share one
+lattice of grid nodes, so with the same field values on the nodes of an edge, marching cubes makes
+the same vertices along it; the correction is the difference on the edge, fading smoothly to zero
+over the width. The vertices that the chunks have in common are merged in \fBmesh.glb\fR. The default
+is 1 m, or a quarter of the chunk size if that is less. Zero does not match the chunks, and lets
+them be started in any order; with a width the chunks are started in order, since a chunk waits
+for its neighbors. It has an effect only when the run is chunked.
+.TP
 .B \--label-chunks
 With \fB--html\fR, the page draws the outline of each chunk, at the mean height of its surface,
 and its file name, for example \fBchunk_2_-10.glb\fR, as text that faces the viewer. A check box

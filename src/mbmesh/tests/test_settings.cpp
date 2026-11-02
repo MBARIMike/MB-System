@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -288,6 +289,21 @@ int main() {
         std::string chunk_error;
         if (!check(resolve_chunking(from_bounds, metadata, nullptr, &chunk_error), "Chunking should resolve from the bounds") ||
             !check(resolve_chunking(from_points, metadata, &slope, &chunk_error), "Chunking should resolve from the points")) {
+            return 1;
+        }
+        // --seam-blend: a quarter of a chunk or 1 m, whichever is less, unless given; zero is allowed.
+        if (!check(std::fabs(from_bounds.chunking.seam_blend - std::min(1.0, 0.25 * from_bounds.chunking.chunk_size)) < 1.0e-12 && from_bounds.chunking.seam_blend > 0.0,
+                   "the seam blend is chosen from the chunk size")) {
+            return 1;
+        }
+        Options given = options;
+        given.seam_blend_requested = true;
+        given.seam_blend = 0.0;
+        Options wide = options;
+        wide.seam_blend_requested = true;
+        wide.seam_blend = 2.5;
+        if (!check(resolve_chunking(given, metadata, nullptr, &chunk_error) && given.chunking.seam_blend == 0.0, "--seam-blend 0 turns the matching off") ||
+            !check(resolve_chunking(wide, metadata, nullptr, &chunk_error) && wide.chunking.seam_blend == 2.5, "--seam-blend sets the width")) {
             return 1;
         }
         std::printf("  sloping survey: chunk %.0f m from the whole depth range, %.0f m from the relief in each chunk\n",

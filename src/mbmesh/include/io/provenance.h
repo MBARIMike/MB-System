@@ -100,6 +100,7 @@ struct RunInfo {
     bool chunked = false;
     double chunk_size = 0.0;
     double halo = 0.0;
+    double seam_blend = 0.0;   // meters over which the chunks are matched on their edges, zero for not
     std::size_t threads = 1;
 };
 

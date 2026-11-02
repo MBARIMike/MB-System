@@ -31,6 +31,7 @@
 #include "io/x3dom_writer.h"
 
 #include "algorithms/coverage_footprint.h"
+#include "algorithms/seam_blending.h"
 #include "algorithms/point_decimation.h"
 #include "algorithms/normal_estimation.h"
 #include "algorithms/reconstruction.h"
@@ -422,7 +423,8 @@ int main(int argc, char **argv) {
                     text << "chunks ";
                     std::size_t shown = 0;
                     for (const auto &selected : options.chunk_selection) {
-                        text << (shown++ > 0 ? " and " : "") << selected.first << "," << selected.second;
+                        const std::size_t before = shown++;
+                        text << (before == 0 ? "" : (shown == options.chunk_selection.size() ? (before == 1 ? " and " : ", and ") : ", ")) << selected.first << "," << selected.second;
                     }
                 } else {
                     text << options.chunk_selection.size() << " chunks";
@@ -433,6 +435,13 @@ int main(int argc, char **argv) {
             }
             if (options.max_chunks > 0) {
                 text << ", at most " << options.max_chunks << " of them (--max-chunks)";
+            }
+            if (options.use_chunking) {
+                if (options.chunking.seam_blend > 0.0) {
+                    text << "; the fields of neighboring chunks are matched on their shared edges over " << options.chunking.seam_blend << " m (--seam-blend)";
+                } else {
+                    text << "; the fields of neighboring chunks are not matched on their shared edges (--seam-blend 0)";
+                }
             }
             LOG_INFO("[settings]", text.str());
         }
@@ -545,6 +554,7 @@ int main(int argc, char **argv) {
         run.chunked = options.use_chunking;
         run.chunk_size = options.chunking.chunk_size;
         run.halo = options.chunking.halo;
+        run.seam_blend = options.chunking.seam_blend;
         run.threads = options.use_chunking ? static_cast<std::size_t>(options.chunking.threads) : 1;
     }
     set_glb_run_metadata(run_metadata(run));
@@ -798,6 +808,17 @@ int main(int argc, char **argv) {
             LOG_ERROR("chunked reconstruction produced no mesh; adjust the level of detail or chunk size");
             return 1;
         }
+
+        // The meshes of chunks whose fields were matched meet at the same points, which are separate vertices in each of the
+        // chunk meshes: made one, so that mesh.glb has no seams, as an edge or as a gap.
+        if (options.chunking.seam_blend > 0.0) {
+            const Stopwatch weld_timer;
+            constexpr double weld_tolerance = 1.0e-6;   // meters, far more than the rounding of the same point and less than any detail
+            const std::size_t welded = weld_coincident_vertices(&clean_mesh, weld_tolerance);
+            const std::size_t welded_raw = keep_raw_mesh ? weld_coincident_vertices(&raw_mesh, weld_tolerance) : 0;
+            LOG_INFO("[chunking]", "seams: " + std::to_string(welded) + " vertices of the chunk meshes that coincide with another were merged in mesh.glb" +
+                                       (keep_raw_mesh ? " (" + std::to_string(welded_raw) + " in the raw mesh)" : std::string()) + ", in " + weld_timer.text());
+        }
     }
 
     // ====================================================================================================
@@ -1019,6 +1040,7 @@ Options parse_options(int argc, char **argv) {
         {"chunk-size", required_argument, nullptr, 1013},
         {"chunk-halo", required_argument, nullptr, 1027},
         {"label-chunks", no_argument, nullptr, 1028},
+        {"seam-blend", required_argument, nullptr, 1029},
         {"chunk", required_argument, nullptr, 1014},
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
@@ -1163,6 +1185,18 @@ Options parse_options(int argc, char **argv) {
         case 1028:
             options.label_chunks = true;
             break;
+
+        case 1029: {
+            char *end = nullptr;
+            const double width = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(width) || width < 0.0) {
+                LOG_ERROR("invalid --seam-blend:", std::string("'") + optarg + "' is not a width in meters, zero or more");
+                std::exit(1);
+            }
+            options.seam_blend = width;
+            options.seam_blend_requested = true;
+            break;
+        }
 
         case 1027: {
             char *end = nullptr;
@@ -1383,6 +1417,9 @@ void print_usage() {
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame. i and j can each be a range\n";
     std::cout << "                               first..last, as in 2..3,-11..-10, and the option can be repeated, to see a seam between chunks\n";
     std::cout << "      --max-chunks <n>         Stop after n chunks (for testing)\n";
+    std::cout << "      --seam-blend <meters>    Over this width on each side of an edge between chunks, the field of a chunk is made to\n";
+    std::cout << "                               match that of the chunk to its west or south on the edge, so that the meshes meet exactly,\n";
+    std::cout << "                               with no step and no gap [1, or a quarter of a chunk if that is less]. 0 does not\n";
     std::cout << "      --label-chunks           With --html, draw the outline and the file name of each chunk in the page, with a check\n";
     std::cout << "                               box to switch them off, to see which chunk a seam or a void belongs to\n";
     std::cout << "      --threads <n>            Chunks reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
