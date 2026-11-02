@@ -66,7 +66,7 @@ class MbmeshTest(unittest.TestCase):
   def testHelpDocumentsChunking(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()
-    for option in ('--chunk-size', '--chunk <i,j>', '--max-chunks', '--threads'):
+    for option in ('--chunk-size', '--chunk-halo', '--chunk <i,j>', '--max-chunks', '--threads'):
       self.assertIn(option, output)
 
   def testInfoOptionIsDocumented(self):
@@ -152,6 +152,15 @@ class MbmeshTest(unittest.TestCase):
     # --void-size takes a size in meters, zero or more.
     for value in ('abc', '-5', ''):
       proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--void-size=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('not a size in meters', proc.stdout.decode(), value)
+
+  def testChunkHaloIsValidated(self):
+    # --chunk-halo takes a size in meters, more than zero.
+    for value in ('abc', '-1', '0', ''):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--chunk-halo=' + value],
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, check=False)
       self.assertNotEqual(proc.returncode, 0, value)

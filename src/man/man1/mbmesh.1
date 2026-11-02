@@ -129,6 +129,13 @@ number of Poisson cells) instead of in one pass. Chunking turns on
 automatically when a single Poisson grid would exceed about 8 million cells.
 See \fBChunked reconstruction\fR below.
 .TP
+.B \--chunk-halo \fImeters\fR
+Read this many meters of neighboring points beyond the edge of each tile, rounded up to a whole
+number of Poisson cells. The default is the reach of the normal estimation, splatting and
+trimming. A halo smaller than that reach is used, with a warning. A larger halo needs more memory,
+disk and time, because every tile reconstructs its halo again, and it changes the tile size; it
+did not improve the match of neighboring tiles at their edges. It has an effect only when the run is chunked.
+.TP
 .B \--chunk \fIi,j\fR
 Reconstruct only tile (i,j). Tile (i,j) covers x from i*size to (i+1)*size and y
 from j*size to (j+1)*size in the local east-north frame. Intended for testing.

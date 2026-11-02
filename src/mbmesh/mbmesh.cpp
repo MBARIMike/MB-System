@@ -870,6 +870,7 @@ Options parse_options(int argc, char **argv) {
         {"decimate", required_argument, nullptr, 1010},
         {"geoorigin", optional_argument, nullptr, 'G'},
         {"chunk-size", required_argument, nullptr, 1013},
+        {"chunk-halo", required_argument, nullptr, 1027},
         {"chunk", required_argument, nullptr, 1014},
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
@@ -1010,6 +1011,18 @@ Options parse_options(int argc, char **argv) {
             options.chunk_size = std::strtod(optarg, nullptr);
             options.chunk_size_requested = true;
             break;
+
+        case 1027: {
+            char *end = nullptr;
+            const double halo = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(halo) || halo <= 0.0) {
+                LOG_ERROR("invalid --chunk-halo:", std::string("'") + optarg + "' is not a size in meters, more than zero");
+                std::exit(1);
+            }
+            options.chunk_halo = halo;
+            options.chunk_halo_requested = true;
+            break;
+        }
 
         case 1014: {
             int tile_i = 0, tile_j = 0;
@@ -1212,6 +1225,8 @@ void print_usage() {
     std::cout << "      --chunk-size <meters>    Reconstruct in square tiles of about this size, writing tiles/tile_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";
+    std::cout << "      --chunk-halo <meters>    Neighboring points each tile reads beyond its edge [what the normal estimation, splatting\n";
+    std::cout << "                               and trimming need]. Less than that is allowed, with a warning; more changes the tile size\n";
     std::cout << "      --chunk <i,j>            Reconstruct only tile (i,j); tile (i,j) covers x in [i*size,(i+1)*size)\n";
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
     std::cout << "      --max-chunks <n>         Stop after n tiles (for testing)\n";

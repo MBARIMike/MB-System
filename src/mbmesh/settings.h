@@ -80,6 +80,9 @@ struct Options {
     int chunk_tile_i = 0;
     int chunk_tile_j = 0;
     std::size_t max_chunks = 0;
+    // --chunk-halo: meters of neighboring points each tile reads beyond its edge. Zero chooses it (see resolve_chunking()).
+    bool chunk_halo_requested = false;
+    double chunk_halo = 0.0;
     std::size_t threads = 0;   // tiles reconstructed at once; 0 chooses automatically
     bool use_chunking = false;
     ChunkingOptions chunking;

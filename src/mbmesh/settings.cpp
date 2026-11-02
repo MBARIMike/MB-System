@@ -480,7 +480,24 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
     }
 
     const ReconstructionOptions reconstruction = reconstruction_options(options);
-    const double halo = chunk_halo(reconstruction);
+    // The halo that keeps the stages near a tile edge exact is the least that is safe, and the default. --chunk-halo sets
+    // it: a larger one reads more neighboring points, and also changes the tile size and the points each tile's iso-value
+    // is found from, which moved the surfaces of neighboring tiles apart at their edges in a test on a multibeam survey.
+    const double minimum_halo = chunk_halo(reconstruction);
+    double halo = minimum_halo;
+    if (options.chunk_halo_requested) {
+        if (!(options.chunk_halo > 0.0) || !std::isfinite(options.chunk_halo)) {
+            if (error != nullptr) {
+                *error = "--chunk-halo must be a positive number of meters";
+            }
+            return false;
+        }
+        halo = round_to_cells(options.chunk_halo, cell);
+        if (halo < minimum_halo) {
+            LOG_WARN("--chunk-halo", options.chunk_halo, "m is less than the", minimum_halo,
+                     "m that the reach of the normal estimation, splatting and trimming needs: the mesh near tile edges may differ from a single run");
+        }
+    }
 
     // Each tile holds its own Poisson grid, so cap the automatic thread count to
     // keep memory modest. Ask for more with --threads.
