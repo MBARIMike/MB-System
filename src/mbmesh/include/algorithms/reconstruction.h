@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <functional>
+#include <set>
+#include <utility>
 #include <string>
 
 #include "../data_types/geometry.h"
@@ -89,11 +91,11 @@ struct ChunkingOptions {
     // the callback in chunk order whatever the thread count.
     std::size_t threads = 1;
 
-    // Testing aids: process only one chunk, or stop after a number of chunks.
-    bool single_chunk = false;
-    int chunk_i = 0;
-    int chunk_j = 0;
+    // Testing aids: process only these chunks (all of them if the set is empty), or stop after a number of chunks.
+    std::set<std::pair<int, int>> only_chunks;
     std::size_t max_chunks = 0;   // 0 = no limit
+
+    [[nodiscard]] bool selects(int i, int j) const { return only_chunks.empty() || only_chunks.count({i, j}) != 0; }
 };
 
 struct ChunkingStats {

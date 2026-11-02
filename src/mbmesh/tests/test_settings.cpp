@@ -298,6 +298,29 @@ int main() {
         }
     }
 
+    // --chunk: one chunk, ranges, repeats, and what is refused.
+    {
+        std::set<std::pair<int, int>> chunks;
+        std::string error;
+        using Chunks = std::set<std::pair<int, int>>;
+        if (!check(parse_chunk_selection("2,-10", &chunks, &error) && chunks == Chunks({{2, -10}}), "--chunk 2,-10 is one chunk") ||
+            !check(parse_chunk_selection("2..3,-11..-10", &chunks, &error) &&
+                       chunks == Chunks({{2, -10}, {2, -11}, {3, -11}, {3, -10}}),
+                   "--chunk 2..3,-11..-10 adds the four chunks of the ranges to the one before it") ||
+            !check(parse_chunk_selection("-1..-1,5", &chunks, &error) && chunks.count({-1, 5}) == 1 && chunks.size() == 5,
+                   "a range of one chunk, with negative numbers, adds that chunk") ||
+            !check(parse_chunk_selection("0..2,0", &chunks, &error) && chunks.size() == 8,
+                   "repeating a chunk that is already selected does not count it twice")) {
+            return 1;
+        }
+        for (const char *bad : {"", "1", "1,2,3", ",2", "1,", "a,b", "3..1,0", "0,2..1", "1..,0", "..1,0", "1.5,0", "0..100000,0..100000", "99999999999,0"}) {
+            std::set<std::pair<int, int>> none;
+            if (!check(!parse_chunk_selection(bad, &none, &error) && none.empty() && !error.empty(), (std::string("--chunk ") + bad + " is refused, and selects nothing").c_str())) {
+                return 1;
+            }
+        }
+    }
+
     std::printf("Settings defaults and Poisson budget checks passed\n");
     return 0;
 }

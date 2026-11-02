@@ -144,7 +144,11 @@ needs a chunked run, and has no effect on the survey page that a directory input
 .TP
 .B \--chunk \fIi,j\fR
 Reconstruct only chunk (i,j). Chunk (i,j) covers x from i*size to (i+1)*size and y
-from j*size to (j+1)*size in the local east-north frame. Intended for testing.
+from j*size to (j+1)*size in the local east-north frame. Intended for testing. Each of
+\fIi\fR and \fIj\fR can be a range \fIfirst\fR..\fIlast\fR, both included, so that
+\fB--chunk 2..3,-11..-10\fR is four chunks, and the option can be repeated, to add chunks:
+\fB--chunk 2,-10 --chunk 3,-10\fR is two neighbors, for looking at the seam between them.
+\fBmesh.glb\fR and the pages then hold only those chunks.
 .TP
 .B \--max-chunks \fIn\fR
 Stop after n chunks. Intended for testing.

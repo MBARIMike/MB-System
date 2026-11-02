@@ -329,15 +329,22 @@ int main() {
     // Single-chunk and chunk-count limits.
     {
         ChunkingOptions one = chunking;
-        one.single_chunk = true;
-        one.chunk_i = 1;
-        one.chunk_j = 1;
+        one.only_chunks = {{1, 1}};
         std::size_t seen = 0;
         ok &= check(reconstruct_chunked(points, options, one, [&](ChunkResult &chunk) {
                         seen++;
                         return chunk.i == 1 && chunk.j == 1;
                     }, &stats, &error) && seen == 1,
                     "--chunk selects exactly one chunk");
+
+        ChunkingOptions several = chunking;
+        several.only_chunks = {{1, 1}, {0, 0}};
+        std::set<std::pair<int, int>> delivered;
+        ok &= check(reconstruct_chunked(points, options, several, [&](ChunkResult &chunk) {
+                        delivered.insert({chunk.i, chunk.j});
+                        return true;
+                    }, &stats, &error) && delivered == std::set<std::pair<int, int>>({{0, 0}, {1, 1}}),
+                    "--chunk twice selects exactly those two chunks");
 
         ChunkingOptions limited = chunking;
         limited.max_chunks = 2;
@@ -389,7 +396,7 @@ int main() {
 
         // --chunk from chunk files keeps one chunk, as from memory.
         ChunkBins one_bins(directory / "one", chunk_size, halo);
-        one_bins.keep_only_chunk(1, 1);
+        one_bins.keep_only_chunks({{1, 1}});
         bool one_binned = one_bins.open(&bins_error);
         for (const CollectedPoint &point : points) {
             one_binned = one_binned && one_bins.add(point, &bins_error);

@@ -30,11 +30,13 @@ class MbmeshTest(unittest.TestCase):
                     proc.stdout.decode(), arg)
 
   def testChunkOptionsAreValidated(self):
-    proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--chunk=abc'],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, check=False)
-    self.assertNotEqual(proc.returncode, 0)
-    self.assertIn('invalid --chunk argument', proc.stdout.decode())
+    # one comma, and each of I and J a whole number or a range with the first not after the last
+    for value in ('abc', '1', '1,2,3', '1,', ',2', '3..1,0', '0,2..1', '1..,0', '0,x', '0..100000,0..100000'):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--chunk=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('invalid --chunk:', proc.stdout.decode(), value)
 
   def testPoissonSolverOptionsAreValidated(self):
     # an unknown solver or a bad count is refused before any data is read

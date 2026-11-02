@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -79,9 +80,8 @@ struct Options {
     // preprocess_datalist().
     bool chunk_size_requested = false;
     double chunk_size = 0.0;
-    bool chunk_requested = false;
-    int chunk_i = 0;
-    int chunk_j = 0;
+    // --chunk, repeatable, and with ranges: only these chunks are reconstructed (see parse_chunk_selection()). Empty is all.
+    std::set<std::pair<int, int>> chunk_selection;
     std::size_t max_chunks = 0;
     // --chunk-halo: meters of neighboring points each chunk reads beyond its edge. Zero chooses it (see resolve_chunking()).
     bool chunk_halo_requested = false;
@@ -151,6 +151,11 @@ struct PreprocessedDatalist {
 // Resolves the GeoOrigin that --geoorigin selects. Returns false (and leaves
 // *origin untouched) when no GeoOrigin was requested.
 bool resolve_geoorigin(const Options &options, const DatalistMetadata &metadata, GeodeticPosition *origin);
+
+// Parses the value of --chunk, "I,J", where each of I and J is a whole number or a range "FIRST..LAST" (both included,
+// FIRST not more than LAST), for example "2,-10" or "2..3,-11..-10", and adds the chunks it names to *chunks. Returns
+// false and says why in error if the text is not that, or names more than 100000 chunks.
+[[nodiscard]] bool parse_chunk_selection(const std::string &text, std::set<std::pair<int, int>> *chunks, std::string *error);
 
 // Builds the options the reconstruction stages use.
 ReconstructionOptions reconstruction_options(const Options &options);

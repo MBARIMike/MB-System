@@ -414,8 +414,20 @@ int main(int argc, char **argv) {
         {
             std::ostringstream text;
             text << std::setprecision(6) << "chunks: ";
-            if (options.chunk_requested) {
-                text << "only chunk " << options.chunk_i << "," << options.chunk_j << " is reconstructed (--chunk)";
+            if (!options.chunk_selection.empty()) {
+                text << "only ";
+                if (options.chunk_selection.size() == 1) {
+                    text << "chunk " << options.chunk_selection.begin()->first << "," << options.chunk_selection.begin()->second;
+                } else if (options.chunk_selection.size() <= 6) {
+                    text << "chunks ";
+                    std::size_t shown = 0;
+                    for (const auto &selected : options.chunk_selection) {
+                        text << (shown++ > 0 ? " and " : "") << selected.first << "," << selected.second;
+                    }
+                } else {
+                    text << options.chunk_selection.size() << " chunks";
+                }
+                text << " (--chunk) " << (options.chunk_selection.size() == 1 ? "is" : "are") << " reconstructed";
             } else {
                 text << "all chunks are reconstructed";
             }
@@ -599,10 +611,8 @@ int main(int argc, char **argv) {
         const Stopwatch binning_timer;
         bins = std::make_unique<ChunkBins>(work_directory(options) / "chunks", options.chunking.chunk_size, options.chunking.halo);
         bins->set_footprint(footprint.get());
-        if (options.chunking.single_chunk) {
-            bins->keep_only_chunk(options.chunking.chunk_i, options.chunking.chunk_j);
-        }
-        if (!options.decimation.decimate && !options.chunking.single_chunk) {
+        bins->keep_only_chunks(options.chunking.only_chunks);
+        if (!options.decimation.decimate && options.chunking.only_chunks.empty()) {
             // Every sounding goes into a chunk file, and into the halos of its neighbors too.
             const double chunk = options.chunking.chunk_size;
             const double halo = options.chunking.halo;
@@ -1167,13 +1177,9 @@ Options parse_options(int argc, char **argv) {
         }
 
         case 1014: {
-            int chunk_i = 0, chunk_j = 0;
-            if (std::sscanf(optarg, "%d,%d", &chunk_i, &chunk_j) == 2) {
-                options.chunk_i = chunk_i;
-                options.chunk_j = chunk_j;
-                options.chunk_requested = true;
-            } else {
-                LOG_ERROR("invalid --chunk argument (expected I,J): " + std::string(optarg));
+            std::string chunk_error;
+            if (!parse_chunk_selection(optarg, &options.chunk_selection, &chunk_error)) {
+                LOG_ERROR("invalid --chunk:", chunk_error);
                 std::exit(1);
             }
             break;
@@ -1374,7 +1380,8 @@ void print_usage() {
     std::cout << "      --chunk-halo <meters>    Neighboring points each chunk reads beyond its edge [what the normal estimation, splatting\n";
     std::cout << "                               and trimming need]. Less than that is allowed, with a warning; more changes the chunk size\n";
     std::cout << "      --chunk <i,j>            Reconstruct only chunk (i,j); chunk (i,j) covers x in [i*size,(i+1)*size)\n";
-    std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
+    std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame. i and j can each be a range\n";
+    std::cout << "                               first..last, as in 2..3,-11..-10, and the option can be repeated, to see a seam between chunks\n";
     std::cout << "      --max-chunks <n>         Stop after n chunks (for testing)\n";
     std::cout << "      --label-chunks           With --html, draw the outline and the file name of each chunk in the page, with a check\n";
     std::cout << "                               box to switch them off, to see which chunk a seam or a void belongs to\n";

@@ -218,7 +218,7 @@ bool ChunkBins::add(const CollectedPoint &point, std::string *error) {
         if (owned && footprint_ != nullptr) {
             footprint_->add(point.point.x, point.point.y, point.point.z);
         }
-        if (only_chunk_ && (i != only_i_ || j != only_j_)) {
+        if (!only_chunks_.empty() && only_chunks_.count({i, j}) == 0) {
             return;
         }
         ChunkBinCount &count = counts_[{i, j}];

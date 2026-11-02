@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -113,21 +114,18 @@ struct ChunkBinCount {
 // One file of points for each reconstruction chunk.
 class ChunkBins {
 public:
-    // The files go in directory. If only_chunk is set, only that chunk is kept (--chunk, for testing).
+    // The files go in directory. If keep_only_chunks() is called, only those chunks are kept (--chunk, for testing).
     // memory_points bounds how many points are buffered in memory before they are appended to the files.
     ChunkBins(const std::filesystem::path &directory, double chunk_size, double halo, std::size_t memory_points = 4000000);
     ChunkBins(const ChunkBins &) = delete;
     ChunkBins &operator=(const ChunkBins &) = delete;
     ~ChunkBins();
 
-    void keep_only_chunk(int i, int j) {
-        only_chunk_ = true;
-        only_i_ = i;
-        only_j_ = j;
-    }
+    // Only these chunks are kept (--chunk, for testing); all of them if the set is empty.
+    void keep_only_chunks(const std::set<std::pair<int, int>> &chunks) { only_chunks_ = chunks; }
 
     // Adds every point to the footprint (which must outlive the adds), whether or not
-    // keep_only_chunk() drops it.
+    // keep_only_chunks() drops it.
     void set_footprint(CoverageFootprint *footprint) { footprint_ = footprint; }
 
     // Creates the directory, and empties it of earlier chunk files.
@@ -160,9 +158,7 @@ private:
     double chunk_size_;
     double halo_;
     std::size_t memory_points_;
-    bool only_chunk_ = false;
-    int only_i_ = 0;
-    int only_j_ = 0;
+    std::set<std::pair<int, int>> only_chunks_;
     CoverageFootprint *footprint_ = nullptr;
     std::map<std::pair<int, int>, ChunkBinCount> counts_;
     std::map<std::pair<int, int>, CollectedPointCloud> buffers_;

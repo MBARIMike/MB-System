@@ -310,7 +310,7 @@ bool reconstruct_chunked_from(
             const double x = (*points)[n].point.x;
             const double y = (*points)[n].point.y;
             for_each_chunk_of_point(x, y, chunk, halo, [&](int i, int j, bool owned) {
-                if (chunking.single_chunk && (i != chunking.chunk_i || j != chunking.chunk_j)) {
+                if (!chunking.selects(i, j)) {
                     return;
                 }
                 Chunk &entry = chunks[{i, j}];
@@ -323,7 +323,7 @@ bool reconstruct_chunked_from(
     }
     else {
         for (const auto &entry : bins->chunks()) {
-            if (chunking.single_chunk && (entry.first.first != chunking.chunk_i || entry.first.second != chunking.chunk_j)) {
+            if (!chunking.selects(entry.first.first, entry.first.second)) {
                 continue;
             }
             chunks[entry.first].owned = entry.second.owned;   // the points stay on disk

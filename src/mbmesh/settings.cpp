@@ -7,6 +7,8 @@
 #include "util/stopwatch.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <limits>
@@ -451,6 +453,63 @@ void apply_spacing_driven_defaults(Options &options, DatalistMetadata *metadata)
         desired_feature_size / average_spacing >= automatic_feature_size_spacing_scale;
 }
 
+namespace {
+
+// A whole number, or FIRST..LAST (both included). False if the text is not one.
+bool parse_chunk_range(const std::string &text, long *first, long *last) {
+    const auto whole = [](const std::string &part, long *value) {
+        if (part.empty()) {
+            return false;
+        }
+        char *end = nullptr;
+        errno = 0;
+        const long number = std::strtol(part.c_str(), &end, 10);
+        if (end == part.c_str() || *end != '\0' || errno != 0 || number < -1000000000L || number > 1000000000L) {
+            return false;
+        }
+        *value = number;
+        return true;
+    };
+    const std::size_t dots = text.find("..");
+    if (dots == std::string::npos) {
+        return whole(text, first) && (*last = *first, true);
+    }
+    return whole(text.substr(0, dots), first) && whole(text.substr(dots + 2), last) && *first <= *last;
+}
+
+} // namespace
+
+bool parse_chunk_selection(const std::string &text, std::set<std::pair<int, int>> *chunks, std::string *error) {
+    const auto fail = [&](const std::string &why) {
+        if (error != nullptr) {
+            *error = "'" + text + "' is not chunks: " + why + " (expected I,J, where I and J are each a whole number or a range FIRST..LAST, for example 2,-10 or 2..3,-11..-10)";
+        }
+        return false;
+    };
+    const std::size_t comma = text.find(',');
+    if (comma == std::string::npos || text.find(',', comma + 1) != std::string::npos) {
+        return fail("it needs one comma, between I and J");
+    }
+    long i_first = 0, i_last = 0, j_first = 0, j_last = 0;
+    if (!parse_chunk_range(text.substr(0, comma), &i_first, &i_last)) {
+        return fail("I is not a whole number or a range with FIRST not more than LAST");
+    }
+    if (!parse_chunk_range(text.substr(comma + 1), &j_first, &j_last)) {
+        return fail("J is not a whole number or a range with FIRST not more than LAST");
+    }
+    constexpr long maximum_chunks = 100000;
+    if ((i_last - i_first + 1) > maximum_chunks || (j_last - j_first + 1) > maximum_chunks ||
+        (i_last - i_first + 1) * (j_last - j_first + 1) > maximum_chunks) {
+        return fail("it names more than " + std::to_string(maximum_chunks) + " chunks");
+    }
+    for (long i = i_first; i <= i_last; i++) {
+        for (long j = j_first; j <= j_last; j++) {
+            chunks->insert({static_cast<int>(i), static_cast<int>(j)});
+        }
+    }
+    return true;
+}
+
 ReconstructionOptions reconstruction_options(const Options &options) {
     ReconstructionOptions reconstruction;
     reconstruction.normals = options.normals;
@@ -474,7 +533,7 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
     const double cell = options.poisson.cell_size;
     const PoissonGridEstimate whole = estimate_poisson_grid(metadata.bounds, cell, options.poisson.padding);
 
-    const bool forced = options.chunk_size_requested || options.chunk_requested || options.max_chunks > 0;
+    const bool forced = options.chunk_size_requested || !options.chunk_selection.empty() || options.max_chunks > 0;
     if (!forced && whole.cell_count <= target_chunk_grid_cells) {
         return true;   // small enough to reconstruct in one piece
     }
@@ -549,9 +608,7 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
     options.use_chunking = true;
     options.chunking.chunk_size = chunk_size;
     options.chunking.halo = halo;
-    options.chunking.single_chunk = options.chunk_requested;
-    options.chunking.chunk_i = options.chunk_i;
-    options.chunking.chunk_j = options.chunk_j;
+    options.chunking.only_chunks = options.chunk_selection;
     options.chunking.max_chunks = options.max_chunks;
 
     options.chunking.threads = threads;
