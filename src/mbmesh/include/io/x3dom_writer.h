@@ -86,8 +86,14 @@ struct X3DomModel {
 struct X3DomChunkLabel {
     std::string name;            // the text, for example "chunk_2_-10.glb"
     double corners[4][3] = {};   // in order around the chunk
-    double center[3] = {};       // where the text is
+    double center[3] = {};       // where the text is, before it is raised by rise
     double text_size = 1.0;      // height of the text, in meters
+    // How far above center the text is, in meters along the local vertical, so that it is over the highest point of the
+    // chunk and not in its surface. The page does it with a GeoTransform at latitude and longitude, the position of the
+    // center in degrees. Zero leaves the text at center, without a GeoTransform.
+    double rise = 0.0;
+    double latitude = 0.0;
+    double longitude = 0.0;
 };
 
 struct X3DomWriterOptions {

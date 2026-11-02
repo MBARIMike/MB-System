@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -749,8 +750,10 @@ int main(int argc, char **argv) {
                 // The square that the chunk owns, at the mean height of its surface, and its name at the middle.
                 const double size = options.chunking.chunk_size;
                 double mean_z = 0.0;
+                double highest_z = std::numeric_limits<double>::lowest();
                 for (const Vec3 &vertex : chunk.result.mesh.vertices) {
                     mean_z += vertex.z;
+                    highest_z = std::max(highest_z, vertex.z);
                 }
                 mean_z /= static_cast<double>(chunk.result.mesh.vertices.size());
                 X3DomChunkLabel label;
@@ -770,6 +773,11 @@ int main(int argc, char **argv) {
                 label.center[0] = middle.x;
                 label.center[1] = middle.y;
                 label.center[2] = middle.z;
+                // The name is raised to one text height over the highest point of the chunk, along the local vertical.
+                label.rise = (highest_z - mean_z) + label.text_size;
+                const GeodeticPosition at_middle = ecef_to_geodetic(local_to_ecef(Vec3(x0 + 0.5 * size, y0 + 0.5 * size, mean_z), chunk_frame));
+                label.latitude = at_middle.latitude;
+                label.longitude = at_middle.longitude;
                 chunk_labels.push_back(label);
             }
 

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "io/x3dom_writer.h"
 
 #include <cmath>
@@ -317,6 +318,11 @@ int main() {
             label.center[1] = 1.5;
             label.center[2] = -20.0;
             label.text_size = 0.3;
+            if (n == 0) {
+                label.rise = 1.25;   // over the highest point of the chunk: a GeoTransform raises this one
+                label.latitude = 36.3928;
+                label.longitude = -122.304;
+            }
             labeled.chunk_labels.push_back(label);
         }
         const std::string labeled_page = write_page(labeled);
@@ -327,6 +333,10 @@ int main() {
                     "each chunk has a closed outline of four corners");
         ok &= check(contains(labeled_page, "id='switch_chunks'") && contains(labeled_page, "Outlines and names") && contains(labeled_page, "<transform id='transform_chunks'>"),
                     "the chunks have a switch and a check box");
+        ok &= check(contains(labeled_page, "<GeoTransform geoSystem='&quot;GD&quot; &quot;WE&quot;' geoCenter='36.3928000 -122.3040000 0' translation='0 1.250 0'>"),
+                    "a label with a rise is in a GeoTransform that raises it along the local vertical");
+        ok &= check(labeled_page.find("<GeoTransform") != std::string::npos && labeled_page.find("<GeoTransform", labeled_page.find("<GeoTransform") + 1) == std::string::npos,
+                    "a label with no rise has no GeoTransform of its own");
         ok &= check(!contains(write_page(options), "switch_chunks") && !contains(write_page(options), "Outlines and names"),
                     "without chunk labels the page has neither");
         labeled.lift_meters = 1000.0;

@@ -1414,6 +1414,11 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         }
         output << "'></coordinate>\n              </indexedLineSet>\n            </shape>\n";
         for (const X3DomChunkLabel &label : options.chunk_labels) {
+            // Raised along the local vertical at the chunk, which X3DOM's GeoTransform has as Y, as the lift of the models is.
+            if (label.rise != 0.0) {
+                output << "            <GeoTransform geoSystem='&quot;GD&quot; &quot;WE&quot;' geoCenter='" << std::setprecision(7) << label.latitude << " "
+                       << label.longitude << " 0' translation='0 " << std::setprecision(3) << label.rise << " 0'>\n";
+            }
             output << "            <transform translation='" << label.center[0] << " " << label.center[1] << " " << label.center[2] << "'>\n"
                    << "              <billboard axisOfRotation='0 0 0'>\n"
                    << "                <shape>\n"
@@ -1424,6 +1429,9 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                    << "                </shape>\n"
                    << "              </billboard>\n"
                    << "            </transform>\n";
+            if (label.rise != 0.0) {
+                output << "            </GeoTransform>\n";
+            }
         }
         output << (lift != 0.0 ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
     }
