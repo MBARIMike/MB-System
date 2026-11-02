@@ -35,11 +35,11 @@ constexpr double target_chunk_grid_cells = 8.0e6;
 constexpr double minimum_auto_chunk_cells = 16.0;
 constexpr double maximum_auto_chunk_cells = 512.0;
 
-// Automatic tiling aims for at least this many tiles per thread, so that all
-// threads stay busy and uneven tiles at the survey edge balance out. A tile is
+// Automatic chunking aims for at least this many chunks per thread, so that all
+// threads stay busy and uneven chunks at the survey edge balance out. A chunk is
 // never made smaller than this many halos across, to keep the cost of the
-// halo and padding, which every tile reconstructs again, to a modest factor.
-constexpr double target_tiles_per_thread = 2.0;
+// halo and padding, which every chunk reconstructs again, to a modest factor.
+constexpr double target_chunks_per_thread = 2.0;
 
 // When the level of detail is not given, it is the finest the data supports
 // (twice the point spacing), unless that would need more Poisson cells than this
@@ -52,7 +52,7 @@ constexpr double automatic_work_budget_cells = 5.0e8;
 // An explicitly requested level of detail that needs more cells than this gets a
 // warning that the run may take hours.
 constexpr double large_run_warning_cells = 2.0e9;
-constexpr double minimum_tile_halos = 4.0;
+constexpr double minimum_chunk_halos = 4.0;
 
 // Point spacing is measured inside blocks of consecutive points: each block is
 // searched in full, and several blocks spread through the dataset are used. A
@@ -213,7 +213,7 @@ bool spilled_statistics(const DatalistReadResult &read_result, DatalistMetadata 
     sample->reserve(maximum_samples + 1);
 
     const std::vector<Vec3> origins = ping_origins(read_result);
-    const bool read = read_spill_chunks(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t first_index) {
+    const bool read = read_spill_pieces(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t first_index) {
         for (std::size_t n = 0; n < piece.size(); n++) {
             CollectedPoint &point = piece[n];
             point.point = ecef_to_local(point.point, read_result.frame);
@@ -263,25 +263,25 @@ bool spilled_statistics(const DatalistReadResult &read_result, DatalistMetadata 
     return true;
 }
 
-// Number of tiles of this size that the survey's horizontal extent touches.
-std::size_t tiles_covering(const Bounds3D &bounds, double tile_size) {
-    const double tiles_x = std::floor(bounds.max.x / tile_size) - std::floor(bounds.min.x / tile_size) + 1.0;
-    const double tiles_y = std::floor(bounds.max.y / tile_size) - std::floor(bounds.min.y / tile_size) + 1.0;
-    return static_cast<std::size_t>(tiles_x * tiles_y);
+// Number of chunks of this size that the survey's horizontal extent touches.
+std::size_t chunks_covering(const Bounds3D &bounds, double chunk_size) {
+    const double chunks_x = std::floor(bounds.max.x / chunk_size) - std::floor(bounds.min.x / chunk_size) + 1.0;
+    const double chunks_y = std::floor(bounds.max.y / chunk_size) - std::floor(bounds.min.y / chunk_size) + 1.0;
+    return static_cast<std::size_t>(chunks_x * chunks_y);
 }
 
-// The largest vertical extent of the points within any one tile of this size. A
-// tile's Poisson grid is as tall as the relief inside it, not as tall as the whole
-// survey's relief, so using the survey's full depth range makes tiles needlessly
+// The largest vertical extent of the points within any one chunk of this size. A
+// chunk's Poisson grid is as tall as the relief inside it, not as tall as the whole
+// survey's relief, so using the survey's full depth range makes chunks needlessly
 // small on a sloping seafloor. A sample of the points is enough.
-double tallest_tile(const CollectedPointCloud &points, double tile_size) {
+double tallest_chunk(const CollectedPointCloud &points, double chunk_size) {
     constexpr std::size_t maximum_samples = 1000000;
     const std::size_t stride = std::max<std::size_t>(1, points.size() / maximum_samples);
 
     std::unordered_map<long long, std::pair<double, double>> extent;
     for (std::size_t n = 0; n < points.size(); n += stride) {
-        const long long i = static_cast<long long>(std::floor(points[n].point.x / tile_size));
-        const long long j = static_cast<long long>(std::floor(points[n].point.y / tile_size));
+        const long long i = static_cast<long long>(std::floor(points[n].point.x / chunk_size));
+        const long long j = static_cast<long long>(std::floor(points[n].point.y / chunk_size));
         const long long key = (i << 32) ^ (j & 0xffffffffLL);
         const double z = points[n].point.z;
         auto found = extent.find(key);
@@ -300,17 +300,17 @@ double tallest_tile(const CollectedPointCloud &points, double tile_size) {
     return tallest;
 }
 
-// Number of tiles of this size that contain points. A survey along a diagonal
-// track touches far fewer tiles than its bounding box suggests. A sample of the
-// points is enough, since this only steers the choice of tile size.
-std::size_t tiles_occupied(const CollectedPointCloud &points, double tile_size) {
+// Number of chunks of this size that contain points. A survey along a diagonal
+// track touches far fewer chunks than its bounding box suggests. A sample of the
+// points is enough, since this only steers the choice of chunk size.
+std::size_t chunks_occupied(const CollectedPointCloud &points, double chunk_size) {
     constexpr std::size_t maximum_samples = 1000000;
     const std::size_t stride = std::max<std::size_t>(1, points.size() / maximum_samples);
 
     std::set<std::pair<long long, long long>> occupied;
     for (std::size_t n = 0; n < points.size(); n += stride) {
-        occupied.insert({static_cast<long long>(std::floor(points[n].point.x / tile_size)),
-                         static_cast<long long>(std::floor(points[n].point.y / tile_size))});
+        occupied.insert({static_cast<long long>(std::floor(points[n].point.x / chunk_size)),
+                         static_cast<long long>(std::floor(points[n].point.y / chunk_size))});
     }
     return occupied.size();
 }
@@ -474,15 +474,15 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
     const double cell = options.poisson.cell_size;
     const PoissonGridEstimate whole = estimate_poisson_grid(metadata.bounds, cell, options.poisson.padding);
 
-    const bool forced = options.chunk_size_requested || options.chunk_tile_requested || options.max_chunks > 0;
+    const bool forced = options.chunk_size_requested || options.chunk_requested || options.max_chunks > 0;
     if (!forced && whole.cell_count <= target_chunk_grid_cells) {
         return true;   // small enough to reconstruct in one piece
     }
 
     const ReconstructionOptions reconstruction = reconstruction_options(options);
-    // The halo that keeps the stages near a tile edge exact is the least that is safe, and the default. --chunk-halo sets
-    // it: a larger one reads more neighboring points, and also changes the tile size and the points each tile's iso-value
-    // is found from, which moved the surfaces of neighboring tiles apart at their edges in a test on a multibeam survey.
+    // The halo that keeps the stages near a chunk edge exact is the least that is safe, and the default. --chunk-halo sets
+    // it: a larger one reads more neighboring points, and also changes the chunk size and the points each chunk's iso-value
+    // is found from, which moved the surfaces of neighboring chunks apart at their edges in a test on a multibeam survey.
     const double minimum_halo = chunk_halo(reconstruction);
     double halo = minimum_halo;
     if (options.chunk_halo_requested) {
@@ -495,17 +495,17 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
         halo = round_to_cells(options.chunk_halo, cell);
         if (halo < minimum_halo) {
             LOG_WARN("--chunk-halo", options.chunk_halo, "m is less than the", minimum_halo,
-                     "m that the reach of the normal estimation, splatting and trimming needs: the mesh near tile edges may differ from a single run");
+                     "m that the reach of the normal estimation, splatting and trimming needs: the mesh near chunk edges may differ from a single run");
         }
     }
 
-    // Each tile holds its own Poisson grid, so cap the automatic thread count to
+    // Each chunk holds its own Poisson grid, so cap the automatic thread count to
     // keep memory modest. Ask for more with --threads.
     constexpr std::size_t automatic_thread_limit = 4;
     const std::size_t hardware = std::max<std::size_t>(1, std::thread::hardware_concurrency());
     const std::size_t threads = options.threads > 0 ? options.threads : std::min(hardware, automatic_thread_limit);
 
-    double tile_size = 0.0;
+    double chunk_size = 0.0;
     if (options.chunk_size_requested) {
         if (!(options.chunk_size > 0.0) || !std::isfinite(options.chunk_size)) {
             if (error != nullptr) {
@@ -513,46 +513,46 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
             }
             return false;
         }
-        tile_size = round_to_cells(options.chunk_size, cell);
+        chunk_size = round_to_cells(options.chunk_size, cell);
     }
     else {
-        // Pick the largest tile whose grid, including its halo and padding, holds
+        // Pick the largest chunk whose grid, including its halo and padding, holds
         // no more than about target_chunk_grid_cells. The grid is as tall as the
-        // tallest relief inside one tile of that size, measured from the points
+        // tallest relief inside one chunk of that size, measured from the points
         // (or the survey's full depth range if no points are given).
         const double margin = 2.0 * (halo + options.poisson.padding);
-        const double smallest_tile = minimum_auto_chunk_cells * cell;
-        tile_size = maximum_auto_chunk_cells * cell;
-        while (tile_size > smallest_tile) {
-            const double depth = points != nullptr ? tallest_tile(*points, tile_size) : metadata.bounds.size().z;
-            const double side = (tile_size + margin) / cell + 1.0;
+        const double smallest_chunk = minimum_auto_chunk_cells * cell;
+        chunk_size = maximum_auto_chunk_cells * cell;
+        while (chunk_size > smallest_chunk) {
+            const double depth = points != nullptr ? tallest_chunk(*points, chunk_size) : metadata.bounds.size().z;
+            const double side = (chunk_size + margin) / cell + 1.0;
             const double depth_cells = (depth + 2.0 * options.poisson.padding) / cell + 1.0;
             if (side * side * depth_cells <= target_chunk_grid_cells) {
                 break;
             }
-            tile_size = std::max(smallest_tile, round_to_cells(0.85 * tile_size, cell));
+            chunk_size = std::max(smallest_chunk, round_to_cells(0.85 * chunk_size, cell));
         }
 
-        // The memory budget alone can give a few huge tiles, which leaves most
-        // threads idle. Shrink the tile until there are enough tiles to keep
+        // The memory budget alone can give a few huge chunks, which leaves most
+        // threads idle. Shrink the chunk until there are enough chunks to keep
         // every thread busy, down to a floor set by the halo.
-        const double minimum_tile = std::max(minimum_auto_chunk_cells * cell, round_to_cells(minimum_tile_halos * halo, cell));
-        const std::size_t wanted_tiles = static_cast<std::size_t>(std::ceil(target_tiles_per_thread * static_cast<double>(threads)));
-        const auto tile_count = [&](double size) {
-            return points != nullptr ? tiles_occupied(*points, size) : tiles_covering(metadata.bounds, size);
+        const double minimum_chunk = std::max(minimum_auto_chunk_cells * cell, round_to_cells(minimum_chunk_halos * halo, cell));
+        const std::size_t wanted_chunks = static_cast<std::size_t>(std::ceil(target_chunks_per_thread * static_cast<double>(threads)));
+        const auto chunk_count = [&](double size) {
+            return points != nullptr ? chunks_occupied(*points, size) : chunks_covering(metadata.bounds, size);
         };
-        while (tile_size > minimum_tile && tile_count(tile_size) < wanted_tiles) {
-            tile_size = std::max(minimum_tile, round_to_cells(0.85 * tile_size, cell));
+        while (chunk_size > minimum_chunk && chunk_count(chunk_size) < wanted_chunks) {
+            chunk_size = std::max(minimum_chunk, round_to_cells(0.85 * chunk_size, cell));
         }
     }
 
     options.use_chunking = true;
-    options.chunking.tile_size = tile_size;
+    options.chunking.chunk_size = chunk_size;
     options.chunking.halo = halo;
-    options.chunking.single_tile = options.chunk_tile_requested;
-    options.chunking.tile_i = options.chunk_tile_i;
-    options.chunking.tile_j = options.chunk_tile_j;
-    options.chunking.max_tiles = options.max_chunks;
+    options.chunking.single_chunk = options.chunk_requested;
+    options.chunking.chunk_i = options.chunk_i;
+    options.chunking.chunk_j = options.chunk_j;
+    options.chunking.max_chunks = options.max_chunks;
 
     options.chunking.threads = threads;
     return true;
@@ -617,9 +617,9 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
     }
 
     // Soundings that are too many for memory are on disk: their statistics are taken in one pass over the file, and
-    // the tile size from a sample.
+    // the chunk size from a sample.
     const bool spilled = preprocessed->read_result.spilled;
-    const CollectedPointCloud *tile_sample = &preprocessed->read_result.points;
+    const CollectedPointCloud *chunk_sample = &preprocessed->read_result.points;
     if (spilled) {
         const mbmesh::Stopwatch timer;
         LOG_INFO("[input]", "more than " + std::to_string(options.spill_points) + " soundings: " +
@@ -630,7 +630,7 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
         if (!spilled_statistics(preprocessed->read_result, &preprocessed->metadata, &preprocessed->sample, error)) {
             return false;
         }
-        tile_sample = &preprocessed->sample;
+        chunk_sample = &preprocessed->sample;
         LOG_INFO("[input]", "measured the spilled soundings in " + timer.text() + ", " + mbmesh::peak_memory_text());
     }
     else {
@@ -642,7 +642,7 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
     }
 
     apply_spacing_driven_defaults(options, &preprocessed->metadata);
-    if (!resolve_chunking(options, preprocessed->metadata, tile_sample, error)) {
+    if (!resolve_chunking(options, preprocessed->metadata, chunk_sample, error)) {
         return false;
     }
 
@@ -650,7 +650,7 @@ bool preprocess_datalist(Options &options, PreprocessedDatalist *preprocessed, s
     if (spilled && !options.use_chunking && !options.metadata_requested) {
         DatalistReadResult &read_result = preprocessed->read_result;
         read_result.points.reserve(read_result.stats.soundings_accepted);
-        const bool read = read_spill_chunks(read_result.spill_path, ping_origins(read_result), 4000000, [&](CollectedPointCloud &piece, std::size_t) {
+        const bool read = read_spill_pieces(read_result.spill_path, ping_origins(read_result), 4000000, [&](CollectedPointCloud &piece, std::size_t) {
             for (CollectedPoint &point : piece) {
                 point.point = ecef_to_local(point.point, read_result.frame);
             }
@@ -676,7 +676,7 @@ std::filesystem::path work_directory(const Options &options) {
     return options.output_directory / "mbmesh_work";
 }
 
-bool bin_spilled_points(const Options &options, PreprocessedDatalist *preprocessed, TileBins *bins, std::size_t *point_count, std::string *error) {
+bool bin_spilled_points(const Options &options, PreprocessedDatalist *preprocessed, ChunkBins *bins, std::size_t *point_count, std::string *error) {
     DatalistReadResult &read_result = preprocessed->read_result;
     constexpr std::size_t piece_points = 4000000;
 
@@ -691,7 +691,7 @@ bool bin_spilled_points(const Options &options, PreprocessedDatalist *preprocess
     if (options.decimation.decimate) {
         // The voxels are counted from the minimum corner of the bounds, as point_decimation() does, so the points are the same.
         PointDecimator decimator(preprocessed->metadata.bounds.min, options.decimation.cell_size);
-        ok = read_spill_chunks(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t) {
+        ok = read_spill_pieces(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t) {
             to_local(piece);
             for (const CollectedPoint &point : piece) {
                 decimator.add(point);
@@ -709,7 +709,7 @@ bool bin_spilled_points(const Options &options, PreprocessedDatalist *preprocess
         }
     }
     else {
-        ok = read_spill_chunks(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t) {
+        ok = read_spill_pieces(read_result.spill_path, origins, piece_points, [&](CollectedPointCloud &piece, std::size_t) {
             to_local(piece);
             for (const CollectedPoint &point : piece) {
                 if (!bins->add(point, error)) {
@@ -769,14 +769,14 @@ void print_datalist_metadata(const PreprocessedDatalist &preprocessed, const Opt
     std::cout << "  whole_survey_grid_cells: " << grid.cell_count << '\n';
     std::cout << "  chunked: " << (options.use_chunking ? "yes" : "no") << '\n';
     if (options.use_chunking) {
-        const double tile = options.chunking.tile_size;
+        const double chunk = options.chunking.chunk_size;
         const double halo = options.chunking.halo;
-        const double side = (tile + 2.0 * (halo + options.poisson.padding)) / options.poisson.cell_size + 1.0;
-        std::cout << "  tile_size: " << tile << '\n';
+        const double side = (chunk + 2.0 * (halo + options.poisson.padding)) / options.poisson.cell_size + 1.0;
+        std::cout << "  chunk_size: " << chunk << '\n';
         std::cout << "  halo: " << halo << '\n';
-        std::cout << "  tiles_with_points: " << tiles_occupied(preprocessed.read_result.spilled ? preprocessed.sample : preprocessed.read_result.points, tile)
-                  << " (of " << tiles_covering(metadata.bounds, tile) << " in the survey's bounding box)\n";
+        std::cout << "  chunks_with_points: " << chunks_occupied(preprocessed.read_result.spilled ? preprocessed.sample : preprocessed.read_result.points, chunk)
+                  << " (of " << chunks_covering(metadata.bounds, chunk) << " in the survey's bounding box)\n";
         std::cout << "  threads: " << options.chunking.threads << '\n';
-        std::cout << "  tile_grid_columns: " << side * side << '\n';
+        std::cout << "  chunk_grid_columns: " << side * side << '\n';
     }
 }

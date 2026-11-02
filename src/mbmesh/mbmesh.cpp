@@ -123,7 +123,7 @@ struct OutputPlacement {
 };
 
 // The point-based outputs of a survey whose points are on disk hold at most this many points, every nth of them, because
-// they are written from memory (the xyz files are written in full, from the tile files).
+// they are written from memory (the xyz files are written in full, from the chunk files).
 constexpr std::size_t maximum_output_points = 5000000;
 
 // Deletes the temporary files of a run that spilled its soundings to disk, however the run ends.
@@ -132,7 +132,7 @@ struct WorkDirectoryCleanup {
     ~WorkDirectoryCleanup() {
         std::error_code ignored;
         std::filesystem::remove(directory / "soundings.bin", ignored);
-        std::filesystem::remove_all(directory / "tiles", ignored);
+        std::filesystem::remove_all(directory / "chunks", ignored);
         std::filesystem::remove(directory, ignored);   // only if nothing else is in it
     }
 };
@@ -147,7 +147,7 @@ bool write_outputs(
     const OutputPlacement &placement,
     const std::vector<TrackPoint> &track,
     const Options &options,
-    const TileBins *bins,
+    const ChunkBins *bins,
     std::string *error);
 
 void print_html_viewer_command(
@@ -343,7 +343,7 @@ int main(int argc, char **argv) {
             settings << "iterations chosen from the grid size; ";
         }
         if (options.use_chunking) {
-            settings << "chunked reconstruction, tile " << options.chunking.tile_size << " m, halo " << options.chunking.halo << " m, "
+            settings << "chunked reconstruction, chunks of " << options.chunking.chunk_size << " m, halo " << options.chunking.halo << " m, "
                      << options.chunking.threads << " threads";
         } else {
             settings << "single-pass reconstruction";
@@ -414,10 +414,10 @@ int main(int argc, char **argv) {
         {
             std::ostringstream text;
             text << std::setprecision(6) << "chunks: ";
-            if (options.chunk_tile_requested) {
-                text << "only tile " << options.chunk_tile_i << "," << options.chunk_tile_j << " is reconstructed (--chunk)";
+            if (options.chunk_requested) {
+                text << "only chunk " << options.chunk_i << "," << options.chunk_j << " is reconstructed (--chunk)";
             } else {
-                text << "all tiles are reconstructed";
+                text << "all chunks are reconstructed";
             }
             if (options.max_chunks > 0) {
                 text << ", at most " << options.max_chunks << " of them (--max-chunks)";
@@ -450,7 +450,7 @@ int main(int argc, char **argv) {
             if (options.write_local_xyz) outputs.push_back("local XYZ (--local-xyz)");
             if (options.write_ecef_xyz) outputs.push_back("Earth-centered XYZ (--ecef-xyz)");
             if (options.write_oriented_ply) outputs.push_back("oriented PLY (--oriented-ply)");
-            LOG_INFO("[settings]", "outputs, besides mesh.glb and the tiles: " + join(outputs) + "; into " + options.output_directory.string());
+            LOG_INFO("[settings]", "outputs, besides mesh.glb and the chunks: " + join(outputs) + "; into " + options.output_directory.string());
         }
     }
 
@@ -531,13 +531,13 @@ int main(int argc, char **argv) {
         run.normal_search_radius = options.normals.search_radius;
         run.point_spacing = preprocessed.metadata.spacing.median;
         run.chunked = options.use_chunking;
-        run.tile_size = options.chunking.tile_size;
+        run.chunk_size = options.chunking.chunk_size;
         run.halo = options.chunking.halo;
         run.threads = options.use_chunking ? static_cast<std::size_t>(options.chunking.threads) : 1;
     }
     set_glb_run_metadata(run_metadata(run));
 
-    // The OGC 3D Tiles tileset: each tile's surface in the local east-north-up frame, written Y-up as glTF requires,
+    // The OGC 3D Tiles tileset: one tile for each chunk, the surface of the chunk in the local east-north-up frame, written Y-up as glTF requires,
     // and tileset.json, whose root transform is that frame in ECEF. It does not depend on the GeoOrigin.
     std::vector<TilesetTile> tileset_tiles;
     MetaValue tileset_metadata;
@@ -582,8 +582,8 @@ int main(int argc, char **argv) {
     CollectedPointCloud collected_points = std::move(preprocessed.read_result.points);
 
     // ====================================================================================================
-    // Points on disk: a survey with more soundings than fit in memory is sorted into one file per tile, with the
-    // decimation applied on the way, and only the tiles being reconstructed are in memory.
+    // Points on disk: a survey with more soundings than fit in memory is sorted into one file per chunk, with the
+    // decimation applied on the way, and only the chunks being reconstructed are in memory.
     // ====================================================================================================
 
     // Where the soundings are, and how high, for the support trimming to tell a void from the edge of the survey.
@@ -593,25 +593,25 @@ int main(int argc, char **argv) {
         footprint = std::make_unique<CoverageFootprint>(b.min.x, b.min.y, b.max.x, b.max.y, options.void_size / 32.0);
     }
 
-    std::unique_ptr<TileBins> bins;
+    std::unique_ptr<ChunkBins> bins;
     std::size_t binned_points = 0;
     if (preprocessed.read_result.spilled) {
         const Stopwatch binning_timer;
-        bins = std::make_unique<TileBins>(work_directory(options) / "tiles", options.chunking.tile_size, options.chunking.halo);
+        bins = std::make_unique<ChunkBins>(work_directory(options) / "chunks", options.chunking.chunk_size, options.chunking.halo);
         bins->set_footprint(footprint.get());
-        if (options.chunking.single_tile) {
-            bins->keep_only_tile(options.chunking.tile_i, options.chunking.tile_j);
+        if (options.chunking.single_chunk) {
+            bins->keep_only_chunk(options.chunking.chunk_i, options.chunking.chunk_j);
         }
-        if (!options.decimation.decimate && !options.chunking.single_tile) {
-            // Every sounding goes into a tile file, and into the halos of its neighbors too.
-            const double tile = options.chunking.tile_size;
+        if (!options.decimation.decimate && !options.chunking.single_chunk) {
+            // Every sounding goes into a chunk file, and into the halos of its neighbors too.
+            const double chunk = options.chunking.chunk_size;
             const double halo = options.chunking.halo;
             const double need = static_cast<double>(preprocessed.read_result.stats.soundings_accepted) * spilled_point_bytes *
-                                ((tile + 2 * halo) * (tile + 2 * halo)) / (tile * tile);
+                                ((chunk + 2 * halo) * (chunk + 2 * halo)) / (chunk * chunk);
             std::error_code space_error;
             const auto space = std::filesystem::space(work_directory(options), space_error);
             if (!space_error && need > static_cast<double>(space.available)) {
-                LOG_ERROR("the tile files of " + std::to_string(preprocessed.read_result.stats.soundings_accepted) + " soundings need about " +
+                LOG_ERROR("the chunk files of " + std::to_string(preprocessed.read_result.stats.soundings_accepted) + " soundings need about " +
                           mbmesh::format_bytes(need) + " but only " + mbmesh::format_bytes(static_cast<double>(space.available)) +
                           " of disk is free. Average the soundings with --decimate (a cell size in meters near the level of detail, "
                           "which makes the files far smaller), or use -O to put the results on a disk with room");
@@ -623,11 +623,11 @@ int main(int argc, char **argv) {
             return 1;
         }
         std::size_t halo_points = 0;
-        for (const auto &entry : bins->tiles()) {
+        for (const auto &entry : bins->chunks()) {
             halo_points += entry.second.total;
         }
-        LOG_INFO("[binning]", "sorted " + std::to_string(binned_points) + " points into " + std::to_string(bins->tiles().size()) +
-                                  " tile files, " + std::to_string(halo_points) + " points with the halos (" +
+        LOG_INFO("[binning]", "sorted " + std::to_string(binned_points) + " points into " + std::to_string(bins->chunks().size()) +
+                                  " chunk files, " + std::to_string(halo_points) + " points with the halos (" +
                                   mbmesh::format_bytes(static_cast<double>(halo_points) * static_cast<double>(spilled_point_bytes)) + ") in " +
                                   binning_timer.text() + ", " + mbmesh::peak_memory_text());
     }
@@ -641,7 +641,7 @@ int main(int argc, char **argv) {
     CollectedPointCloud decimated_points;
 
     if (bins != nullptr) {
-        LOG_DEBUG("[decimation]", options.decimation.decimate ? "done while sorting the points into tiles" : "disabled");
+        LOG_DEBUG("[decimation]", options.decimation.decimate ? "done while sorting the points into chunks" : "disabled");
     } else if (options.decimation.decimate) {
 
         LOG_DEBUG("[decimation]", "starting: cell_size=" + std::to_string(options.decimation.cell_size));
@@ -701,38 +701,38 @@ int main(int argc, char **argv) {
         const std::size_t output_stride = bins != nullptr ? std::max<std::size_t>(1, (binned_points + maximum_output_points - 1) / maximum_output_points) : 1;
         std::size_t oriented_seen = 0;
 
-        const std::filesystem::path tiles_directory = options.output_directory / "tiles";
+        const std::filesystem::path chunks_directory = options.output_directory / "chunks";
         std::error_code filesystem_error;
-        std::filesystem::create_directories(tiles_directory, filesystem_error);
+        std::filesystem::create_directories(chunks_directory, filesystem_error);
         if (filesystem_error) {
-            LOG_ERROR("error creating tile directory '" + tiles_directory.string() + "': " + filesystem_error.message());
+            LOG_ERROR("error creating chunk directory '" + chunks_directory.string() + "': " + filesystem_error.message());
             return 1;
         }
 
-        const Vec3 tile_offset = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
-        const CoordinateFrame &tile_frame = preprocessed.read_result.frame;
+        const Vec3 chunk_offset = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
+        const CoordinateFrame &chunk_frame = preprocessed.read_result.frame;
 
-        const TileCallback on_tile = [&](TileResult &tile) {
-            const std::string tile_name = "tile_" + std::to_string(tile.i) + "_" + std::to_string(tile.j) + ".glb";
-            std::string tile_error;
-            if (!write_mesh_glb_file(tiles_directory / tile_name, output_mesh(tile.result.mesh, tile_frame, tile_offset), &tile_error,
-                                     GlbContent{"tile", "Surface of one reconstruction tile; the tiles together make mesh.glb", true, tile.i, tile.j})) {
-                LOG_WARN(tile_error);
+        const ChunkCallback on_chunk = [&](ChunkResult &chunk) {
+            const std::string chunk_name = "chunk_" + std::to_string(chunk.i) + "_" + std::to_string(chunk.j) + ".glb";
+            std::string chunk_error;
+            if (!write_mesh_glb_file(chunks_directory / chunk_name, output_mesh(chunk.result.mesh, chunk_frame, chunk_offset), &chunk_error,
+                                     GlbContent{"chunk", "Surface of one reconstruction chunk; the chunks together make mesh.glb", true, chunk.i, chunk.j})) {
+                LOG_WARN(chunk_error);
             }
 
             if (options.write_tileset) {
-                add_tileset_tile(tile.result.mesh, tile.i, tile.j);
+                add_tileset_tile(chunk.result.mesh, chunk.i, chunk.j);
             }
 
-            append_mesh(&clean_mesh, tile.result.mesh);
+            append_mesh(&clean_mesh, chunk.result.mesh);
             if (keep_raw_mesh) {
-                append_mesh(&raw_mesh, tile.result.raw_mesh);
+                append_mesh(&raw_mesh, chunk.result.raw_mesh);
             }
             if (keep_oriented_points) {
                 if (output_stride == 1) {
-                    oriented_points.insert(oriented_points.end(), tile.result.oriented_points.begin(), tile.result.oriented_points.end());
+                    oriented_points.insert(oriented_points.end(), chunk.result.oriented_points.begin(), chunk.result.oriented_points.end());
                 } else {
-                    for (const OrientedPoint &oriented : tile.result.oriented_points) {
+                    for (const OrientedPoint &oriented : chunk.result.oriented_points) {
                         if (oriented_seen++ % output_stride == 0) {
                             oriented_points.push_back(oriented);
                         }
@@ -743,17 +743,17 @@ int main(int argc, char **argv) {
         };
 
         ChunkingStats chunking_stats;
-        const bool reconstructed = bins != nullptr ? reconstruct_chunked(*bins, reconstruction, options.chunking, on_tile, &chunking_stats, &error)
-                                                    : reconstruct_chunked(decimated_points, reconstruction, options.chunking, on_tile, &chunking_stats, &error);
+        const bool reconstructed = bins != nullptr ? reconstruct_chunked(*bins, reconstruction, options.chunking, on_chunk, &chunking_stats, &error)
+                                                    : reconstruct_chunked(decimated_points, reconstruction, options.chunking, on_chunk, &chunking_stats, &error);
         if (!reconstructed) {
             LOG_ERROR(error);
             return 1;
         }
 
-        LOG_INFO("[chunking]", "completed: " + std::to_string(chunking_stats.tiles_processed) + " tiles written, " +
-                        std::to_string(chunking_stats.tiles_failed) + " failed, " +
-                        std::to_string(chunking_stats.tiles_skipped_sparse) + " skipped as sparse, " +
-                        std::to_string(chunking_stats.tiles_empty_after_crop) + " empty");
+        LOG_INFO("[chunking]", "completed: " + std::to_string(chunking_stats.chunks_processed) + " chunks written, " +
+                        std::to_string(chunking_stats.chunks_failed) + " failed, " +
+                        std::to_string(chunking_stats.chunks_skipped_sparse) + " skipped as sparse, " +
+                        std::to_string(chunking_stats.chunks_empty_after_crop) + " empty");
 
         if (clean_mesh.vertices.empty() || clean_mesh.indices.empty()) {
             LOG_ERROR("chunked reconstruction produced no mesh; adjust the level of detail or chunk size");
@@ -783,7 +783,7 @@ int main(int argc, char **argv) {
 
     PointCloud output_points;
     if (bins != nullptr) {
-        // Every nth point, from the tile files, for the outputs that are written from memory.
+        // Every nth point, from the chunk files, for the outputs that are written from memory.
         const std::size_t stride = std::max<std::size_t>(1, (binned_points + maximum_output_points - 1) / maximum_output_points);
         std::size_t seen = 0;
         const bool needed = options.write_pointcloud_glb || options.write_origin_glb;
@@ -1127,11 +1127,11 @@ Options parse_options(int argc, char **argv) {
         }
 
         case 1014: {
-            int tile_i = 0, tile_j = 0;
-            if (std::sscanf(optarg, "%d,%d", &tile_i, &tile_j) == 2) {
-                options.chunk_tile_i = tile_i;
-                options.chunk_tile_j = tile_j;
-                options.chunk_tile_requested = true;
+            int chunk_i = 0, chunk_j = 0;
+            if (std::sscanf(optarg, "%d,%d", &chunk_i, &chunk_j) == 2) {
+                options.chunk_i = chunk_i;
+                options.chunk_j = chunk_j;
+                options.chunk_requested = true;
             } else {
                 LOG_ERROR("invalid --chunk argument (expected I,J): " + std::string(optarg));
                 std::exit(1);
@@ -1324,18 +1324,18 @@ void print_usage() {
     std::cout << "                               heights of the viewpoints, --geoviewpoint ones too, are raised by the same amount.\n";
     std::cout << "                               For seafloor data, whose negative heights parts of X3DOM's GeoTileset do not handle;\n";
     std::cout << "                               use more than the greatest depth. Copy GeoViewpoint takes the lift off again\n";
-    std::cout << "      --chunk-size <meters>    Reconstruct in square tiles of about this size, writing tiles/tile_I_J.glb\n";
+    std::cout << "      --chunk-size <meters>    Reconstruct in square chunks of about this size, writing chunks/chunk_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";
-    std::cout << "      --chunk-halo <meters>    Neighboring points each tile reads beyond its edge [what the normal estimation, splatting\n";
-    std::cout << "                               and trimming need]. Less than that is allowed, with a warning; more changes the tile size\n";
-    std::cout << "      --chunk <i,j>            Reconstruct only tile (i,j); tile (i,j) covers x in [i*size,(i+1)*size)\n";
+    std::cout << "      --chunk-halo <meters>    Neighboring points each chunk reads beyond its edge [what the normal estimation, splatting\n";
+    std::cout << "                               and trimming need]. Less than that is allowed, with a warning; more changes the chunk size\n";
+    std::cout << "      --chunk <i,j>            Reconstruct only chunk (i,j); chunk (i,j) covers x in [i*size,(i+1)*size)\n";
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
-    std::cout << "      --max-chunks <n>         Stop after n tiles (for testing)\n";
-    std::cout << "      --threads <n>            Tiles reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
+    std::cout << "      --max-chunks <n>         Stop after n chunks (for testing)\n";
+    std::cout << "      --threads <n>            Chunks reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
     std::cout << "      --spill-points <n>       A survey of more than n soundings [50000000] is not held in memory: the soundings go to a\n";
-    std::cout << "                               file in mbmesh_work, beside the results, and are sorted into one file per tile, so that\n";
-    std::cout << "                               memory follows the size of a tile, not of the survey; 0 always does. Needs chunking, which\n";
+    std::cout << "                               file in mbmesh_work, beside the results, and are sorted into one file per chunk, so that\n";
+    std::cout << "                               memory follows the size of a chunk, not of the survey; 0 always does. Needs chunking, which\n";
     std::cout << "                               it turns on for such a survey. The point outputs then hold at most 5 million points\n";
     std::cout << "      --void-size <m>          Put back voids of up to this many meters across [2] that support trimming would remove from\n";
     std::cout << "                               inside the surface: where the soundings thin out, in the depressions of the seafloor and\n";
@@ -1377,7 +1377,7 @@ void print_usage() {
     std::cout << "Survey page: when -I names a directory, for example a survey directory with multibeam and lidar\n";
     std::cout << "subdirectories, mbmesh reconstructs nothing. It writes mbmesh_survey.html in the current directory,\n";
     std::cout << "a viewer page with a check box for every .glb file beneath that directory, in accordions that mirror\n";
-    std::cout << "its layout (the tiles of a tileset are left out; its tileset.json is offered; the track.glb files start switched on). Run it where a\n";
+    std::cout << "its layout (the chunk files and the tiles of a tileset are left out; its tileset.json is offered; the track.glb files start switched on). Run it where a\n";
     std::cout << "web server will serve the directory, and the page loads the GLBs by relative path. The page\n";
     std::cout << "has an overview viewpoint over all the mbmesh GLBs found, with the GeoOrigin of the first, so GLBs from runs with another GeoOrigin\n";
     std::cout << "do not line up with it; each is logged as an ERROR. --geoviewpoint adds GeoViewpoints to its Viewpoint menu, as it does with --html;\n";
@@ -1416,7 +1416,7 @@ bool write_outputs(
     const OutputPlacement &placement,
     const std::vector<TrackPoint> &track,
     const Options &options,
-    const TileBins *bins,
+    const ChunkBins *bins,
     std::string *error)
 {
     const Vec3 offset = placement.use_geoorigin ? geodetic_to_ecef(placement.geoorigin) : Vec3(0.0, 0.0, 0.0);
@@ -1438,7 +1438,7 @@ bool write_outputs(
         return false;
     }
 
-    // The xyz files hold every point. When the points are on disk they are written a tile at a time.
+    // The xyz files hold every point. When the points are on disk they are written a chunk at a time.
     const auto write_xyz = [&](const std::filesystem::path &path, bool ecef) {
         if (bins == nullptr) {
             return ecef ? write_ecef_xyz_pointcloud(points, frame, path.string(), error) : write_local_xyz_pointcloud(points, path.string(), error);
@@ -1446,13 +1446,13 @@ bool write_outputs(
         bool first = true;
         bool ok = true;
         const bool read = bins->for_each_owned([&](const CollectedPointCloud &owned) {
-            PointCloud tile_points;
-            tile_points.reserve(owned.size());
+            PointCloud chunk_points;
+            chunk_points.reserve(owned.size());
             for (const CollectedPoint &point : owned) {
-                tile_points.push_back(point.point);
+                chunk_points.push_back(point.point);
             }
-            ok = ecef ? write_ecef_xyz_pointcloud(tile_points, frame, path.string(), error, !first)
-                      : write_local_xyz_pointcloud(tile_points, path.string(), error, !first);
+            ok = ecef ? write_ecef_xyz_pointcloud(chunk_points, frame, path.string(), error, !first)
+                      : write_local_xyz_pointcloud(chunk_points, path.string(), error, !first);
             first = false;
             return ok;
         }, error);

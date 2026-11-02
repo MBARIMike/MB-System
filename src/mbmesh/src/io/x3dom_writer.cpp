@@ -669,8 +669,9 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
         const std::filesystem::path &path = it->path();
         const std::string name = path.filename().string();
         if (it->is_directory(filesystem_error)) {
-            // The tiles of a tileset repeat mesh.glb, and a tileset can have hundreds.
-            if (name == "tiles" || (!name.empty() && name[0] == '.')) {
+            // The chunk files repeat mesh.glb, and there can be hundreds ("tiles" is what the directory was called before it was
+            // called "chunks", so that old output is still left out).
+            if (name == "chunks" || name == "tiles" || (!name.empty() && name[0] == '.')) {
                 it.disable_recursion_pending();
             }
             continue;
@@ -1365,7 +1366,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                                           lift_center.str() + "' translation='0 " + lift_translation + " 0'>\n"
                                 : "          <transform id='transform_" + std::to_string(i) + "'>\n");
         if (model.is_tileset) {
-            // Written whether or not it is shown: tiles are only loaded while the switch shows it.
+            // Written whether or not it is shown: chunks are only loaded while the switch shows it.
             output << "            <GeoTileset id='tileset_" << i << "' url='&quot;" << escape_html(model.uri) << "&quot;'>";
             if (options.use_geoorigin) {
                 output << "\n              <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n            ";

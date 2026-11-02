@@ -119,7 +119,7 @@ bool PointSpill::finish(std::string *error) {
     return ok;
 }
 
-bool read_spill_chunks(const std::filesystem::path &path, const std::vector<Vec3> &origins, std::size_t chunk_points, const SpillChunkCallback &callback,
+bool read_spill_pieces(const std::filesystem::path &path, const std::vector<Vec3> &origins, std::size_t piece_points, const SpillPieceCallback &callback,
                        std::string *error) {
     std::FILE *file = std::fopen(path.string().c_str(), "rb");
     if (file == nullptr) {
@@ -128,31 +128,31 @@ bool read_spill_chunks(const std::filesystem::path &path, const std::vector<Vec3
     }
     const FileCloser closer(file);
 
-    chunk_points = std::max<std::size_t>(1, chunk_points);
-    std::vector<unsigned char> bytes(chunk_points * spill_record_bytes);
-    CollectedPointCloud chunk;
+    piece_points = std::max<std::size_t>(1, piece_points);
+    std::vector<unsigned char> bytes(piece_points * spill_record_bytes);
+    CollectedPointCloud piece;
     std::size_t first = 0;
     while (true) {
-        const std::size_t got = std::fread(bytes.data(), spill_record_bytes, chunk_points, file);
-        if (got < chunk_points && std::ferror(file)) {
+        const std::size_t got = std::fread(bytes.data(), spill_record_bytes, piece_points, file);
+        if (got < piece_points && std::ferror(file)) {
             set_error(error, "error reading the file of spilled soundings '" + path.string() + "': " + errno_text());
             return false;
         }
         if (got == 0) {
             return true;
         }
-        chunk.resize(got);
+        piece.resize(got);
         for (std::size_t n = 0; n < got; n++) {
-            if (!decode_record(bytes.data() + n * spill_record_bytes, origins, &chunk[n])) {
+            if (!decode_record(bytes.data() + n * spill_record_bytes, origins, &piece[n])) {
                 set_error(error, "the file of spilled soundings '" + path.string() + "' names a ping that the track does not have, at sounding " + std::to_string(first + n));
                 return false;
             }
         }
-        if (!callback(chunk, first)) {
+        if (!callback(piece, first)) {
             return true;
         }
         first += got;
-        if (got < chunk_points) {
+        if (got < piece_points) {
             return true;
         }
     }
@@ -189,22 +189,22 @@ bool read_spill_range(const std::filesystem::path &path, const std::vector<Vec3>
     return true;
 }
 
-TileBins::TileBins(const std::filesystem::path &directory, double tile_size, double halo, std::size_t memory_points)
-    : directory_(directory), tile_size_(tile_size), halo_(halo), memory_points_(std::max<std::size_t>(1, memory_points)) {}
+ChunkBins::ChunkBins(const std::filesystem::path &directory, double chunk_size, double halo, std::size_t memory_points)
+    : directory_(directory), chunk_size_(chunk_size), halo_(halo), memory_points_(std::max<std::size_t>(1, memory_points)) {}
 
-TileBins::~TileBins() = default;
+ChunkBins::~ChunkBins() = default;
 
-std::filesystem::path TileBins::tile_path(int i, int j) const {
-    return directory_ / ("tile_" + std::to_string(i) + "_" + std::to_string(j) + ".bin");
+std::filesystem::path ChunkBins::chunk_path(int i, int j) const {
+    return directory_ / ("chunk_" + std::to_string(i) + "_" + std::to_string(j) + ".bin");
 }
 
-bool TileBins::open(std::string *error) {
+bool ChunkBins::open(std::string *error) {
     std::error_code filesystem_error;
     std::filesystem::remove_all(directory_, filesystem_error);
     filesystem_error.clear();
     std::filesystem::create_directories(directory_, filesystem_error);
     if (filesystem_error) {
-        set_error(error, "unable to create the directory of tile files '" + directory_.string() + "': " + filesystem_error.message());
+        set_error(error, "unable to create the directory of chunk files '" + directory_.string() + "': " + filesystem_error.message());
         return false;
     }
     counts_.clear();
@@ -213,15 +213,15 @@ bool TileBins::open(std::string *error) {
     return true;
 }
 
-bool TileBins::add(const CollectedPoint &point, std::string *error) {
-    for_each_tile_of_point(point.point.x, point.point.y, tile_size_, halo_, [&](int i, int j, bool owned) {
+bool ChunkBins::add(const CollectedPoint &point, std::string *error) {
+    for_each_chunk_of_point(point.point.x, point.point.y, chunk_size_, halo_, [&](int i, int j, bool owned) {
         if (owned && footprint_ != nullptr) {
             footprint_->add(point.point.x, point.point.y, point.point.z);
         }
-        if (only_tile_ && (i != only_i_ || j != only_j_)) {
+        if (only_chunk_ && (i != only_i_ || j != only_j_)) {
             return;
         }
-        TileBinCount &count = counts_[{i, j}];
+        ChunkBinCount &count = counts_[{i, j}];
         count.total++;
         if (owned) {
             count.owned++;
@@ -232,22 +232,22 @@ bool TileBins::add(const CollectedPoint &point, std::string *error) {
     return buffered_ < memory_points_ || flush(error);
 }
 
-bool TileBins::flush(std::string *error) {
+bool ChunkBins::flush(std::string *error) {
     for (auto &entry : buffers_) {
         CollectedPointCloud &buffer = entry.second;
         if (buffer.empty()) {
             continue;
         }
-        const std::filesystem::path path = tile_path(entry.first.first, entry.first.second);
+        const std::filesystem::path path = chunk_path(entry.first.first, entry.first.second);
         std::FILE *file = std::fopen(path.string().c_str(), "ab");
         if (file == nullptr) {
-            set_error(error, "unable to open the tile file '" + path.string() + "': " + errno_text());
+            set_error(error, "unable to open the chunk file '" + path.string() + "': " + errno_text());
             return false;
         }
         const std::size_t written = std::fwrite(buffer.data(), spilled_point_bytes, buffer.size(), file);
         const bool closed = std::fclose(file) == 0;
         if (written != buffer.size() || !closed) {
-            set_error(error, "error writing the tile file '" + path.string() + "': " + errno_text() + " (is the disk full?)");
+            set_error(error, "error writing the chunk file '" + path.string() + "': " + errno_text() + " (is the disk full?)");
             return false;
         }
         buffer.clear();
@@ -256,7 +256,7 @@ bool TileBins::flush(std::string *error) {
     return true;
 }
 
-bool TileBins::finish(std::string *error) {
+bool ChunkBins::finish(std::string *error) {
     if (!flush(error)) {
         return false;
     }
@@ -264,7 +264,7 @@ bool TileBins::finish(std::string *error) {
     return true;
 }
 
-std::size_t TileBins::owned_point_count() const {
+std::size_t ChunkBins::owned_point_count() const {
     std::size_t total = 0;
     for (const auto &entry : counts_) {
         total += entry.second.owned;
@@ -272,30 +272,30 @@ std::size_t TileBins::owned_point_count() const {
     return total;
 }
 
-bool TileBins::read_tile(int i, int j, CollectedPointCloud *points, std::string *error) const {
+bool ChunkBins::read_chunk(int i, int j, CollectedPointCloud *points, std::string *error) const {
     points->clear();
     const auto found = counts_.find({i, j});
     if (found == counts_.end() || found->second.total == 0) {
         return true;
     }
-    const std::filesystem::path path = tile_path(i, j);
+    const std::filesystem::path path = chunk_path(i, j);
     std::FILE *file = std::fopen(path.string().c_str(), "rb");
     if (file == nullptr) {
-        set_error(error, "unable to open the tile file '" + path.string() + "': " + errno_text());
+        set_error(error, "unable to open the chunk file '" + path.string() + "': " + errno_text());
         return false;
     }
     const FileCloser closer(file);
     points->resize(found->second.total);
     if (std::fread(points->data(), spilled_point_bytes, points->size(), file) != points->size()) {
         points->clear();
-        set_error(error, "the tile file '" + path.string() + "' is shorter than the " + std::to_string(found->second.total) + " points it should hold");
+        set_error(error, "the chunk file '" + path.string() + "' is shorter than the " + std::to_string(found->second.total) + " points it should hold");
         return false;
     }
     return true;
 }
 
-bool TileBins::for_each_owned(const std::function<bool(const CollectedPointCloud &)> &callback, std::string *error) const {
-    CollectedPointCloud tile_points;
+bool ChunkBins::for_each_owned(const std::function<bool(const CollectedPointCloud &)> &callback, std::string *error) const {
+    CollectedPointCloud chunk_points;
     CollectedPointCloud owned;
     for (const auto &entry : counts_) {
         if (entry.second.owned == 0) {
@@ -303,13 +303,13 @@ bool TileBins::for_each_owned(const std::function<bool(const CollectedPointCloud
         }
         const int i = entry.first.first;
         const int j = entry.first.second;
-        if (!read_tile(i, j, &tile_points, error)) {
+        if (!read_chunk(i, j, &chunk_points, error)) {
             return false;
         }
         owned.clear();
-        for (const CollectedPoint &point : tile_points) {
-            if (point.point.x >= i * tile_size_ && point.point.x < (i + 1) * tile_size_ && point.point.y >= j * tile_size_ &&
-                point.point.y < (j + 1) * tile_size_) {
+        for (const CollectedPoint &point : chunk_points) {
+            if (point.point.x >= i * chunk_size_ && point.point.x < (i + 1) * chunk_size_ && point.point.y >= j * chunk_size_ &&
+                point.point.y < (j + 1) * chunk_size_) {
                 owned.push_back(point);
             }
         }
@@ -320,7 +320,7 @@ bool TileBins::for_each_owned(const std::function<bool(const CollectedPointCloud
     return true;
 }
 
-void TileBins::remove() {
+void ChunkBins::remove() {
     buffers_.clear();
     buffered_ = 0;
     std::error_code filesystem_error;

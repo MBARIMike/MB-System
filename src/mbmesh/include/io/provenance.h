@@ -98,7 +98,7 @@ struct RunInfo {
     double normal_search_radius = 0.0;
     double point_spacing = 0.0;   // median nearest-neighbor distance
     bool chunked = false;
-    double tile_size = 0.0;
+    double chunk_size = 0.0;
     double halo = 0.0;
     std::size_t threads = 1;
 };
@@ -115,11 +115,11 @@ constexpr std::size_t maximum_listed_files = 1000;
 
 // What one GLB holds, added to the run metadata under "MB-System.content".
 struct GlbContent {
-    std::string role;          // "mesh", "raw_mesh", "tile", "pointcloud", "normals", "origin_rays" or "track"
+    std::string role;          // "mesh", "raw_mesh", "chunk", "pointcloud", "normals", "origin_rays" or "track"
     std::string description;
-    bool is_tile = false;
-    int tile_i = 0;
-    int tile_j = 0;
+    bool has_index = false;   // a chunk or a tile of a tileset, with its index
+    int index_i = 0;
+    int index_j = 0;
     // Metadata to write in place of the run metadata that set_glb_run_metadata() set, for a file whose
     // georeference differs, such as a tileset's content. The content of this file is added to it.
     const MetaValue *metadata = nullptr;

@@ -217,9 +217,9 @@ class MbmeshTest(unittest.TestCase):
     cmd = os.path.abspath(self.cmd)
     with tempfile.TemporaryDirectory() as work:
       survey = os.path.join(work, '20260101A')
-      os.makedirs(os.path.join(survey, 'multibeam', 'mbmesh_output', 'tiles'))
+      os.makedirs(os.path.join(survey, 'multibeam', 'mbmesh_output', 'chunks'))
       os.makedirs(os.path.join(survey, 'lidar'))
-      for name in ('multibeam/mbmesh_output/mesh.glb', 'multibeam/mbmesh_output/tiles/t.glb', 'lidar/l.glb'):
+      for name in ('multibeam/mbmesh_output/mesh.glb', 'multibeam/mbmesh_output/chunks/t.glb', 'lidar/l.glb'):
         with open(os.path.join(survey, name), 'wb') as f:
           f.write(b'glTF' + struct.pack('<III', 2, 28, 0))
       # Without -O the output directory is beside the datalist

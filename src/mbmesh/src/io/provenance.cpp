@@ -269,7 +269,7 @@ MetaValue program_block(const RunInfo &run) {
     reconstruction.set("pointSpacing", MetaValue::from_number(run.point_spacing));
     reconstruction.set("mode", MetaValue::from_string(run.chunked ? "chunked" : "singlePass"));
     if (run.chunked) {
-        reconstruction.set("tileSize", MetaValue::from_number(run.tile_size));
+        reconstruction.set("chunkSize", MetaValue::from_number(run.chunk_size));
         reconstruction.set("halo", MetaValue::from_number(run.halo));
         reconstruction.set("threads", MetaValue::from_number(static_cast<double>(run.threads)));
     }
@@ -323,11 +323,12 @@ MetaValue content_metadata(const GlbContent &content) {
     MetaValue block = MetaValue::make_object();
     block.set("role", MetaValue::from_string(content.role));
     block.set("description", MetaValue::from_string(content.description));
-    if (content.is_tile) {
-        MetaValue tile = MetaValue::make_array();
-        tile.add(MetaValue::from_number(content.tile_i));
-        tile.add(MetaValue::from_number(content.tile_j));
-        block.set("tile", tile);
+    if (content.has_index) {
+        // The name in the file is the word of the thing: a tileset's files hold tiles, the others chunks.
+        MetaValue index = MetaValue::make_array();
+        index.add(MetaValue::from_number(content.index_i));
+        index.add(MetaValue::from_number(content.index_j));
+        block.set(content.role == "tileset_tile" ? "tile" : "chunk", index);
     }
     return block;
 }

@@ -13,7 +13,7 @@
 namespace {
 
 constexpr double survey_size = 30.0;     // meters, square
-constexpr double tile_size = 10.0;       // meters, 3 x 3 tiles
+constexpr double chunk_size = 10.0;       // meters, 3 x 3 chunks
 constexpr double sample_spacing = 0.25;
 
 double surface_height(double x, double y) {
@@ -121,10 +121,10 @@ int main() {
         Mesh square;
         square.vertices = {Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0), Vec3(5, 5, 0), Vec3(6, 5, 0), Vec3(6, 6, 0)};
         square.indices = {0, 1, 2, 0, 2, 3, 4, 5, 6};
-        const Mesh cropped = crop_mesh_to_tile(square, 0.0, 2.0, 0.0, 2.0);
-        ok &= check(cropped.indices.size() == 6 && cropped.vertices.size() == 4, "crop keeps only triangles whose centroid is in the tile");
-        const Mesh edge = crop_mesh_to_tile(square, 1.0, 2.0, 0.0, 2.0);
-        ok &= check(edge.indices.empty() || edge.indices.size() == 3, "crop uses a half-open tile");
+        const Mesh cropped = crop_mesh_to_chunk(square, 0.0, 2.0, 0.0, 2.0);
+        ok &= check(cropped.indices.size() == 6 && cropped.vertices.size() == 4, "crop keeps only triangles whose centroid is in the chunk");
+        const Mesh edge = crop_mesh_to_chunk(square, 1.0, 2.0, 0.0, 2.0);
+        ok &= check(edge.indices.empty() || edge.indices.size() == 3, "crop uses a half-open chunk");
     }
 
     // ---- one run over the whole survey
@@ -212,43 +212,43 @@ int main() {
     std::printf("whole survey: %zu vertices, %zu triangles, max height error %.3f m\n",
                 whole.mesh.vertices.size(), whole.mesh.indices.size() / 3, whole_error);
 
-    // ---- the same survey in tiles
+    // ---- the same survey in chunks
     ChunkingOptions chunking;
-    chunking.tile_size = tile_size;
+    chunking.chunk_size = chunk_size;
     chunking.halo = halo;
 
     Mesh merged;
-    std::vector<TileResult> tile_meshes;
+    std::vector<ChunkResult> chunk_meshes;
     ChunkingStats stats;
     std::string error;
     const bool chunked_ok = reconstruct_chunked(
         points, options, chunking,
-        [&](TileResult &tile) {
-            append(&merged, tile.result.mesh);
-            tile_meshes.push_back(tile);
+        [&](ChunkResult &chunk) {
+            append(&merged, chunk.result.mesh);
+            chunk_meshes.push_back(chunk);
             return true;
         },
         &stats, &error);
     ok &= check(chunked_ok, "chunked reconstruction succeeds: " + error);
-    ok &= check(stats.tiles_processed == 9, "a 30 m survey in 10 m tiles gives 3 x 3 tiles, got " + std::to_string(stats.tiles_processed));
-    ok &= check(stats.tiles_failed == 0 && stats.tiles_skipped_sparse == 0, "no tile fails or is skipped");
-    ok &= check(!tile_meshes.empty() && std::all_of(tile_meshes.begin(), tile_meshes.end(), [](const TileResult &tile) {
-                    return tile.result.times.poisson > 0.0;
+    ok &= check(stats.chunks_processed == 9, "a 30 m survey in 10 m chunks gives 3 x 3 chunks, got " + std::to_string(stats.chunks_processed));
+    ok &= check(stats.chunks_failed == 0 && stats.chunks_skipped_sparse == 0, "no chunk fails or is skipped");
+    ok &= check(!chunk_meshes.empty() && std::all_of(chunk_meshes.begin(), chunk_meshes.end(), [](const ChunkResult &chunk) {
+                    return chunk.result.times.poisson > 0.0;
                 }),
-                "every delivered tile carries its stage times");
+                "every delivered chunk carries its stage times");
 
     const double chunked_error = max_height_error(merged);
-    std::printf("chunked:      %zu vertices, %zu triangles, max height error %.3f m (%zu tiles)\n",
-                merged.vertices.size(), merged.indices.size() / 3, chunked_error, stats.tiles_processed);
+    std::printf("chunked:      %zu vertices, %zu triangles, max height error %.3f m (%zu chunks)\n",
+                merged.vertices.size(), merged.indices.size() / 3, chunked_error, stats.chunks_processed);
 
-    // Tiling must not make the surface noticeably worse than one run does.
+    // Chunking must not make the surface noticeably worse than one run does.
     ok &= check(chunked_error <= whole_error + 0.5 * options.poisson.cell_size,
                 "chunked surface is as accurate as the whole-survey surface (" + std::to_string(chunked_error) +
                     " vs " + std::to_string(whole_error) + ")");
 
-    // Each tile owns only triangles whose centroids lie inside it.
-    for (const TileResult &tile : tile_meshes) {
-        const Mesh &mesh = tile.result.mesh;
+    // Each chunk owns only triangles whose centroids lie inside it.
+    for (const ChunkResult &chunk : chunk_meshes) {
+        const Mesh &mesh = chunk.result.mesh;
         bool inside = true;
         for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
             const Vec3 &a = mesh.vertices[mesh.indices[t]];
@@ -256,10 +256,10 @@ int main() {
             const Vec3 &c = mesh.vertices[mesh.indices[t + 2]];
             const double cx = (a.x + b.x + c.x) / 3.0;
             const double cy = (a.y + b.y + c.y) / 3.0;
-            inside = inside && cx >= tile.i * tile_size && cx < (tile.i + 1) * tile_size &&
-                     cy >= tile.j * tile_size && cy < (tile.j + 1) * tile_size;
+            inside = inside && cx >= chunk.i * chunk_size && cx < (chunk.i + 1) * chunk_size &&
+                     cy >= chunk.j * chunk_size && cy < (chunk.j + 1) * chunk_size;
         }
-        ok &= check(inside, "tile " + std::to_string(tile.i) + "," + std::to_string(tile.j) + " owns only triangles inside it");
+        ok &= check(inside, "chunk " + std::to_string(chunk.i) + "," + std::to_string(chunk.j) + " owns only triangles inside it");
     }
 
     // No gaps: sample points away from the survey's outer edge, including
@@ -286,27 +286,27 @@ int main() {
         }
     }
     std::printf("coverage:     %d of %d interior samples uncovered\n", uncovered, samples);
-    ok &= check(uncovered == 0, "merged tiles leave no gaps in the interior");
+    ok &= check(uncovered == 0, "merged chunks leave no gaps in the interior");
 
-    // The thread count must not change the result: same tiles, in the same
+    // The thread count must not change the result: same chunks, in the same
     // order, with identical meshes.
     {
         ChunkingOptions threaded = chunking;
         threaded.threads = 4;
         std::vector<std::pair<int, int>> order;
         Mesh threaded_merged;
-        ok &= check(reconstruct_chunked(points, options, threaded, [&](TileResult &tile) {
-                        order.push_back({tile.i, tile.j});
-                        append(&threaded_merged, tile.result.mesh);
+        ok &= check(reconstruct_chunked(points, options, threaded, [&](ChunkResult &chunk) {
+                        order.push_back({chunk.i, chunk.j});
+                        append(&threaded_merged, chunk.result.mesh);
                         return true;
                     }, &stats, &error),
                     "threaded chunked reconstruction succeeds: " + error);
 
-        bool same_order = order.size() == tile_meshes.size();
+        bool same_order = order.size() == chunk_meshes.size();
         for (std::size_t n = 0; same_order && n < order.size(); n++) {
-            same_order = order[n].first == tile_meshes[n].i && order[n].second == tile_meshes[n].j;
+            same_order = order[n].first == chunk_meshes[n].i && order[n].second == chunk_meshes[n].j;
         }
-        ok &= check(same_order, "tiles are delivered in tile order whatever the thread count");
+        ok &= check(same_order, "chunks are delivered in chunk order whatever the thread count");
 
         bool same_mesh = threaded_merged.vertices.size() == merged.vertices.size() &&
                          threaded_merged.indices == merged.indices;
@@ -319,84 +319,84 @@ int main() {
 
         // Stopping from the callback stops the run.
         std::size_t seen = 0;
-        ok &= check(reconstruct_chunked(points, options, threaded, [&](TileResult &) {
+        ok &= check(reconstruct_chunked(points, options, threaded, [&](ChunkResult &) {
                         seen++;
                         return false;
                     }, &stats, &error) && seen == 1,
                     "a callback returning false stops processing");
     }
 
-    // Single-tile and tile-count limits.
+    // Single-chunk and chunk-count limits.
     {
         ChunkingOptions one = chunking;
-        one.single_tile = true;
-        one.tile_i = 1;
-        one.tile_j = 1;
+        one.single_chunk = true;
+        one.chunk_i = 1;
+        one.chunk_j = 1;
         std::size_t seen = 0;
-        ok &= check(reconstruct_chunked(points, options, one, [&](TileResult &tile) {
+        ok &= check(reconstruct_chunked(points, options, one, [&](ChunkResult &chunk) {
                         seen++;
-                        return tile.i == 1 && tile.j == 1;
+                        return chunk.i == 1 && chunk.j == 1;
                     }, &stats, &error) && seen == 1,
-                    "--chunk selects exactly one tile");
+                    "--chunk selects exactly one chunk");
 
         ChunkingOptions limited = chunking;
-        limited.max_tiles = 2;
+        limited.max_chunks = 2;
         seen = 0;
-        ok &= check(reconstruct_chunked(points, options, limited, [&](TileResult &) {
+        ok &= check(reconstruct_chunked(points, options, limited, [&](ChunkResult &) {
                         seen++;
                         return true;
                     }, &stats, &error) && seen == 2,
-                    "--max-chunks limits the number of tiles");
+                    "--max-chunks limits the number of chunks");
     }
 
-    // The same survey from tile files on disk gives the same tiles as from memory.
+    // The same survey from chunk files on disk gives the same chunks as from memory.
     {
         const std::filesystem::path directory = std::filesystem::temp_directory_path() / ("mbmesh_test_chunking_bins_" + std::to_string(getpid()));
-        TileBins bins(directory, tile_size, halo, 1000);   // a small buffer, so that the tile files are appended to several times
+        ChunkBins bins(directory, chunk_size, halo, 1000);   // a small buffer, so that the chunk files are appended to several times
         std::string bins_error;
         bool binned = bins.open(&bins_error);
         for (const CollectedPoint &point : points) {
             binned = binned && bins.add(point, &bins_error);
         }
         binned = binned && bins.finish(&bins_error);
-        ok &= check(binned, "the points can be sorted into tile files: " + bins_error);
-        ok &= check(bins.owned_point_count() == points.size(), "the tile files own every point once");
+        ok &= check(binned, "the points can be sorted into chunk files: " + bins_error);
+        ok &= check(bins.owned_point_count() == points.size(), "the chunk files own every point once");
 
-        std::vector<TileResult> memory_tiles;
-        ok &= check(reconstruct_chunked(points, options, chunking, [&](TileResult &tile) {
-                        memory_tiles.push_back(tile);
+        std::vector<ChunkResult> memory_chunks;
+        ok &= check(reconstruct_chunked(points, options, chunking, [&](ChunkResult &chunk) {
+                        memory_chunks.push_back(chunk);
                         return true;
                     }, &stats, &error), "chunked reconstruction from memory succeeds: " + error);
-        std::vector<TileResult> disk_tiles;
+        std::vector<ChunkResult> disk_chunks;
         ChunkingStats disk_stats;
-        ok &= check(reconstruct_chunked(bins, options, chunking, [&](TileResult &tile) {
-                        disk_tiles.push_back(tile);
+        ok &= check(reconstruct_chunked(bins, options, chunking, [&](ChunkResult &chunk) {
+                        disk_chunks.push_back(chunk);
                         return true;
-                    }, &disk_stats, &error), "chunked reconstruction from tile files succeeds: " + error);
-        ok &= check(disk_stats.tiles_processed == stats.tiles_processed && disk_tiles.size() == memory_tiles.size(),
-                    "tile files give the same number of tiles as memory");
-        bool same = disk_tiles.size() == memory_tiles.size();
-        for (std::size_t n = 0; same && n < disk_tiles.size(); n++) {
-            const Mesh &a = disk_tiles[n].result.mesh;
-            const Mesh &b = memory_tiles[n].result.mesh;
-            same = disk_tiles[n].i == memory_tiles[n].i && disk_tiles[n].j == memory_tiles[n].j &&
-                   disk_tiles[n].input_points == memory_tiles[n].input_points && a.indices == b.indices && a.vertices.size() == b.vertices.size();
+                    }, &disk_stats, &error), "chunked reconstruction from chunk files succeeds: " + error);
+        ok &= check(disk_stats.chunks_processed == stats.chunks_processed && disk_chunks.size() == memory_chunks.size(),
+                    "chunk files give the same number of chunks as memory");
+        bool same = disk_chunks.size() == memory_chunks.size();
+        for (std::size_t n = 0; same && n < disk_chunks.size(); n++) {
+            const Mesh &a = disk_chunks[n].result.mesh;
+            const Mesh &b = memory_chunks[n].result.mesh;
+            same = disk_chunks[n].i == memory_chunks[n].i && disk_chunks[n].j == memory_chunks[n].j &&
+                   disk_chunks[n].input_points == memory_chunks[n].input_points && a.indices == b.indices && a.vertices.size() == b.vertices.size();
             for (std::size_t v = 0; same && v < a.vertices.size(); v++) {
                 same = a.vertices[v].x == b.vertices[v].x && a.vertices[v].y == b.vertices[v].y && a.vertices[v].z == b.vertices[v].z;
             }
         }
-        ok &= check(same, "tiles reconstructed from tile files are identical to those from memory");
+        ok &= check(same, "chunks reconstructed from chunk files are identical to those from memory");
 
-        // --chunk from tile files keeps one tile, as from memory.
-        TileBins one_bins(directory / "one", tile_size, halo);
-        one_bins.keep_only_tile(1, 1);
+        // --chunk from chunk files keeps one chunk, as from memory.
+        ChunkBins one_bins(directory / "one", chunk_size, halo);
+        one_bins.keep_only_chunk(1, 1);
         bool one_binned = one_bins.open(&bins_error);
         for (const CollectedPoint &point : points) {
             one_binned = one_binned && one_bins.add(point, &bins_error);
         }
         one_binned = one_binned && one_bins.finish(&bins_error);
-        ok &= check(one_binned && one_bins.tiles().size() == 1 && one_bins.tiles().begin()->first == std::make_pair(1, 1),
-                    "only the requested tile is kept when one tile is asked for");
+        ok &= check(one_binned && one_bins.chunks().size() == 1 && one_bins.chunks().begin()->first == std::make_pair(1, 1),
+                    "only the requested chunk is kept when one chunk is asked for");
 
         bins.remove();
         std::error_code ignored;

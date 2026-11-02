@@ -467,7 +467,7 @@ int main() {
         touch(output / "track.glb");
         touch(output / "pointcloud.glb");
         touch(output / "mesh.html");                     // not a GLB
-        touch(output / "tiles" / "tile_0_0.glb");        // repeats mesh.glb, so not listed
+        touch(output / "chunks" / "chunk_0_0.glb");        // repeats mesh.glb, so not listed
         touch(survey / "ZTopo.glb");
         touch(survey / "my file.glb");
         touch(survey / "notes.txt");
@@ -513,7 +513,7 @@ int main() {
         touch(survey / "multibeam" / "mbmesh_output" / "track.glb");
         touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "tileset.json");
         touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "tile_0_0.glb");
-        touch(survey / "multibeam" / "mbmesh_output" / "tiles" / "t.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "chunks" / "t.glb");
         touch(survey / "lidar" / "points.glb");
         touch(survey / "lidar" / "a-x" / "q.glb");
         touch(survey / "lidar" / "a" / "p.glb");
@@ -545,7 +545,7 @@ int main() {
             "20260101A/multibeam/mbmesh_output/tileset/tileset.json",
             "20260101A/multibeam/mbmesh_output/mesh.glb",
             "20260101A/multibeam/mbmesh_output/track.glb"};
-        ok &= check(uris == expected, "the survey lists every GLB beneath it, a directory's files before its subdirectories, without tiles or hidden directories");
+        ok &= check(uris == expected, "the survey lists every GLB beneath it, a directory's files before its subdirectories, without chunks or hidden directories");
         ok &= check(models.size() == 7 && models[4].is_tileset && models[4].group == "20260101A/multibeam/mbmesh_output" &&
                         models[0].group == "20260101A/lidar" && models[2].group == "20260101A/lidar/a-x",
                     "the groups are the directory paths, from the survey directory");

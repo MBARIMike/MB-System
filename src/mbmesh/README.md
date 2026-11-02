@@ -99,7 +99,7 @@ When `-I` names a **directory**, `mbmesh` reconstructs nothing. It writes `mbmes
 mbmesh -I .                                   # in the survey directory; serve this directory and open /mbmesh_survey.html
 ```
 
-The check boxes are in accordions that mirror the directory layout, one inside another for each level, with the directory named by `-I` open and the ones inside it closed. In each directory `mesh.glb` is listed first, then `track.glb`, then the others by name, and a `tileset/tileset.json` is offered, as a tileset, in place of the tile files (the `tiles` and `tileset` directories are otherwise skipped, as are directories whose names begin with a dot). The `track.glb` files are switched on when the page opens, so the page shows where the surveys ran; the other GLBs are off and are loaded when first switched on. At most 1000 models are listed. The paths are relative to the current directory, so run `mbmesh` in the survey directory or above it, and serve that directory.
+The check boxes are in accordions that mirror the directory layout, one inside another for each level, with the directory named by `-I` open and the ones inside it closed. In each directory `mesh.glb` is listed first, then `track.glb`, then the others by name, and a `tileset/tileset.json` is offered, as a tileset, in place of the chunk files (the `chunks` and `tileset` directories are otherwise skipped, as are directories whose names begin with a dot). The `track.glb` files are switched on when the page opens, so the page shows where the surveys ran; the other GLBs are off and are loaded when first switched on. At most 1000 models are listed. The paths are relative to the current directory, so run `mbmesh` in the survey directory or above it, and serve that directory.
 
 The page gets an initial view as a run's page does, from the georeference (`asset.extras`) of every GLB that has one: the overview (`Viewpoint` in model coordinates, and the `GeoViewpoint`) looks straight down on the middle of the union of their extents, from the height that fits it in a 45 degree view, so it takes in the whole survey. The GeoOrigin is that of the first GLB whose vertices are relative to one. GLBs from runs with another GeoOrigin do not line up with it, so every GLB with a georeference is compared with the GeoOrigin of the page, and each that has another (its center more than 1 cm away), or has absolute vertices, is logged as an `ERROR` that names it and says how far apart the GeoOrigins are; the page is still written. GLBs written before the georeference was recorded give no view, and a page with none opens on the equator.
 
@@ -116,17 +116,17 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `-R`, `--bounds` | `west/east/south/north` | Geographic subset bounds in degrees. Use `--bounds=-122.5/-121.8/36.5/37.2` when the west value is negative. |
 | `-G`, `--geoorigin` | `[lon,lat,elev]` | Write GLB vertices as ECEF offsets from a GeoOrigin, as in `mbgrd2gltf`. With a value, all three of lon, lat, elev (degrees, degrees, meters above the ellipsoid) are required. With no value, uses the data-bounds center and mean elevation. Without the option, vertices are absolute ECEF. The value must be attached to the option, with an equals sign and no spaces, as in `mbgrd2gltf`: `--geoorigin=-122.4,36.6,0` or `-G-122.4,36.6,0`. A value in a separate argument (`--geoorigin -122.4,36.6,0`) is not accepted. |
 | `-L`, `--lod`, `--level-of-detail` | `meters` | Requested smallest feature size in local meters; the Poisson cell is a quarter of it, but no finer than half the point spacing. If omitted, `mbmesh` derives LOD from the measured point spacing, coarsened if needed to keep the run within about 500 million cells. |
-| `--chunk-size` | `meters` | Reconstruct in square tiles of about this size (rounded up to whole Poisson cells) instead of one pass. Chunking turns on automatically when a single Poisson grid would exceed about 8 million cells. |
-| `--chunk-halo` | `meters` | Neighboring points each tile reads beyond its edge. The default is what the normal estimation, splatting and trimming need (0.275 m at `-L 0.1`). A smaller halo is allowed, with a warning. A larger one costs memory, disk (with `--spill-points`) and time, since every tile reconstructs its halo again, and it changes the automatic tile size; on one multibeam survey a halo of 1 m left larger mismatches at the tile edges than 0.3 m did. Only used when the run is chunked. |
-| `--chunk` | `i,j` | Reconstruct only tile (i,j), for fast testing. Tile (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--info` and a verbose run to see tile indices. |
-| `--max-chunks` | `n` | Stop after n tiles (for testing). |
+| `--chunk-size` | `meters` | Reconstruct in square chunks of about this size (rounded up to whole Poisson cells) instead of one pass. Chunking turns on automatically when a single Poisson grid would exceed about 8 million cells. |
+| `--chunk-halo` | `meters` | Neighboring points each chunk reads beyond its edge. The default is what the normal estimation, splatting and trimming need (0.275 m at `-L 0.1`). A smaller halo is allowed, with a warning. A larger one costs memory, disk (with `--spill-points`) and time, since every chunk reconstructs its halo again, and it changes the automatic chunk size; on one multibeam survey a halo of 1 m left larger mismatches at the chunk edges than 0.3 m did. Only used when the run is chunked. |
+| `--chunk` | `i,j` | Reconstruct only chunk (i,j), for fast testing. Chunk (i,j) covers x in [i*size, (i+1)*size) and y in [j*size, (j+1)*size) in the local east-north frame; use `--info` and a verbose run to see chunk indices. |
+| `--max-chunks` | `n` | Stop after n chunks (for testing). |
 | `--poisson-solver` | `name` | How the Poisson grid equation is solved: `sor` (the default) or `jacobi`. `sor` is red-black successive over-relaxation, updated in place, with the over-relaxation factor chosen from the grid size (about 1.95 for a grid of a hundred cells across). One iteration of either costs about the same, but `sor` converges in far fewer, so it chooses its own, smaller number of iterations. See "Poisson solvers". |
-| `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000, for either solver. By default `sor` takes one iteration per cell across the longest edge of each tile's grid, but at least 50, and `jacobi` takes a count chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
-| `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
-| `--spill-points` | `n` | A survey with more than `n` accepted soundings (default 50,000,000) is not held in memory: the soundings go to a file in `mbmesh_work` beside the results and are sorted into one file per tile, so memory follows the size of a tile and not of the survey. `0` always does. See [Surveys larger than memory](#surveys-larger-than-memory). |
+| `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000, for either solver. By default `sor` takes one iteration per cell across the longest edge of each chunk's grid, but at least 50, and `jacobi` takes a count chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
+| `--threads` | `n` | Chunks reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each chunk holds its own Poisson grid, so memory grows with this. |
+| `--spill-points` | `n` | A survey with more than `n` accepted soundings (default 50,000,000) is not held in memory: the soundings go to a file in `mbmesh_work` beside the results and are sorted into one file per chunk, so memory follows the size of a chunk and not of the survey. `0` always does. See [Surveys larger than memory](#surveys-larger-than-memory). |
 | `--void-size` | `m` | Put back voids of up to `m` meters across (default 2) that support trimming would remove from inside the surface, where the soundings thin out in the depressions of the seafloor and under overhangs. Gaps at the edge of the survey stay trimmed. `0` trims them all. See [Voids](#voids-in-the-surveyed-surface). |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
-| `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
+| `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, chunk plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
 | `--html`, `-html` | none | Write an X3DOM viewer page, with a heads-up display, a check box for each GLB and the processing log, in the parent of the output directory (`mbmesh_output.html`), and print the command to serve and view it. |
 | `--xyz`, `-xyz` | none | Write both `pointcloud-local.xyz` and `pointcloud-ecef.xyz`. |
 | `--local-xyz`, `-local-xyz` | none | Write `pointcloud-local.xyz`. |
@@ -137,7 +137,7 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `--origin-glb`, `-origin-glb` | none | Write `origins.glb`. |
 | `--track-glb`, `-track-glb` | none | Write `track.glb`, the sensor track as a 3D line. |
 | `--tileset`, `-tileset` | none | Write `tileset/tileset.json` and `tileset/tile_I_J.glb`, the surface as an OGC 3D Tiles tileset (see "OGC 3D Tiles"). |
-| `--pointcloud-colormap` | `name` | How `pointcloud.glb` is colored by height: `linear` (the default), 11 equal steps between rounded heights chosen from the range, as `mbm_grdplot -G5` does; `equalized`, steps with equal numbers of points, as `mbm_grdplot -G5 -S` does (histogram equalization, using the quantiles of the heights; GMT's `grdhisteq` weights a geographic grid by cell area, which can move the upper steps by a fraction of the range); `none`, one orange. All use the Haxby colors, from dark blue to white. |
+| `--pointcloud-colormap` | `name` | How `pointcloud.glb` is colored by height: `linear` (the default), 11 equal steps between rounded heights chosen from the range, as `mbm_grdplot -G5` does; `equalized`, steps with equal numbers of points, as `mbm_grdplot -G5 -S` does (histogram equalization, using the quanchunks of the heights; GMT's `grdhisteq` weights a geographic grid by cell area, which can move the upper steps by a fraction of the range); `none`, one orange. All use the Haxby colors, from dark blue to white. |
 | `--lifted` | `meters` | With `--html`, or a directory input, lift everything this many meters above the ellipsoid along the local vertical: each model is written inside a `GeoTransform` whose `translation` goes up, and the heights of the viewpoints, `--geoviewpoint` ones too, are raised by the same amount. It is for seafloor data, whose negative heights parts of X3DOM's `GeoTileset` do not handle; use more than the greatest depth. The Copy GeoViewpoint button takes the lift off, so the option it gives is for the true heights. |
 | `--x3dom-url` | `url` | The X3DOM script of the `--html` page, and the stylesheet beside it. Defaults to the build on `www.x3dom.org`, which has no `GeoTileset`; use a build of X3DOM master (October 2026 or later) to see a tileset. |
 | `--raw-mesh-glb`, `-raw-mesh-glb` | none | Write `raw_mesh.glb`, the untrimmed mesh before support trimming. |
@@ -169,13 +169,13 @@ Every GLB records where it is on the Earth and how it was made in `asset.extras`
 
 - `georeference` - the coordinate reference system (`EPSG:4978`), whether the vertices are `absolute` or `relativeToCenter`, the `center` (the GeoOrigin as ECEF meters; absolute = vertex + center), the same point as `geodeticCenter` (longitude, latitude, height), the `heightReference` (`ellipsoid`) and the `extent` of the data
 - `provenance` - the software and its version, the time of execution (`startedAtTime`, UTC; linked to W3C PROV-O through a JSON-LD `@context`), the command line, working directory, user and host, and the inputs (datalist, MBIO formats, swath files, first and last ping time)
-- `MB-System` - what this file holds (`content.role`: `mesh`, `tile`, `raw_mesh`, `pointcloud`, `normals`, `origin_rays` or `track`), the sounding counts, the reconstruction settings, and the vertical reference
+- `MB-System` - what this file holds (`content.role`: `mesh`, `chunk`, `raw_mesh`, `pointcloud`, `normals`, `origin_rays` or `track`), the sounding counts, the reconstruction settings, and the vertical reference
 
 The viewer page (`--html`) carries the same tree in a `GeoMetadata` node (the `summary` keywords, and the full tree as a `MetadataSet` named `extras`) and a `WorldInfo` node. All are written from one tree, so they cannot disagree. The names are a proposal for other software to adopt, described in [GEOREFERENCE.md](GEOREFERENCE.md), which also lists where each name comes from and what the files do not say (the vertical reference has no geoid correction). `mbgrd2gltf` writes the same blocks.
 
 ### OGC 3D Tiles
 
-`--tileset` writes the reconstruction as an OGC 3D Tiles 1.1 tileset in `<outputdir>/tileset/`: one `tile_I_J.glb` for each reconstruction tile (one tile, `tile_0_0.glb`, for a single-pass run) and `tileset.json`. The tileset does not depend on `--geoorigin`.
+`--tileset` writes the reconstruction as an OGC 3D Tiles 1.1 tileset in `<outputdir>/tileset/`: one `tile_I_J.glb` for each reconstruction chunk (one tile, `tile_0_0.glb`, for a single-pass run) and `tileset.json`. The tileset does not depend on `--geoorigin`.
 
 - **Content.** Each tile's vertices are in the local east-north-up frame of the reconstruction, written Y-up as glTF requires and as 3D Tiles expects: X is east, Y is up and Z is south. Loaders turn Y-up into Z-up with a quarter turn about X.
 - **Placement.** The `transform` of the root tile is that east-north-up frame at the frame origin in WGS 84 ECEF (a 4x4 matrix in column-major order whose columns are east, north, up and the origin).
@@ -185,7 +185,7 @@ The viewer page (`--html`) carries the same tree in a `GeoMetadata` node (the `s
 
 ### Chunked Output
 
-When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is still written as the merged mesh, and each tile is also written as `tiles/tile_I_J.glb`, with vertices placed exactly as in `mesh.glb`.
+When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is still written as the merged mesh, and each chunk is also written as `chunks/chunk_I_J.glb`, with vertices placed exactly as in `mesh.glb`.
 
 ### Optional Outputs
 
@@ -202,10 +202,10 @@ When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is sti
    - Titled with the last three directories of the web root, which identify the survey, for example `OceanImaging2018/20180923d1/multibeam`
    - Laid out like the page `mbgrd2gltf` writes: a heads-up display with the navigation mode, the Stats and Log debug displays, and the Show Everything and Reset View buttons, and a **Processing Log** panel, opened with the button at the bottom left, that shows the log of the run. The log is not written into the page, which would make it large and hard to edit by hand: it is the text file `mbmesh_output/mbmesh.log`, one message a line, and the page loads it (with `fetch`) the first time the panel is opened, so the page has to be served over HTTP, as it does for its GLBs
    - Also written inside the output directory as `mbmesh.html`, with paths relative to that directory and without the GLBs of the web root
-   - Has a check box, grouped under headings, for every GLB the page can show: first the `.glb` files in the output directory (`mesh.glb`, then `track.glb`, then the others such as `pointcloud.glb`, `normals.glb` or `raw_mesh.glb`), then the `.glb` files in the web root beside the output directory, such as the product of `mbgrd2gltf`. `mesh.glb` and `track.glb` are on when the page opens; the others are off and are not loaded until they are first switched on, so a large file costs nothing until it is wanted. The tile files in `tiles/` are not listed, since they repeat `mesh.glb`. At most 200 models are listed
+   - Has a check box, grouped under headings, for every GLB the page can show: first the `.glb` files in the output directory (`mesh.glb`, then `track.glb`, then the others such as `pointcloud.glb`, `normals.glb` or `raw_mesh.glb`), then the `.glb` files in the web root beside the output directory, such as the product of `mbgrd2gltf`. `mesh.glb` and `track.glb` are on when the page opens; the others are off and are not loaded until they are first switched on, so a large file costs nothing until it is wanted. The chunk files in `chunks/` are not listed, since they repeat `mesh.glb`. At most 200 models are listed
    - GLB files from the web root line up with the mesh only if they use the same coordinates: the same GeoOrigin, for `mbgrd2gltf` the same `--geoorigin` value as `mbmesh`. The page says so under that heading
    - Always has a `GeoViewpoint` over the center of the data; with `--geoorigin` it also declares the `GeoOrigin` that the viewpoint and the vertices are relative to, as `mbgrd2gltf` does
-   - The processing log holds every message of the run, up to `DEBUG` level, whether or not `-V` was used: the command line, the settings (level of detail, Poisson cell size, point spacing, tiling), the timing of each stage and of the whole run, and, per tile when chunking, each stage of each tile. It is capped at 20,000 messages, and the page says how many were left out. The page is written last so that the log is complete
+   - The processing log holds every message of the run, up to `DEBUG` level, whether or not `-V` was used: the command line, the settings (level of detail, Poisson cell size, point spacing, chunking), the timing of each stage and of the whole run, and, per chunk when chunking, each stage of each chunk. It is capped at 20,000 messages, and the page says how many were left out. The page is written last so that the log is complete
    - The command to serve the web root is printed when the page is generated; mbmesh does not start a server or browser
 
 4. **`pointcloud-local.xyz`** - Local Cartesian point cloud
@@ -245,12 +245,12 @@ The current pipeline is orchestrated by `src/mbmesh/mbmesh.cpp`:
 2. Read and preprocess the MB-System datalist.
 3. Print metadata and exit if requested.
 4. Optionally decimate collected points.
-5. Reconstruct the surface, either in one pass or tile by tile (steps 5a-5d are the same either way, and run once per tile when chunked):
+5. Reconstruct the surface, either in one pass or chunk by chunk (steps 5a-5d are the same either way, and run once per chunk when chunked):
    - 5a. Estimate oriented normals.
    - 5b. Reconstruct a screened-Poisson scalar field.
    - 5c. Extract a raw mesh with marching cubes.
    - 5d. Trim unsupported mesh regions.
-6. Write `mesh.glb`, per-tile GLBs when chunked, and requested optional outputs.
+6. Write `mesh.glb`, per-chunk GLBs when chunked, and requested optional outputs.
 7. Write the viewer page and print the command to view it if `--html` was requested.
 
 ## Pipeline Details
@@ -318,7 +318,7 @@ The `-L`, `--lod`, or `--level-of-detail` option is the main user-facing reconst
 
 The Poisson cell size is a quarter of the level of detail, but no finer than half the point spacing, since the data cannot support more: `cell = max(L / 4, spacing / 2)`. It is not capped at the spacing, so `-L` is honored even when the points are much denser than the level of detail asked for. To match a 5 cm grid, ask for `-L 0.2`.
 
-The automatic level of detail is the finest the data supports, twice the point spacing, unless that would need more than about 500 million Poisson cells across the survey's bounding box, in which case it is raised to fit and an `INFO` message says so. Work grows as the cube of the resolution, so a dense survey would otherwise ask for a centimeter-scale cell and run for days. A level of detail given with `-L` is never limited, but a `WARN` message is printed when it needs more than about 2 billion cells, since that may take hours. `--info` shows the resulting cell size, tile plan and cell count before you commit to a run.
+The automatic level of detail is the finest the data supports, twice the point spacing, unless that would need more than about 500 million Poisson cells across the survey's bounding box, in which case it is raised to fit and an `INFO` message says so. Work grows as the cube of the resolution, so a dense survey would otherwise ask for a centimeter-scale cell and run for days. A level of detail given with `-L` is never limited, but a `WARN` message is printed when it needs more than about 2 billion cells, since that may take hours. `--info` shows the resulting cell size, chunk plan and cell count before you commit to a run.
 
 `settings.cpp` clamps the resolved level of detail to the supported range and derives:
 
@@ -455,10 +455,10 @@ Known limitation: boundary triangles with one or two rejected vertices are remov
 
 Sound returns less from the floor of a depression and from under an overhang than from its rim, so the soundings there are sparse. A vertex of the screened Poisson surface bridging the gap fails the neighbor test (too few samples within the support radius, which is a few cells), and trimming removes the surface across the whole void, leaving holes inside a surface that is otherwise there.
 
-`--void-size` (default 2 m) puts these back. Before reconstruction, a raster of the soundings of the whole survey is made (cells of 1/32 of the void size, 0.06 m for the default), keeping the lowest and highest height of the soundings in each cell. The raster is of the whole survey, so a void that crosses the border of two tiles is seen whole from both. After the normal trimming, a vertex that was rejected only for too few neighbors is put back if a sounding is within three support radii of it: the soundings are sparse there, as in the lanes between lines and in the pinholes that the support radius, chosen from the median spacing of the densest parts of the survey, does not reach. A vertex that is farther from the soundings is put back only if it passes three tests:
+`--void-size` (default 2 m) puts these back. Before reconstruction, a raster of the soundings of the whole survey is made (cells of 1/32 of the void size, 0.06 m for the default), keeping the lowest and highest height of the soundings in each cell. The raster is of the whole survey, so a void that crosses the border of two chunks is seen whole from both. After the normal trimming, a vertex that was rejected only for too few neighbors is put back if a sounding is within three support radii of it: the soundings are sparse there, as in the lanes between lines and in the pinholes that the support radius, chosen from the median spacing of the densest parts of the survey, does not reach. A vertex that is farther from the soundings is put back only if it passes three tests:
 
 - Its nearest sounding is no farther than half the void size.
-- Soundings are all around it, in the tangent plane of the mesh. The vertex is probed in eight directions, at twice the distance of its nearest sounding, and a sounding must be within half that distance of the probe, in three dimensions (the raster knows the heights of the soundings of the whole survey and not only those of the tile). Up to two of the eight may fail. This tells a void, which the soundings surround, from the extrapolation of a surface beyond the edge of its soundings, which has none on the far side.
+- Soundings are all around it, in the tangent plane of the mesh. The vertex is probed in eight directions, at twice the distance of its nearest sounding, and a sounding must be within half that distance of the probe, in three dimensions (the raster knows the heights of the soundings of the whole survey and not only those of the chunk). Up to two of the eight may fail. This tells a void, which the soundings surround, from the extrapolation of a surface beyond the edge of its soundings, which has none on the far side.
 - Its nearest few soundings are beside it, along the surface, and not above it along its normal. This keeps out the sheet that screened Poisson closes under an overhang or beyond the edge of the data, which hangs below the surveyed surface, so that a raster seen from above cannot tell it from a void.
 
 A vertex rejected because the samples disagree with the surface (the point-to-plane offset) stays out, as does a vertex with no soundings on its far side, so the edge of the survey is trimmed as before.
@@ -467,7 +467,7 @@ Finally, small holes that remain inside the trimmed surface are put back, if the
 
 Last, the pieces of the trimmed surface that are not joined to the rest, are smaller than a quarter of that area (0.8 square meters for the default), and do not touch the open boundary of the raw mesh are taken out: the specks that sound reflected from the water column, a fish or a bubble leave, and the end of a sheet of extrapolated surface that the other steps left.
 
-The raster is in the horizontal plane of the local frame, with z up. It takes a few hundred thousand cells for a survey of a few hundred meters, 8 bytes each, and at most 16 million (the cells grow if the survey is larger). The debug log (`-V`) shows its size, and the support-trimming line of each tile shows how many vertices were put back and how far from a sample they are.
+The raster is in the horizontal plane of the local frame, with z up. It takes a few hundred thousand cells for a survey of a few hundred meters, 8 bytes each, and at most 16 million (the cells grow if the survey is larger). The debug log (`-V`) shows its size, and the support-trimming line of each chunk shows how many vertices were put back and how far from a sample they are.
 
 The surface in a void is the interpolation of the screened Poisson solution from the rim. It is smooth and plausible, not measured: it will not show a feature that the sonar did not see.
 
@@ -495,20 +495,20 @@ Implemented in:
 - `include/algorithms/reconstruction.h`
 - `src/algorithms/reconstruction.cpp`
 
-A single screened-Poisson grid covers the bounding box of its input. A seafloor survey is a thin sheet through a large 3D box, so the grid is mostly empty, and its memory and run time grow quickly with survey size and level of detail. Chunking splits the survey into square horizontal tiles and reconstructs each one separately.
+A single screened-Poisson grid covers the bounding box of its input. A seafloor survey is a thin sheet through a large 3D box, so the grid is mostly empty, and its memory and run time grow quickly with survey size and level of detail. Chunking splits the survey into square horizontal chunks and reconstructs each one separately.
 
 How it works:
 
-- **Tile lattice.** Tile (i, j) owns x in [i*T, (i+1)*T) and y in [j*T, (j+1)*T) in the local east-north frame, where T is the tile size, a whole number of Poisson cells. The lattice is anchored at the local-frame origin, so tile indices do not depend on the order of the data.
-- **Shared grid lattice.** Every tile's Poisson grid is snapped to the same global lattice of cell-size steps, so neighboring tiles share grid nodes and their surfaces nearly coincide where they overlap.
-- **Halo.** A tile reads its own points plus a ring of neighboring points, so that points near the tile edge see the neighborhoods a single run would give them. The halo covers the reach of normal splatting or support trimming plus the normal-estimation radius plus a few cells (0.275 m at `-L 0.1`). `--chunk-halo <meters>` sets it (rounded up to whole Poisson cells; a value under that reach is used, with a warning). A larger halo is not better: it makes the tile size, which is chosen with the halo in mind (the shrinking of the tile to keep the threads busy stops at four halos across), and the points each tile finds its iso-value from different, and on one multibeam survey a 1 m halo left larger mismatches at the tile edges than 0.3 m did.
-- **Ownership.** After trimming, a tile keeps only triangles whose centroid lies inside its half-open square, so each triangle belongs to exactly one tile and the merged mesh has no overlap.
-- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the tile size so each tile's grid, including halo and padding, is about that size. A tile's grid is as tall as the relief inside it, so the vertical extent is measured from a sample of the points as the tallest relief in any one tile of that size, not the survey's full depth range, which would make tiles needlessly small on a sloping seafloor. The memory budget alone can give only a few huge tiles, which leaves most threads idle, so the tile is then made smaller until at least two tiles per thread contain points, down to a floor of four halos across (so that the halo and padding, which every tile reconstructs again, stay a modest cost). Asking for more threads therefore gives smaller tiles. An explicit `--chunk-size` is used as given. `--info` prints the resulting tile size, halo, grid size, number of tiles with points and thread count.
-- **Threads.** Tiles are independent, so several are reconstructed at once (`--threads`). The tiles with the most points are started first, so the last tiles to start are the small ones and the threads finish together. Results are delivered in tile order, so the output does not depend on the thread count or the start order.
+- **Chunk lattice.** Chunk (i, j) owns x in [i*T, (i+1)*T) and y in [j*T, (j+1)*T) in the local east-north frame, where T is the chunk size, a whole number of Poisson cells. The lattice is anchored at the local-frame origin, so chunk indices do not depend on the order of the data.
+- **Shared grid lattice.** Every chunk's Poisson grid is snapped to the same global lattice of cell-size steps, so neighboring chunks share grid nodes and their surfaces nearly coincide where they overlap.
+- **Halo.** A chunk reads its own points plus a ring of neighboring points, so that points near the chunk edge see the neighborhoods a single run would give them. The halo covers the reach of normal splatting or support trimming plus the normal-estimation radius plus a few cells (0.275 m at `-L 0.1`). `--chunk-halo <meters>` sets it (rounded up to whole Poisson cells; a value under that reach is used, with a warning). A larger halo is not better: it makes the chunk size, which is chosen with the halo in mind (the shrinking of the chunk to keep the threads busy stops at four halos across), and the points each chunk finds its iso-value from different, and on one multibeam survey a 1 m halo left larger mismatches at the chunk edges than 0.3 m did.
+- **Ownership.** After trimming, a chunk keeps only triangles whose centroid lies inside its half-open square, so each triangle belongs to exactly one chunk and the merged mesh has no overlap.
+- **Automatic sizing.** Without `--chunk-size`, mbmesh turns chunking on when the whole-survey grid would exceed about 8 million cells, and chooses the chunk size so each chunk's grid, including halo and padding, is about that size. A chunk's grid is as tall as the relief inside it, so the vertical extent is measured from a sample of the points as the tallest relief in any one chunk of that size, not the survey's full depth range, which would make chunks needlessly small on a sloping seafloor. The memory budget alone can give only a few huge chunks, which leaves most threads idle, so the chunk is then made smaller until at least two chunks per thread contain points, down to a floor of four halos across (so that the halo and padding, which every chunk reconstructs again, stay a modest cost). Asking for more threads therefore gives smaller chunks. An explicit `--chunk-size` is used as given. `--info` prints the resulting chunk size, halo, grid size, number of chunks with points and thread count.
+- **Threads.** Chunks are independent, so several are reconstructed at once (`--threads`). The chunks with the most points are started first, so the last chunks to start are the small ones and the threads finish together. Results are delivered in chunk order, so the output does not depend on the thread count or the start order.
 
-Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 m) at `-L 2`, a single run took 207 s and 1.4 GB. Tiled with 10 m tiles, it took 254 s on one thread and 69 s on four threads at a peak of 0.76 GB, with 151,057 triangles against 151,148 for the single run. The median distance from a tiled vertex to the nearest single-run vertex was 4.9 cm, about the vertex spacing. At what was then the default level of detail (a 0.098 m cell from a spacing estimate that was too large, about 102 million cells for the whole survey, which a single run refuses to attempt) automatic chunking produced 20 tiles of about 8.3 m and 528,208 triangles in 232 s at a peak of 1.8 GB on four threads. Three survey-edge tiles with fewer than 32 owned points were skipped.
+Measured on one 175 MB swath file (993,245 accepted soundings, about 50 m by 37 m) at `-L 2`, a single run took 207 s and 1.4 GB. Chunked with 10 m chunks, it took 254 s on one thread and 69 s on four threads at a peak of 0.76 GB, with 151,057 triangles against 151,148 for the single run. The median distance from a chunked vertex to the nearest single-run vertex was 4.9 cm, about the vertex spacing. At what was then the default level of detail (a 0.098 m cell from a spacing estimate that was too large, about 102 million cells for the whole survey, which a single run refuses to attempt) automatic chunking produced 20 chunks of about 8.3 m and 528,208 triangles in 232 s at a peak of 1.8 GB on four threads. Three survey-edge chunks with fewer than 32 owned points were skipped.
 
-On the same file at `-L 2` with automatic tiling, 4 threads took 66 s for 8 tiles with points, 8 threads 45 s for 16 tiles, and 12 threads 48 s for 20 tiles, so beyond about 8 threads the gain stops.
+On the same file at `-L 2` with automatic chunking, 4 threads took 66 s for 8 chunks with points, 8 threads 45 s for 16 chunks, and 12 threads 48 s for 20 chunks, so beyond about 8 threads the gain stops.
 
 ### Surveys larger than memory
 
@@ -517,23 +517,23 @@ Chunking alone bounds the Poisson grids, not the soundings. A `CollectedPoint` i
 So a survey with more accepted soundings than `--spill-points` (50 million unless it is changed; 0 always does) does not keep them in memory:
 
 1. **Reading.** The soundings read so far are written to `mbmesh_work/soundings.bin`, as absolute ECEF, and so is each one after them. The log gives the free disk space there when the spilling starts. The reading itself is as slow as ever, but its memory no longer grows. (The first 50 million soundings are held and written when the 50 millionth is passed; the vector that holds them grows to about 2.4 GB first.)
-2. **Measuring.** One pass over the file, in pieces of 4 million points, puts the points in the local frame and finds what an in-memory run finds from its points: the bounds, the geodetic bounds and mean elevation, the point spacing (from the same blocks of consecutive points, picked out of the pieces as they go by, so the result is the same), and a sample of about a million points from which the tile size is chosen. From these the level of detail, the Poisson cell and the tile size are chosen as always. A survey that turns out to need no chunking is read back into memory, since it is small enough.
-3. **Binning.** A second pass sorts the points into one file per tile in `mbmesh_work/tiles`, each holding the points the tile owns and those in its halo, so that points near a tile edge are in more than one file (about 1.3 times the soundings in all for a 3 m tile with a 0.3 m halo, and about 3.5 times for a 1 m halo). If `--decimate` is on, the points are averaged into voxels first, in the same way and with the same voxels as `point_decimation` in memory, so memory then follows the number of occupied voxels. The spill file is deleted when the pass is done.
-4. **Reconstruction.** Each tile reads its own file, so only the tiles being worked on are in memory, and gives exactly the mesh it gives from memory (the tests compare them).
+2. **Measuring.** One pass over the file, in pieces of 4 million points, puts the points in the local frame and finds what an in-memory run finds from its points: the bounds, the geodetic bounds and mean elevation, the point spacing (from the same blocks of consecutive points, picked out of the pieces as they go by, so the result is the same), and a sample of about a million points from which the chunk size is chosen. From these the level of detail, the Poisson cell and the chunk size are chosen as always. A survey that turns out to need no chunking is read back into memory, since it is small enough.
+3. **Binning.** A second pass sorts the points into one file per chunk in `mbmesh_work/chunks`, each holding the points the chunk owns and those in its halo, so that points near a chunk edge are in more than one file (about 1.3 times the soundings in all for a 3 m chunk with a 0.3 m halo, and about 3.5 times for a 1 m halo). If `--decimate` is on, the points are averaged into voxels first, in the same way and with the same voxels as `point_decimation` in memory, so memory then follows the number of occupied voxels. The spill file is deleted when the pass is done.
+4. **Reconstruction.** Each chunk reads its own file, so only the chunks being worked on are in memory, and gives exactly the mesh it gives from memory (the tests compare them).
 5. **Cleaning up.** `mbmesh_work` is deleted when the run ends, however it ends.
 
-The disk needs 28 bytes for each sounding for the spill file (the position as three doubles and the number of its ping, since the sensor position is the same for all the soundings of a ping and is kept once, in the track), so 14 GB for 515 million soundings. The tile files hold 48 bytes for each point, about 1.3 times as many as there are points because of the halos, and they exist while the spill file does, so with `--decimate` they are small and without it they are larger than the spill file. If the disk fills, the run stops with an error that says so; use `-O` to put the results, and with them `mbmesh_work`, on a disk with room. The work directory is beside the results so that it is on a disk with room for them.
+The disk needs 28 bytes for each sounding for the spill file (the position as three doubles and the number of its ping, since the sensor position is the same for all the soundings of a ping and is kept once, in the track), so 14 GB for 515 million soundings. The chunk files hold 48 bytes for each point, about 1.3 times as many as there are points because of the halos, and they exist while the spill file does, so with `--decimate` they are small and without it they are larger than the spill file. If the disk fills, the run stops with an error that says so; use `-O` to put the results, and with them `mbmesh_work`, on a disk with room. The work directory is beside the results so that it is on a disk with room for them.
 
-The outputs that hold points in one file are limited, since they are written from memory. `pointcloud-local.xyz` and `pointcloud-ecef.xyz` are written in full, a tile at a time, but `pointcloud.glb`, `origins.glb`, `normals.glb` and `oriented-pointcloud-ecef.ply` hold one point in n, chosen so that there are at most 5 million, and the log says which n. `--all-outputs` therefore works on a survey of any size, but writes text files that are as large as the data.
+The outputs that hold points in one file are limited, since they are written from memory. `pointcloud-local.xyz` and `pointcloud-ecef.xyz` are written in full, a chunk at a time, but `pointcloud.glb`, `origins.glb`, `normals.glb` and `oriented-pointcloud-ecef.ply` hold one point in n, chosen so that there are at most 5 million, and the log says which n. `--all-outputs` therefore works on a survey of any size, but writes text files that are as large as the data.
 
 Each stage logs the peak memory of the process so far (`peak memory 2.3 GB`, from `getrusage`), at the end of reading, after measuring, after binning, with each progress line of the chunking, at the end of the reconstruction and at the end of the run, so that the stage that needs the memory is the one the line follows.
 
 Current limitations:
 
-- A survey of up to `--spill-points` soundings (default 50 million) is read into memory before tiling, and only the Poisson grids are chunked. A larger one is spilled to disk and binned into tile files; see [Surveys larger than memory](#surveys-larger-than-memory).
-- Each tile computes its own iso-value shift from its own samples, and the tiles are not welded, so there can be small steps or cracks at tile edges. The halo keeps these small; they have been checked on a synthetic surface and one real file only.
-- Per-tile run time is not reduced, only memory per run, so small surveys can run slower chunked on one thread than in one pass because the halo and padding are reconstructed more than once.
-- Boundary triangles are assigned by centroid and are not clipped at tile edges.
+- A survey of up to `--spill-points` soundings (default 50 million) is read into memory before chunking, and only the Poisson grids are chunked. A larger one is spilled to disk and binned into chunk files; see [Surveys larger than memory](#surveys-larger-than-memory).
+- Each chunk computes its own iso-value shift from its own samples, and the chunks are not welded, so there can be small steps or cracks at chunk edges. The halo keeps these small; they have been checked on a synthetic surface and one real file only.
+- Per-chunk run time is not reduced, only memory per run, so small surveys can run slower chunked on one thread than in one pass because the halo and padding are reconstructed more than once.
+- Boundary triangles are assigned by centroid and are not clipped at chunk edges.
 
 ## Legacy Implementation
 
@@ -561,7 +561,7 @@ Important limitations:
 
 - Reconstruction is a single end-to-end run; there is no reusable preprocessing artifact yet.
 - Decimation is available through `--decimate`, but remains off by default because it trades reconstruction detail for lower downstream cost.
-- Screened Poisson uses a regular grid, so memory per run grows with grid size. Chunked reconstruction bounds this per tile, and a survey with more than `--spill-points` soundings is kept on disk, so memory follows the size of a tile; a survey of fewer soundings is held in memory.
+- Screened Poisson uses a regular grid, so memory per run grows with grid size. Chunked reconstruction bounds this per chunk, and a survey with more than `--spill-points` soundings is kept on disk, so memory follows the size of a chunk; a survey of fewer soundings is held in memory.
 - Normal estimation is sensitive to sparse data, sharp edges, and inconsistent spacing.
 - Support trimming can over-trim when normals or thresholds are poor.
 - Boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
@@ -572,7 +572,7 @@ High-value future work:
 - Write a 3D Tiles `tileset.json` with an ENU-to-ECEF `transform`, so tiles do not depend on the glb vertex offsets.
 - Expose selected reconstruction parameters as documented CLI options.
 - Decimate while reading, and write the point outputs of a survey on disk in full, which are limited to 5 million points now.
-- Weld or clip tile edges, and make the iso-value shift consistent across tiles.
+- Weld or clip chunk edges, and make the iso-value shift consistent across chunks.
 - Investigate octree/adaptive Poisson reconstruction.
 - Improve normal estimation near boundaries and sharp orientation changes.
 - Clip support-trimmed boundary triangles instead of dropping them.
@@ -614,7 +614,7 @@ High-value future work:
 - **include/math/eigen.h** - Symmetric 3x3 eigen decomposition
 - **include/math/kdtree.h** - KD-tree nearest-neighbor search
 
-- **include/algorithms/reconstruction.h** and **src/algorithms/reconstruction.cpp** - Per-tile reconstruction pipeline and the chunked, threaded tile driver
+- **include/algorithms/reconstruction.h** and **src/algorithms/reconstruction.cpp** - Per-chunk reconstruction pipeline and the chunked, threaded chunk driver
 
 ### I/O
 
@@ -686,7 +686,7 @@ The Poisson step solves one linear equation per cell of a regular grid: the cell
 - **`jacobi`** (the previous default, kept for comparison) computes every cell from the previous sweep's neighbors. It needs a second grid and, because information crosses the grid by one cell a sweep, a number of sweeps that grows with the square of the grid width to converge. At the fine grids of a detailed survey (a hundred cells or more across) the 200 to 500 iterations that are used by default stop long before that.
 - **`sor`** (the default) updates the cells in place in a red-black order (first the cells whose x + y + z is even, then the odd ones, so the neighbors of a cell all have the other color and the result does not depend on the order within a color) and over-relaxes each update by a factor between 1 and 2. The factor is the best one for the plain Laplacian on the grid, 2 / (1 + sqrt(1 - r^2)) with r the average of cos(pi / n) over the three directions, kept below 1.98; the screening term only strengthens the diagonal, so it still converges. The number of sweeps then grows with the grid width instead of its square. It uses one grid less memory than `jacobi`.
 
-The relative residual that is logged (see "Log Messages") shows how far either got. On three tiles of a test survey at a 0.025 m cell (grids of 2.6 to 3.5 million cells), with the time of the solver iterations on one tile:
+The relative residual that is logged (see "Log Messages") shows how far either got. On three chunks of a test survey at a 0.025 m cell (grids of 2.6 to 3.5 million cells), with the time of the solver iterations on one chunk:
 
 | Solver and iterations | Residual at the end | Solve time |
 |---|---|---|
@@ -695,7 +695,7 @@ The relative residual that is logged (see "Log Messages") shows how far either g
 | `sor`, 100 | 3e-2 to 5e-2 | 13 s |
 | `sor`, 473 | 1.4e-9 to 6.4e-9 | 60 s |
 
-so `sor` reaches the residual that `jacobi` reaches in 473 iterations in about 100 to 120, and converges completely if it is given more. Without `--poisson-iterations` it therefore takes one iteration per cell across the longest edge of the grid, at least 50 (145, 186 and 196 for those three tiles), which took the residual to 9e-4 to 4e-3, 6 to 25 times lower than `jacobi` reached, in 86 s of Poisson time in all against 241 s, 2.8 times less. The count follows the grid because the iterations that a relaxation needs grow with the width of the grid. A tile of a different size, or a different cell size, gets its own count, and `--poisson-iterations` sets one count for all. The meshes differ a little because `jacobi` has not converged: the vertex counts of the converged `sor` meshes (473 iterations) are 1834, 9072 and 27152, against 1835, 9072 and 27154 from `sor` with its own count, and 1846, 9096 and 27452 from `jacobi`.
+so `sor` reaches the residual that `jacobi` reaches in 473 iterations in about 100 to 120, and converges completely if it is given more. Without `--poisson-iterations` it therefore takes one iteration per cell across the longest edge of the grid, at least 50 (145, 186 and 196 for those three chunks), which took the residual to 9e-4 to 4e-3, 6 to 25 times lower than `jacobi` reached, in 86 s of Poisson time in all against 241 s, 2.8 times less. The count follows the grid because the iterations that a relaxation needs grow with the width of the grid. A chunk of a different size, or a different cell size, gets its own count, and `--poisson-iterations` sets one count for all. The meshes differ a little because `jacobi` has not converged: the vertex counts of the converged `sor` meshes (473 iterations) are 1834, 9072 and 27152, against 1835, 9072 and 27154 from `sor` with its own count, and 1846, 9096 and 27452 from `jacobi`.
 
 ## Log Messages
 
@@ -703,30 +703,30 @@ so `sor` reaches the residual that `jacobi` reaches in 473 iterations in about 1
 
 ```text
 INFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] input=datalist.mb-1 output=mbmesh_output
-DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chunking] tile_size=6.05 m, halo=0.72 m, 6 tiles contain points
+DEBUG 2026-10-19 14:35:15.886 reconstruction.cpp reconstruct_chunked():290 [chunking] chunk_size=6.05 m, halo=0.72 m, 6 chunks contain points
 ```
 
 A normal run logs how long reading the input and the whole reconstruction took, and the total (`[input] completed ... in 1.4 s, peak memory 0.5 GB`, `[reconstruction] completed in 1 min 7.5 s on 4 threads, peak memory 0.8 GB`, `[complete] ..., total 1 min 9.0 s, peak memory 0.8 GB`). The peak memory is the largest amount of physical memory the process has had in use at one time.
 
-The long wait in between is reported at `INFO` level, so that a run without `-V` shows its progress, but sparingly. When chunking, at most one short line a minute says how many tiles are finished, the percentage, the elapsed time and an estimate of the time left, and a last line gives the time spent in each stage added up over all the tiles and threads, which shows which stage the run waits for. The tiles run on several threads and the largest start first, so the estimate is pessimistic early in the run:
+The long wait in between is reported at `INFO` level, so that a run without `-V` shows its progress, but sparingly. When chunking, at most one short line a minute says how many chunks are finished, the percentage, the elapsed time and an estimate of the time left, and a last line gives the time spent in each stage added up over all the chunks and threads, which shows which stage the run waits for. The chunks run on several threads and the largest start first, so the estimate is pessimistic early in the run:
 
 ```text
-INFO ... [chunking]  40 of 624 tiles,  6%,   3.2 min elapsed, about  46.6 min left, peak memory 2.5 GB
-INFO ... [chunking]  52 of 624 tiles,  8%,   4.4 min elapsed, about  48.1 min left, peak memory 2.5 GB
-INFO ... [chunking] time summed over all tiles and threads: normals 7 min 2.0 s, poisson 112 min 1.0 s, marching cubes 2 min 4.1 s, trimming 6 min 51.9 s
+INFO ... [chunking]  40 of 624 chunks,  6%,   3.2 min elapsed, about  46.6 min left, peak memory 2.5 GB
+INFO ... [chunking]  52 of 624 chunks,  8%,   4.4 min elapsed, about  48.1 min left, peak memory 2.5 GB
+INFO ... [chunking] time summed over all chunks and threads: normals 7 min 2.0 s, poisson 112 min 1.0 s, marching cubes 2 min 4.1 s, trimming 6 min 51.9 s
 ```
 
-Each Poisson solve also logs how its time divides and how far the solver got, with `-V` for each tile and at `INFO` in a single pass:
+Each Poisson solve also logs how its time divides and how far the solver got, with `-V` for each chunk and at `INFO` in a single pass:
 
 ```text
-[poisson] tile 3,-4: solver jacobi, 473 iterations on 2603620 cells: splat 0.5 s, solve 1 min 5.8 s; relative residual 1 -> 3.05e-02 (after 236) -> 1.47e-02 (after 473)
+[poisson] chunk 3,-4: solver jacobi, 473 iterations on 2603620 cells: splat 0.5 s, solve 1 min 5.8 s; relative residual 1 -> 3.05e-02 (after 236) -> 1.47e-02 (after 473)
 ```
 
 The splat is the time to spread the normals and samples onto the grid and form the right-hand side, and the solve is the iterations. The relative residual is the norm of what is left over in the grid equation divided by the norm of the right-hand side, so it is 1 at the start and falls toward 0 as the solver converges; the run only measures it twice, after half the iterations and at the end, which costs two extra sweeps. A residual that is still falling steeply at the end means that the iterations did not converge.
 
-A single-pass run has no tiles, so it logs the completion of each stage instead (`[normal-estimation]`, `[poisson]`, `[marching-cubes]`, `[support-trimming]`). With `-V` each tile also logs a line of its own, with its number, its time and the time in each of its stages, and the start of each stage is logged.
+A single-pass run has no chunks, so it logs the completion of each stage instead (`[normal-estimation]`, `[poisson]`, `[marching-cubes]`, `[support-trimming]`). With `-V` each chunk also logs a line of its own, with its number, its time and the time in each of its stages, and the start of each stage is logged.
 
-By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each tile (the tile name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--info` report. Output is serialized, so lines from tiles reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
+By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, which carry the progress messages for each stage and, when chunking, each chunk (the chunk name follows the stage). Unlike `mbgrd2gltf`, every level is written to standard error, so standard output carries only data such as the `--info` report. Output is serialized, so lines from chunks reconstructed on different threads do not interleave. The logger is `include/util/logger.h`; it is a separate, header-only implementation of the `mbgrd2gltf` format rather than shared code.
 
 ## Development Notes
 

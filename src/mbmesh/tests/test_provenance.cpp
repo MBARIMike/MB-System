@@ -83,7 +83,7 @@ RunInfo example_run(bool with_center) {
     run.normal_search_radius = 0.3;
     run.point_spacing = 0.07;
     run.chunked = true;
-    run.tile_size = 100;
+    run.chunk_size = 100;
     run.halo = 2;
     run.threads = 4;
     if (with_center) {
@@ -221,11 +221,11 @@ int main() {
 
         tinygltf::Model model;
         GlbContent content;
-        content.role = "tile";
-        content.description = "one tile";
-        content.is_tile = true;
-        content.tile_i = 3;
-        content.tile_j = -2;
+        content.role = "chunk";
+        content.description = "one chunk";
+        content.has_index = true;
+        content.index_i = 3;
+        content.index_j = -2;
         ok &= check(write_and_read(directory / "a.glb", content, &model), label + "round trip");
 
         const tinygltf::Value &extras = model.asset.extras;
@@ -269,8 +269,8 @@ int main() {
         }
 
         ok &= check(found["georeference.crs"] == "EPSG:4978", label + "crs");
-        ok &= check(found["MB-System.content.role"] == "tile", label + "content role");
-        ok &= check(found["MB-System.content.tile[0]"] == "3" && found["MB-System.content.tile[1]"] == "-2", label + "tile indices");
+        ok &= check(found["MB-System.content.role"] == "chunk", label + "content role");
+        ok &= check(found["MB-System.content.chunk[0]"] == "3" && found["MB-System.content.chunk[1]"] == "-2", label + "chunk indices");
         ok &= check(found.count("MB-System.verticalReference") == 1, label + "vertical reference stated");
         ok &= check(found["provenance.commandLine"] == run.command_line, label + "command line survives exactly");
 
@@ -344,7 +344,7 @@ int main() {
 
         GlbContent content;
         content.role = "tileset_tile";
-        content.description = "one tile";
+        content.description = "one chunk";
         content.metadata = &frame_metadata;
         tinygltf::Model model;
         ok &= check(write_and_read(directory / "c.glb", content, &model), "round trip with its own metadata");

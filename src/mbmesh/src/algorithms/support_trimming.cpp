@@ -552,7 +552,7 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
             const double angle = k * 0.25 * 3.14159265358979323846;
             const Vec3 probe = raw_mesh.vertices[i] + (u * std::cos(angle) + w * std::sin(angle)) * reach;
             // The footprint knows the soundings of the whole survey, with their heights, so it is right at the border of
-            // the tile too, where the points of this tile do not reach.
+            // the chunk too, where the points of this chunk do not reach.
             if (options.footprint != nullptr && !options.footprint->has_sounding_near(probe.x, probe.y, probe.z, tolerance)) {
                 uncovered++;
             }

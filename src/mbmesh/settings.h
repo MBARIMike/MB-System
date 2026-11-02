@@ -30,7 +30,7 @@ struct Options {
 
     bool write_html = false;
 
-    // --tileset: write the tiles as an OGC 3D Tiles tileset in <output>/tileset (see io/tileset_writer.h).
+    // --tileset: write the chunks as an OGC 3D Tiles tileset in <output>/tileset (see io/tileset_writer.h).
     bool write_tileset = false;
 
     // --x3dom-url: the X3DOM script of the --html page, if not the default.
@@ -70,20 +70,20 @@ struct Options {
     bool level_of_detail_requested = false;
     bool decimation_requested = false;
 
-    // Chunked reconstruction. --chunk-size forces it on with the given tile size
+    // Chunked reconstruction. --chunk-size forces it on with the given chunk size
     // in meters; otherwise it turns on automatically when a single Poisson grid
     // would be too large. chunking and use_chunking are resolved from these in
     // preprocess_datalist().
     bool chunk_size_requested = false;
     double chunk_size = 0.0;
-    bool chunk_tile_requested = false;
-    int chunk_tile_i = 0;
-    int chunk_tile_j = 0;
+    bool chunk_requested = false;
+    int chunk_i = 0;
+    int chunk_j = 0;
     std::size_t max_chunks = 0;
-    // --chunk-halo: meters of neighboring points each tile reads beyond its edge. Zero chooses it (see resolve_chunking()).
+    // --chunk-halo: meters of neighboring points each chunk reads beyond its edge. Zero chooses it (see resolve_chunking()).
     bool chunk_halo_requested = false;
     double chunk_halo = 0.0;
-    std::size_t threads = 0;   // tiles reconstructed at once; 0 chooses automatically
+    std::size_t threads = 0;   // chunks reconstructed at once; 0 chooses automatically
     bool use_chunking = false;
     ChunkingOptions chunking;
 
@@ -93,7 +93,7 @@ struct Options {
     int poisson_iterations = 0;
 
     // --spill-points: more accepted soundings than this are kept in a file on disk, in the work directory, instead of
-    // in memory, and sorted into one file per tile (see io/point_spill.h). Zero spills them all.
+    // in memory, and sorted into one file per chunk (see io/point_spill.h). Zero spills them all.
     std::size_t spill_points = 50000000;
 
     // --void-size: voids in the surveyed surface that the support trimming would remove, up to this many meters across,
@@ -141,7 +141,7 @@ struct PreprocessedDatalist {
     DatalistMetadata metadata;
 
     // About a million of the soundings, evenly spread, in the local frame, when read_result.points is empty because
-    // they were spilled: enough to choose the tile size from.
+    // they were spilled: enough to choose the chunk size from.
     CollectedPointCloud sample;
 };
 
@@ -154,7 +154,7 @@ ReconstructionOptions reconstruction_options(const Options &options);
 
 // Decides whether to chunk and, if so, sets options.use_chunking and
 // options.chunking. Returns false (with *error) if the settings cannot work.
-// If points is given, the tile count is taken from the tiles that contain
+// If points is given, the chunk count is taken from the chunks that contain
 // points; otherwise from the survey's bounding box.
 bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const CollectedPointCloud *points = nullptr, std::string *error = nullptr);
 
@@ -175,13 +175,13 @@ bool preprocess_datalist(
 [[nodiscard]] std::filesystem::path work_directory(const Options &options);
 
 // With spilled soundings and chunked reconstruction: reads the spill file, applies the decimation if it is on, and
-// sorts the points into one file per tile in bins (which must be open, with the tile size and halo of
-// options.chunking). *point_count is the number of points, after decimation, that the tiles own. The spill file is
+// sorts the points into one file per chunk in bins (which must be open, with the chunk size and halo of
+// options.chunking). *point_count is the number of points, after decimation, that the chunks own. The spill file is
 // deleted afterward.
 [[nodiscard]] bool bin_spilled_points(
     const Options &options,
     PreprocessedDatalist *preprocessed,
-    TileBins *bins,
+    ChunkBins *bins,
     std::size_t *point_count,
     std::string *error);
 

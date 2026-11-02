@@ -18,7 +18,7 @@ bool check(bool condition, const std::string &message) {
     return condition;
 }
 
-// Points whose coordinates say which one they are: x is the index, y a spread over several tiles.
+// Points whose coordinates say which one they are: x is the index, y a spread over several chunks.
 CollectedPoint make_point(std::size_t n) {
     const double x = static_cast<double>(n % 97) * 0.37 - 5.0;
     const double y = static_cast<double>((n * 31) % 101) * 0.29 - 7.0;
@@ -55,23 +55,23 @@ int main() {
         std::size_t seen = 0;
         std::size_t pieces = 0;
         bool in_order = true;
-        ok &= check(read_spill_chunks(directory / "soundings.bin", origins, 7000, [&](CollectedPointCloud &chunk, std::size_t first) {
+        ok &= check(read_spill_pieces(directory / "soundings.bin", origins, 7000, [&](CollectedPointCloud &piece, std::size_t first) {
                         pieces++;
-                        in_order = in_order && first == seen && chunk.size() <= 7000;
-                        for (std::size_t n = 0; n < chunk.size(); n++) {
+                        in_order = in_order && first == seen && piece.size() <= 7000;
+                        for (std::size_t n = 0; n < piece.size(); n++) {
                             const CollectedPoint expected = make_point(first + n);
                             const Vec3 &origin = origins[(first + n) % 50];
-                            in_order = in_order && chunk[n].point.z == expected.point.z && chunk[n].point.y == expected.point.y &&
-                                       chunk[n].point.x == expected.point.x && chunk[n].origin.x == origin.x &&
-                                       chunk[n].origin.y == origin.y && chunk[n].origin.z == origin.z;
+                            in_order = in_order && piece[n].point.z == expected.point.z && piece[n].point.y == expected.point.y &&
+                                       piece[n].point.x == expected.point.x && piece[n].origin.x == origin.x &&
+                                       piece[n].origin.y == origin.y && piece[n].origin.z == origin.z;
                         }
-                        seen += chunk.size();
+                        seen += piece.size();
                         return true;
                     }, &error), "the spill file is read in pieces: " + error);
         ok &= check(seen == count && pieces == 4 && in_order, "the pieces hold every point, in order, with their sensor positions and first indices");
 
         pieces = 0;
-        ok &= check(read_spill_chunks(directory / "soundings.bin", origins, 7000, [&](CollectedPointCloud &, std::size_t) {
+        ok &= check(read_spill_pieces(directory / "soundings.bin", origins, 7000, [&](CollectedPointCloud &, std::size_t) {
                         pieces++;
                         return false;
                     }, &error) && pieces == 1, "a callback that returns false stops the reading");
@@ -81,43 +81,43 @@ int main() {
                         range[0].point.z == 12345.0 && range[99].point.z == 12444.0 && range[0].origin.x == origins[12345 % 50].x,
                     "a range of the spill file is read by index");
         ok &= check(!read_spill_range(directory / "soundings.bin", origins, count - 10, 100, &range, &error), "a range past the end is an error");
-        ok &= check(!read_spill_chunks(directory / "soundings.bin", std::vector<Vec3>(10), 100, [](CollectedPointCloud &, std::size_t) { return true; }, &error) &&
+        ok &= check(!read_spill_pieces(directory / "soundings.bin", std::vector<Vec3>(10), 100, [](CollectedPointCloud &, std::size_t) { return true; }, &error) &&
                         error.find("ping") != std::string::npos,
                     "a ping that the track does not have is an error");
-        ok &= check(!read_spill_chunks(directory / "missing.bin", origins, 10, [](CollectedPointCloud &, std::size_t) { return true; }, &error),
+        ok &= check(!read_spill_pieces(directory / "missing.bin", origins, 10, [](CollectedPointCloud &, std::size_t) { return true; }, &error),
                     "a missing spill file is an error");
     }
 
-    // ---- the tile files
+    // ---- the chunk files
     {
-        constexpr double tile = 4.0;
+        constexpr double chunk = 4.0;
         constexpr double halo = 0.5;
-        TileBins bins(directory / "tiles", tile, halo, 3000);   // flushed several times
-        ok &= check(bins.open(&error), "the tile directory opens: " + error);
-        std::map<std::pair<int, int>, std::vector<std::size_t>> expected;   // tile -> indices, in order
+        ChunkBins bins(directory / "chunks", chunk, halo, 3000);   // flushed several times
+        ok &= check(bins.open(&error), "the chunk directory opens: " + error);
+        std::map<std::pair<int, int>, std::vector<std::size_t>> expected;   // chunk -> indices, in order
         std::map<std::pair<int, int>, std::size_t> expected_owned;
         for (std::size_t n = 0; n < count; n++) {
             const CollectedPoint point = make_point(n);
             ok &= bins.add(point, &error);
-            for_each_tile_of_point(point.point.x, point.point.y, tile, halo, [&](int i, int j, bool owned) {
+            for_each_chunk_of_point(point.point.x, point.point.y, chunk, halo, [&](int i, int j, bool owned) {
                 expected[{i, j}].push_back(n);
                 if (owned) {
                     expected_owned[{i, j}]++;
                 }
             });
         }
-        ok &= check(bins.finish(&error), "the tile files are finished: " + error);
-        ok &= check(bins.tiles().size() == expected.size(), "the tile files are the tiles the points fall in");
-        ok &= check(bins.owned_point_count() == count, "every point is owned by exactly one tile");
+        ok &= check(bins.finish(&error), "the chunk files are finished: " + error);
+        ok &= check(bins.chunks().size() == expected.size(), "the chunk files are the chunks the points fall in");
+        ok &= check(bins.owned_point_count() == count, "every point is owned by exactly one chunk");
 
         bool counts_match = true;
         bool contents_match = true;
         for (const auto &entry : expected) {
-            const auto found = bins.tiles().find(entry.first);
-            counts_match = counts_match && found != bins.tiles().end() && found->second.total == entry.second.size() &&
+            const auto found = bins.chunks().find(entry.first);
+            counts_match = counts_match && found != bins.chunks().end() && found->second.total == entry.second.size() &&
                            found->second.owned == expected_owned[entry.first];
             CollectedPointCloud points;
-            if (!bins.read_tile(entry.first.first, entry.first.second, &points, &error) || points.size() != entry.second.size()) {
+            if (!bins.read_chunk(entry.first.first, entry.first.second, &points, &error) || points.size() != entry.second.size()) {
                 contents_match = false;
                 continue;
             }
@@ -125,15 +125,15 @@ int main() {
                 contents_match = contents_match && points[k].point.z == static_cast<double>(entry.second[k]);
             }
         }
-        ok &= check(counts_match, "each tile file counts its owned and halo points");
-        ok &= check(contents_match, "each tile file holds its points in the order they were added");
+        ok &= check(counts_match, "each chunk file counts its owned and halo points");
+        ok &= check(contents_match, "each chunk file holds its points in the order they were added");
 
-        // A point within the halo of a tile edge is in both tiles; one in the middle of a tile is in one.
+        // A point within the halo of a chunk edge is in both chunks; one in the middle of a chunk is in one.
         std::size_t shared = 0;
         for (const auto &entry : expected) {
             shared += entry.second.size();
         }
-        ok &= check(shared > count, "points near tile edges are in more than one tile file");
+        ok &= check(shared > count, "points near chunk edges are in more than one chunk file");
 
         std::set<double> owned_seen;
         std::size_t owned_total = 0;
@@ -144,10 +144,10 @@ int main() {
                         owned_total += owned.size();
                         return true;
                     }, &error), "the owned points are visited: " + error);
-        ok &= check(owned_total == count && owned_seen.size() == count, "each point is visited once, by the tile that owns it");
+        ok &= check(owned_total == count && owned_seen.size() == count, "each point is visited once, by the chunk that owns it");
 
         bins.remove();
-        ok &= check(!std::filesystem::exists(directory / "tiles"), "removing the tile files removes their directory");
+        ok &= check(!std::filesystem::exists(directory / "chunks"), "removing the chunk files removes their directory");
     }
 
     std::error_code ignored;

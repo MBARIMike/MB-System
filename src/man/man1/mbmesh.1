@@ -48,7 +48,7 @@ is supplied as the first non-option argument. If it names a directory instead,
 \fBmbmesh\fR reconstructs nothing and writes \fBmbmesh_survey.html\fR in the current
 directory: a viewer page with a check box for every .glb file beneath that directory,
 in accordions that mirror its layout, for example a survey directory with
-\fImultibeam\fR and \fIlidar\fR subdirectories. The tiles of a tileset are left out and its
+\fImultibeam\fR and \fIlidar\fR subdirectories. The chunk files and the tiles of a tileset are left out and its
 tileset.json is offered. The track.glb files are switched on when the page opens, the other GLBs are not. The page has an overview viewpoint over all the mbmesh GLBs found, as the page of a run does,
 with the GeoOrigin of the first. A GLB with another GeoOrigin, or with absolute vertices, does not line up
 with it, and is logged as an ERROR that names it. \fB--geoviewpoint\fR adds GeoViewpoints to its
@@ -75,7 +75,7 @@ never limited, but a warning is printed when it needs more than about 2 billion
 cells, which may take hours. The implementation clamps the resolved value to a
 supported range and uses it to derive default normal-estimation, Poisson, and
 trimming parameters. Use \fB--info\fR to see the resulting cell size and
-tile plan before running.
+chunk plan before running.
 .TP
 .B \--geoorigin[=\fIlon,lat,elev\fR], \-G[\fIlon,lat,elev\fR]
 Write vertices as ECEF offsets from a GeoOrigin, with the same syntax and meaning
@@ -124,30 +124,30 @@ handle; use more than the greatest depth. The \fBCopy GeoViewpoint\fR button tak
 again, so the option it gives is for the true heights.
 .TP
 .B \--chunk-size \fImeters\fR
-Reconstruct in square horizontal tiles of about this size (rounded up to a whole
+Reconstruct in square horizontal chunks of about this size (rounded up to a whole
 number of Poisson cells) instead of in one pass. Chunking turns on
 automatically when a single Poisson grid would exceed about 8 million cells.
 See \fBChunked reconstruction\fR below.
 .TP
 .B \--chunk-halo \fImeters\fR
-Read this many meters of neighboring points beyond the edge of each tile, rounded up to a whole
+Read this many meters of neighboring points beyond the edge of each chunk, rounded up to a whole
 number of Poisson cells. The default is the reach of the normal estimation, splatting and
 trimming. A halo smaller than that reach is used, with a warning. A larger halo needs more memory,
-disk and time, because every tile reconstructs its halo again, and it changes the tile size; it
-did not improve the match of neighboring tiles at their edges. It has an effect only when the run is chunked.
+disk and time, because every chunk reconstructs its halo again, and it changes the chunk size; it
+did not improve the match of neighboring chunks at their edges. It has an effect only when the run is chunked.
 .TP
 .B \--chunk \fIi,j\fR
-Reconstruct only tile (i,j). Tile (i,j) covers x from i*size to (i+1)*size and y
+Reconstruct only chunk (i,j). Chunk (i,j) covers x from i*size to (i+1)*size and y
 from j*size to (j+1)*size in the local east-north frame. Intended for testing.
 .TP
 .B \--max-chunks \fIn\fR
-Stop after n tiles. Intended for testing.
+Stop after n chunks. Intended for testing.
 .TP
 .B \--threads \fIn\fR
-Number of tiles reconstructed at the same time when chunking. The default is the
-smaller of the number of processor cores and 4. Each tile holds its own Poisson
-grid, so memory use grows with this value. With automatic tiling, a larger value
-also gives smaller tiles, since at least two tiles per thread are wanted. The
+Number of chunks reconstructed at the same time when chunking. The default is the
+smaller of the number of processor cores and 4. Each chunk holds its own Poisson
+grid, so memory use grows with this value. With automatic chunking, a larger value
+also gives smaller chunks, since at least two chunks per thread are wanted. The
 output does not depend on it.
 .TP
 .B \--void-size \fIm\fR
@@ -163,12 +163,12 @@ as does surface that disagrees with the soundings, except for holes that are ent
 .B \--spill-points \fIn\fR
 A survey with more than \fIn\fR accepted soundings (default 50000000) is not held
 in memory. The soundings are written to a file in a directory \fBmbmesh_work\fR
-beside the results, and then sorted into one file per tile, each holding the
-points of the tile and of its halo, so that memory use follows the size of a tile
-and not of the survey. Each tile is reconstructed from its file and gives the same
+beside the results, and then sorted into one file per chunk, each holding the
+points of the chunk and of its halo, so that memory use follows the size of a chunk
+and not of the survey. Each chunk is reconstructed from its file and gives the same
 mesh as from memory. The directory is deleted when the run ends. The disk needs
 28 bytes for each sounding for the spill file, and 48 bytes for each point,
-about 1.3 times as many as there are, for the tile files, which are small when
+about 1.3 times as many as there are, for the chunk files, which are small when
 \fB\--decimate\fR is on. Use \fB-O\fR to put the work directory on a disk with room. 0 always spills. Chunking, which this needs, is turned on for such a
 survey. The files that hold points as one file, \fBpointcloud.glb\fR,
 \fBorigins.glb\fR, \fBnormals.glb\fR and the oriented PLY, then hold one point in n,
@@ -185,9 +185,9 @@ about 100 of its iterations reached the residual of 473 Jacobi iterations.
 .B \--poisson-iterations \fIn\fR
 Number of iterations of the solver, from 1 to 100000, for either solver. By
 default \fBsor\fR takes one iteration per cell across the longest edge of
-each tile's grid, but at least 50, and \fBjacobi\fR takes a count chosen from the
+each chunk's grid, but at least 50, and \fBjacobi\fR takes a count chosen from the
 level of detail, between 200 and 500. The relative residual after the iterations,
-which shows how far the solver converged, is logged with \fB-V\fR for each tile
+which shows how far the solver converged, is logged with \fB-V\fR for each chunk
 and at INFO level in a single pass.
 .TP
 .B \--decimate \fImeters\fR
@@ -197,7 +197,7 @@ The legacy single-dash form \fB-decimate\fR is also accepted.
 .B \--info
 Print dataset information and the reconstruction plan, and exit before mesh
 reconstruction. This includes input counts, geodetic bounds, the estimated point
-spacing, and the resulting Poisson cell size, tile plan and cell count. This
+spacing, and the resulting Poisson cell size, chunk plan and cell count. This
 option was called \fB--metadata\fR in earlier versions; \fB--metadata\fR is no
 longer accepted.
 .TP
@@ -207,11 +207,11 @@ Enable progress and diagnostic logging. Messages use the same line format as
 then the message, for example
 \fBINFO 2026-10-19 14:35:15.419 mbmesh.cpp main():151 [startup] ...\fR.
 Without \fB-V\fR, INFO, WARN and ERROR lines are shown. When chunking, these
-include at most one progress line a minute (tiles finished, percentage, elapsed
+include at most one progress line a minute (chunks finished, percentage, elapsed
 time and an estimate of the time left) and a final line with the time spent in
-each stage, added up over all tiles; in a single pass they include one line for
+each stage, added up over all chunks; in a single pass they include one line for
 each finished stage. \fB-V\fR adds DEBUG lines with the start of each stage and
-a line for each tile. All messages go to standard error.
+a line for each chunk. All messages go to standard error.
 .TP
 .B \-H, \-h, \--help
 Display help message and exit.
@@ -270,7 +270,7 @@ ping. The positions are in the same coordinates as \fBmesh.glb\fR, including any
 .TP
 .B \--tileset
 Also write the surface as an OGC 3D Tiles 1.1 tileset, \fBtileset/tileset.json\fR and
-one \fBtileset/tile_I_J.glb\fR for each reconstruction tile (one tile, \fBtile_0_0.glb\fR, if
+one \fBtileset/tile_I_J.glb\fR for each reconstruction chunk (one tile, \fBtile_0_0.glb\fR, if
 reconstruction is not chunked), so that a viewer can load a part of a survey at a
 time; a browser will not load a GLB of more than 2 GiB. The vertices of a tile are in the
 local east-north-up frame of the reconstruction, written Y-up as glTF requires (X east,
@@ -326,7 +326,7 @@ their corresponding output options are supplied.
 .B mesh.glb
 Final trimmed triangle mesh in binary glTF format. Vertex positions are ECEF
 coordinates, or ECEF offsets from the GeoOrigin when \fB--geoorigin\fR is
-used. When reconstruction is chunked this is the merged mesh of all tiles.
+used. When reconstruction is chunked this is the merged mesh of all chunks.
 .IP
 Every GLB records where it is and how it was made in its glTF \fBasset.extras\fR, in
 three blocks. \fBgeoreference\fR gives the coordinate reference system
@@ -336,14 +336,14 @@ point as \fBgeodeticCenter\fR (longitude, latitude, height), the \fBheightRefere
 (the ellipsoid) and the \fBextent\fR of the data. \fBprovenance\fR gives the software and
 version, the time of execution (UTC), the command line, working directory, user and host,
 and the input datalist, formats and swath files. \fBMB-System\fR gives what the file holds
-(mesh, tile, track, and so on), the sounding counts, the reconstruction settings and the
+(mesh, chunk, track, and so on), the sounding counts, the reconstruction settings and the
 vertical reference. The page written by \fB--html\fR holds the same in X3D
 \fBGeoMetadata\fR and \fBWorldInfo\fR nodes. See \fBsrc/mbmesh/GEOREFERENCE.md\fR for the
 names. The vertical reference has no geoid correction: a sounding's depth, negated, is used
 as a height above the WGS 84 ellipsoid.
 .TP
-.B tiles/tile_I_J.glb
-Written only when reconstruction is chunked: one file per tile, with vertices
+.B chunks/chunk_I_J.glb
+Written only when reconstruction is chunked: one file per chunk, with vertices
 placed exactly as in \fBmesh.glb\fR.
 .TP
 .B tileset/tileset.json, tileset/tile_I_J.glb
@@ -367,7 +367,7 @@ web root, which identify the survey, for example
 \fBmbgrd2gltf\fR writes, with a heads-up display and a Processing Log panel,
 opened with the button at the bottom left, which shows every message of the run
 up to DEBUG level, whether or not \fB-V\fR was used: the command line, the
-settings, the timing of each stage and, when chunking, of each tile. At most
+settings, the timing of each stage and, when chunking, of each chunk. At most
 20,000 messages are kept, and the log says how many were left out. The log is
 written to \fImbmesh.log\fR in the output directory, one message a line, and not
 into the page, which it would make large and hard to edit; the page loads it when
@@ -378,7 +378,7 @@ The page has a check box for every GLB it can show: the .glb files in the output
 directory, with \fBmesh.glb\fR and \fBtrack.glb\fR first, and then the .glb files in the
 web root beside the output directory, such as the product of \fBmbgrd2gltf\fR.
 \fBmesh.glb\fR and \fBtrack.glb\fR are shown when the page opens; the others are
-loaded when first switched on. The tile files are not listed. GLBs from the web
+loaded when first switched on. The chunk files are not listed. GLBs from the web
 root line up with the mesh only if they use the same GeoOrigin. Browsers will not
 load GLB files from a file URL, so the page must be served.
 .TP
@@ -426,13 +426,13 @@ ECEF point-cloud outputs apply the exact inverse transform.
 .br
 A single screened-Poisson grid covers the bounding box of its input, so memory
 and run time grow quickly with survey size and level of detail. In chunked mode
-the survey is divided into square horizontal tiles on a fixed lattice anchored at
-the local-frame origin. Each tile is reconstructed from its own points plus a
+the survey is divided into square horizontal chunks on a fixed lattice anchored at
+the local-frame origin. Each chunk is reconstructed from its own points plus a
 surrounding halo of neighboring points, on a Poisson grid aligned to a lattice
-shared by all tiles, and keeps only the triangles whose centroids fall inside
-it. Tiles are reconstructed in parallel and delivered in tile order. All
-soundings are still read into memory before tiling, and tile edges are not
-welded, so small steps or cracks can occur where tiles meet.
+shared by all chunks, and keeps only the triangles whose centroids fall inside
+it. Chunks are reconstructed in parallel and delivered in chunk order. All
+soundings are still read into memory before chunking, and chunk edges are not
+welded, so small steps or cracks can occur where chunks meet.
 .LP
 .B Automatic settings
 .br

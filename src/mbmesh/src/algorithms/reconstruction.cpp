@@ -21,18 +21,18 @@ using mbmesh::Stopwatch;
 
 namespace {
 
-// A tile grid larger than this is refused outright rather than risking the
-// machine; callers are expected to choose a tile size well below it.
-constexpr double maximum_tile_grid_cells = 1.5e8;
+// A chunk grid larger than this is refused outright rather than risking the
+// machine; callers are expected to choose a chunk size well below it.
+constexpr double maximum_chunk_grid_cells = 1.5e8;
 
-// Prefixes a message with the tile it belongs to, so lines from tiles being
+// Prefixes a message with the chunk it belongs to, so lines from chunks being
 // reconstructed at the same time can be told apart.
 [[nodiscard]] std::string labeled(const std::string &label, const std::string &message) {
     return label.empty() ? message : label + ": " + message;
 }
 
-// A stage's completion line. A single pass has no per-tile progress, so its
-// stages are reported at INFO; with a label the chunked driver reports the tile.
+// A stage's completion line. A single pass has no per-chunk progress, so its
+// stages are reported at INFO; with a label the chunked driver reports the chunk.
 void log_stage_completed(const char *tag, const std::string &label, const std::string &message) {
     if (label.empty()) {
         LOG_INFO(tag, message);
@@ -217,7 +217,7 @@ double round_to_cells(double length, double cell_size) {
 double chunk_halo(const ReconstructionOptions &options) {
     const double cell = options.poisson.cell_size;
 
-    // Points within `reach` of a tile can affect its triangles, through normal
+    // Points within `reach` of a chunk can affect its triangles, through normal
     // splatting or through support trimming.
     const double trimming_reach =
         options.trimming.enabled ? (options.trimming.support_radius > 0.0 ? options.trimming.support_radius : 6.0 * cell) : 0.0;
@@ -229,7 +229,7 @@ double chunk_halo(const ReconstructionOptions &options) {
     return round_to_cells(reach + normal_reach + 4.0 * cell, cell);
 }
 
-Mesh crop_mesh_to_tile(const Mesh &mesh, double min_x, double max_x, double min_y, double max_y) {
+Mesh crop_mesh_to_chunk(const Mesh &mesh, double min_x, double max_x, double min_y, double max_y) {
     Mesh cropped;
     const bool has_normals = mesh.normals.size() == mesh.vertices.size();
     constexpr unsigned int unmapped = std::numeric_limits<unsigned int>::max();
@@ -262,13 +262,13 @@ Mesh crop_mesh_to_tile(const Mesh &mesh, double min_x, double max_x, double min_
 
 namespace {
 
-// The chunked driver. The points of the tiles come from points, held in memory, or from bins, on disk; exactly one is given.
+// The chunked driver. The points of the chunks come from points, held in memory, or from bins, on disk; exactly one is given.
 bool reconstruct_chunked_from(
     const CollectedPointCloud *points,
-    const TileBins *bins,
+    const ChunkBins *bins,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
-    const TileCallback &on_tile,
+    const ChunkCallback &on_chunk,
     ChunkingStats *stats,
     std::string *error) {
 
@@ -277,12 +277,12 @@ bool reconstruct_chunked_from(
     counts = ChunkingStats();
 
     const double cell = options.poisson.cell_size;
-    const double tile = chunking.tile_size;
+    const double chunk = chunking.chunk_size;
     const double halo = chunking.halo;
 
-    if (cell <= 0.0 || tile <= 0.0 || halo < 0.0) {
+    if (cell <= 0.0 || chunk <= 0.0 || halo < 0.0) {
         if (error != nullptr) {
-            *error = "chunked reconstruction needs a positive cell size and tile size and a non-negative halo";
+            *error = "chunked reconstruction needs a positive cell size and chunk size and a non-negative halo";
         }
         return false;
     }
@@ -293,27 +293,27 @@ bool reconstruct_chunked_from(
         return false;
     }
 
-    // ---------------------------------------------------------------- bin points into tiles
+    // ---------------------------------------------------------------- bin points into chunks
     //
-    // A point is stored in the tile that owns it and in every neighboring tile
+    // A point is stored in the chunk that owns it and in every neighboring chunk
     // whose halo reaches it. In memory only indices are stored, not copies of
-    // points; on disk the tile files were written beforehand (see TileBins).
+    // points; on disk the chunk files were written beforehand (see ChunkBins).
 
-    struct Tile {
+    struct Chunk {
         std::vector<std::uint32_t> indices;
         std::size_t owned = 0;
     };
-    std::map<std::pair<int, int>, Tile> tiles;
+    std::map<std::pair<int, int>, Chunk> chunks;
 
     if (points != nullptr) {
         for (std::size_t n = 0; n < points->size(); n++) {
             const double x = (*points)[n].point.x;
             const double y = (*points)[n].point.y;
-            for_each_tile_of_point(x, y, tile, halo, [&](int i, int j, bool owned) {
-                if (chunking.single_tile && (i != chunking.tile_i || j != chunking.tile_j)) {
+            for_each_chunk_of_point(x, y, chunk, halo, [&](int i, int j, bool owned) {
+                if (chunking.single_chunk && (i != chunking.chunk_i || j != chunking.chunk_j)) {
                     return;
                 }
-                Tile &entry = tiles[{i, j}];
+                Chunk &entry = chunks[{i, j}];
                 entry.indices.push_back(static_cast<std::uint32_t>(n));
                 if (owned) {
                     entry.owned++;
@@ -322,23 +322,23 @@ bool reconstruct_chunked_from(
         }
     }
     else {
-        for (const auto &entry : bins->tiles()) {
-            if (chunking.single_tile && (entry.first.first != chunking.tile_i || entry.first.second != chunking.tile_j)) {
+        for (const auto &entry : bins->chunks()) {
+            if (chunking.single_chunk && (entry.first.first != chunking.chunk_i || entry.first.second != chunking.chunk_j)) {
                 continue;
             }
-            tiles[entry.first].owned = entry.second.owned;   // the points stay on disk
+            chunks[entry.first].owned = entry.second.owned;   // the points stay on disk
         }
     }
 
-    for (const auto &entry : tiles) {
+    for (const auto &entry : chunks) {
         if (entry.second.owned > 0) {
-            counts.tiles_with_points++;
+            counts.chunks_with_points++;
         }
     }
-    LOG_INFO("[chunking]", "tile_size=" + std::to_string(tile) + " m, halo=" + std::to_string(halo) + " m, " +
-               std::to_string(counts.tiles_with_points) + " tiles contain points");
+    LOG_INFO("[chunking]", "chunk_size=" + std::to_string(chunk) + " m, halo=" + std::to_string(halo) + " m, " +
+               std::to_string(counts.chunks_with_points) + " chunks contain points");
 
-    // ---------------------------------------------------------------- choose the tiles to run
+    // ---------------------------------------------------------------- choose the chunks to run
     struct Job {
         int i = 0;
         int j = 0;
@@ -347,39 +347,39 @@ bool reconstruct_chunked_from(
     };
     std::vector<Job> jobs;
 
-    for (auto &entry : tiles) {
-        Tile &current = entry.second;
+    for (auto &entry : chunks) {
+        Chunk &current = entry.second;
         if (current.owned == 0) {
-            continue;   // the ring of halo-only tiles around the survey
+            continue;   // the ring of halo-only chunks around the survey
         }
-        if (current.owned < chunking.minimum_tile_points) {
-            counts.tiles_skipped_sparse++;
-            LOG_DEBUG("[chunking]", "tile " + std::to_string(entry.first.first) + "," + std::to_string(entry.first.second) +
+        if (current.owned < chunking.minimum_chunk_points) {
+            counts.chunks_skipped_sparse++;
+            LOG_DEBUG("[chunking]", "chunk " + std::to_string(entry.first.first) + "," + std::to_string(entry.first.second) +
                                         " skipped: only " + std::to_string(current.owned) + " points");
             continue;
         }
-        if (chunking.max_tiles > 0 && jobs.size() >= chunking.max_tiles) {
+        if (chunking.max_chunks > 0 && jobs.size() >= chunking.max_chunks) {
             break;
         }
         jobs.push_back({entry.first.first, entry.first.second, current.owned, std::move(current.indices)});
     }
-    tiles.clear();
+    chunks.clear();
 
-    // ---------------------------------------------------------------- reconstruct tiles, possibly in parallel
+    // ---------------------------------------------------------------- reconstruct chunks, possibly in parallel
     //
-    // Workers take tiles in order. Finished tiles are handed to on_tile strictly
-    // in tile order, so the output does not depend on the thread count.
+    // Workers take chunks in order. Finished chunks are handed to on_chunk strictly
+    // in chunk order, so the output does not depend on the thread count.
 
     enum class Disposition { Pending, Mesh, Failed, EmptyCrop };
     struct Outcome {
         Disposition disposition = Disposition::Pending;
-        TileResult tile;
+        ChunkResult chunk;
     };
     std::vector<Outcome> outcomes(jobs.size());
 
-    // Start the tiles with the most points first. The last tiles to start decide
+    // Start the chunks with the most points first. The last chunks to start decide
     // when the run ends, so starting small ones last keeps the threads evenly
-    // loaded. Delivery stays in tile order regardless.
+    // loaded. Delivery stays in chunk order regardless.
     std::vector<std::size_t> start_order(jobs.size());
     for (std::size_t n = 0; n < start_order.size(); n++) {
         start_order[n] = n;
@@ -393,7 +393,7 @@ bool reconstruct_chunked_from(
     const Stopwatch reconstruction_timer;
     constexpr double progress_interval_seconds = 60.0;
     double last_progress_seconds = 0.0;
-    ReconstructionTimes stage_totals;   // summed over the tiles, so over threads as well
+    ReconstructionTimes stage_totals;   // summed over the chunks, so over threads as well
     std::size_t next_job = 0;
     std::size_t next_emit = 0;
     bool stop = false;
@@ -403,7 +403,7 @@ bool reconstruct_chunked_from(
     auto run_job = [&](Job &job, Outcome &outcome) -> bool {
         const int i = job.i;
         const int j = job.j;
-        const std::string name = "tile " + std::to_string(i) + "," + std::to_string(j);
+        const std::string name = "chunk " + std::to_string(i) + "," + std::to_string(j);
 
         CollectedPointCloud chunk_points;
         if (points != nullptr) {
@@ -415,7 +415,7 @@ bool reconstruct_chunked_from(
         }
         else {
             std::string read_error;
-            if (!bins->read_tile(i, j, &chunk_points, &read_error)) {
+            if (!bins->read_chunk(i, j, &chunk_points, &read_error)) {
                 std::lock_guard<std::mutex> lock(state_mutex);
                 failed = true;
                 failure = read_error;
@@ -429,25 +429,25 @@ bool reconstruct_chunked_from(
             max_z = std::max(max_z, chunk_point.point.z);
         }
 
-        // The grid covers the tile, its halo and the Poisson padding, with every
-        // face on the global cell lattice so neighboring tiles share grid nodes.
+        // The grid covers the chunk, its halo and the Poisson padding, with every
+        // face on the global cell lattice so neighboring chunks share grid nodes.
         const double xy_margin = halo + options.poisson.padding;
-        ReconstructionOptions tile_options = options;
-        tile_options.poisson.use_fixed_domain = true;
-        tile_options.poisson.domain_bounds = Bounds3D(
-            Vec3(snap_down(i * tile - xy_margin, cell),
-                 snap_down(j * tile - xy_margin, cell),
+        ReconstructionOptions chunk_options = options;
+        chunk_options.poisson.use_fixed_domain = true;
+        chunk_options.poisson.domain_bounds = Bounds3D(
+            Vec3(snap_down(i * chunk - xy_margin, cell),
+                 snap_down(j * chunk - xy_margin, cell),
                  snap_down(min_z - options.poisson.padding, cell)),
-            Vec3(snap_up((i + 1) * tile + xy_margin, cell),
-                 snap_up((j + 1) * tile + xy_margin, cell),
+            Vec3(snap_up((i + 1) * chunk + xy_margin, cell),
+                 snap_up((j + 1) * chunk + xy_margin, cell),
                  snap_up(max_z + options.poisson.padding, cell)));
 
-        const Vec3 size = tile_options.poisson.domain_bounds.size();
+        const Vec3 size = chunk_options.poisson.domain_bounds.size();
         const double grid_cells = (size.x / cell + 1.0) * (size.y / cell + 1.0) * (size.z / cell + 1.0);
-        if (grid_cells > maximum_tile_grid_cells) {
+        if (grid_cells > maximum_chunk_grid_cells) {
             std::ostringstream message;
             message << name << " needs a Poisson grid of " << grid_cells << " cells, which exceeds "
-                    << maximum_tile_grid_cells << "; use a smaller --chunk-size or a coarser level of detail";
+                    << maximum_chunk_grid_cells << "; use a smaller --chunk-size or a coarser level of detail";
             std::lock_guard<std::mutex> lock(state_mutex);
             failed = true;
             failure = message.str();
@@ -457,32 +457,32 @@ bool reconstruct_chunked_from(
         LOG_DEBUG("[chunking]", name + ": " + std::to_string(job.owned) + " owned of " + std::to_string(chunk_points.size()) +
                        " points, grid " + std::to_string(static_cast<long long>(grid_cells)) + " cells");
 
-        TileResult &tile_result = outcome.tile;
-        tile_result.i = i;
-        tile_result.j = j;
-        tile_result.owned_points = job.owned;
-        tile_result.input_points = chunk_points.size();
-        tile_result.result = reconstruct_chunk(chunk_points, tile_options, name);
+        ChunkResult &chunk_result = outcome.chunk;
+        chunk_result.i = i;
+        chunk_result.j = j;
+        chunk_result.owned_points = job.owned;
+        chunk_result.input_points = chunk_points.size();
+        chunk_result.result = reconstruct_chunk(chunk_points, chunk_options, name);
         chunk_points = CollectedPointCloud();
 
-        if (tile_result.result.status != ReconstructionStatus::Ok) {
-            LOG_DEBUG("[chunking]", name + " produced no mesh: " + reconstruction_status_message(tile_result.result.status));
+        if (chunk_result.result.status != ReconstructionStatus::Ok) {
+            LOG_DEBUG("[chunking]", name + " produced no mesh: " + reconstruction_status_message(chunk_result.result.status));
             outcome.disposition = Disposition::Failed;
-            const ReconstructionTimes times = tile_result.result.times;   // the progress line reports them
-            tile_result.result = ReconstructionResult();
-            tile_result.result.times = times;
+            const ReconstructionTimes times = chunk_result.result.times;   // the progress line reports them
+            chunk_result.result = ReconstructionResult();
+            chunk_result.result.times = times;
             return true;
         }
 
-        // Keep only what this tile owns.
-        const double min_x = i * tile;
-        const double max_x = (i + 1) * tile;
-        const double min_y = j * tile;
-        const double max_y = (j + 1) * tile;
+        // Keep only what this chunk owns.
+        const double min_x = i * chunk;
+        const double max_x = (i + 1) * chunk;
+        const double min_y = j * chunk;
+        const double max_y = (j + 1) * chunk;
 
-        ReconstructionResult &result = tile_result.result;
-        result.mesh = crop_mesh_to_tile(result.mesh, min_x, max_x, min_y, max_y);
-        result.raw_mesh = crop_mesh_to_tile(result.raw_mesh, min_x, max_x, min_y, max_y);
+        ReconstructionResult &result = chunk_result.result;
+        result.mesh = crop_mesh_to_chunk(result.mesh, min_x, max_x, min_y, max_y);
+        result.raw_mesh = crop_mesh_to_chunk(result.raw_mesh, min_x, max_x, min_y, max_y);
 
         OrientedPointCloud owned_oriented;
         for (const OrientedPoint &oriented : result.oriented_points) {
@@ -493,11 +493,11 @@ bool reconstruct_chunked_from(
         result.oriented_points = std::move(owned_oriented);
 
         if (result.mesh.indices.empty()) {
-            LOG_DEBUG("[chunking]", name + " has no triangles inside the tile");
+            LOG_DEBUG("[chunking]", name + " has no triangles inside the chunk");
             outcome.disposition = Disposition::EmptyCrop;
-            const ReconstructionTimes times = tile_result.result.times;   // the progress line reports them
-            tile_result.result = ReconstructionResult();
-            tile_result.result.times = times;
+            const ReconstructionTimes times = chunk_result.result.times;   // the progress line reports them
+            chunk_result.result = ReconstructionResult();
+            chunk_result.result.times = times;
             return true;
         }
 
@@ -519,7 +519,7 @@ bool reconstruct_chunked_from(
             }
 
             Outcome outcome;
-            const Stopwatch tile_timer;
+            const Stopwatch chunk_timer;
             if (!run_job(jobs[n], outcome)) {
                 return;
             }
@@ -527,25 +527,25 @@ bool reconstruct_chunked_from(
             std::lock_guard<std::mutex> lock(state_mutex);
             completed_jobs++;
             {
-                const ReconstructionTimes &times = outcome.tile.result.times;
+                const ReconstructionTimes &times = outcome.chunk.result.times;
                 stage_totals.normals += times.normals;
                 stage_totals.poisson += times.poisson;
                 stage_totals.poisson_solve += times.poisson_solve;
                 stage_totals.marching_cubes += times.marching_cubes;
                 stage_totals.trimming += times.trimming;
 
-                // One line per tile at DEBUG; at INFO only a short progress line, and
-                // not more than one a minute, because a survey can have hundreds of tiles.
-                const TileResult &done = outcome.tile;
+                // One line per chunk at DEBUG; at INFO only a short progress line, and
+                // not more than one a minute, because a survey can have hundreds of chunks.
+                const ChunkResult &done = outcome.chunk;
                 std::ostringstream message;
-                message << "tile " << completed_jobs << " of " << jobs.size() << " (" << jobs[n].i << "," << jobs[n].j << ") ";
+                message << "chunk " << completed_jobs << " of " << jobs.size() << " (" << jobs[n].i << "," << jobs[n].j << ") ";
                 if (outcome.disposition == Disposition::Mesh) {
-                    message << "done in " << tile_timer.text() << ": " << done.result.mesh.vertices.size() << " vertices, "
+                    message << "done in " << chunk_timer.text() << ": " << done.result.mesh.vertices.size() << " vertices, "
                             << done.result.mesh.indices.size() / 3 << " triangles";
                 } else if (outcome.disposition == Disposition::EmptyCrop) {
-                    message << "done in " << tile_timer.text() << ": no triangles inside the tile";
+                    message << "done in " << chunk_timer.text() << ": no triangles inside the chunk";
                 } else {
-                    message << "produced no mesh after " << tile_timer.text();
+                    message << "produced no mesh after " << chunk_timer.text();
                 }
                 message << " (normals " << mbmesh::format_duration(times.normals) << ", poisson "
                         << mbmesh::format_duration(times.poisson) << ", marching cubes "
@@ -556,11 +556,11 @@ bool reconstruct_chunked_from(
                 const double elapsed = reconstruction_timer.seconds();
                 if (completed_jobs < jobs.size() && elapsed - last_progress_seconds >= progress_interval_seconds) {
                     last_progress_seconds = elapsed;
-                    // The largest tiles start first, so the estimate is pessimistic early on.
+                    // The largest chunks start first, so the estimate is pessimistic early on.
                     // Padded so that the numbers line up from one line to the next.
                     std::ostringstream progress;
                     progress << std::setw(static_cast<int>(std::to_string(jobs.size()).size())) << completed_jobs << " of " << jobs.size()
-                             << " tiles, " << std::setw(2) << 100 * completed_jobs / jobs.size() << "%, "
+                             << " chunks, " << std::setw(2) << 100 * completed_jobs / jobs.size() << "%, "
                              << mbmesh::format_minutes(elapsed) << " elapsed, about "
                              << mbmesh::format_minutes(elapsed * static_cast<double>(jobs.size() - completed_jobs) /
                                                        static_cast<double>(completed_jobs))
@@ -573,21 +573,21 @@ bool reconstruct_chunked_from(
                 Outcome &ready = outcomes[next_emit++];
                 switch (ready.disposition) {
                 case Disposition::Failed:
-                    counts.tiles_failed++;
+                    counts.chunks_failed++;
                     break;
                 case Disposition::EmptyCrop:
-                    counts.tiles_empty_after_crop++;
+                    counts.chunks_empty_after_crop++;
                     break;
                 case Disposition::Mesh:
-                    counts.tiles_processed++;
-                    if (on_tile && !on_tile(ready.tile)) {
+                    counts.chunks_processed++;
+                    if (on_chunk && !on_chunk(ready.chunk)) {
                         stop = true;
                     }
                     break;
                 case Disposition::Pending:
                     break;
                 }
-                ready.tile = TileResult();   // release the tile's meshes
+                ready.chunk = ChunkResult();   // release the chunk's meshes
             }
         }
     };
@@ -614,7 +614,7 @@ bool reconstruct_chunked_from(
         return false;
     }
     if (completed_jobs > 0) {
-        LOG_INFO("[chunking]", "time summed over all tiles and threads: normals " + mbmesh::format_duration(stage_totals.normals) +
+        LOG_INFO("[chunking]", "time summed over all chunks and threads: normals " + mbmesh::format_duration(stage_totals.normals) +
                                    ", poisson " + mbmesh::format_duration(stage_totals.poisson) + " (solver iterations " +
                                    mbmesh::format_duration(stage_totals.poisson_solve) + "), marching cubes " +
                                    mbmesh::format_duration(stage_totals.marching_cubes) + ", trimming " +
@@ -629,18 +629,18 @@ bool reconstruct_chunked(
     const CollectedPointCloud &points,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
-    const TileCallback &on_tile,
+    const ChunkCallback &on_chunk,
     ChunkingStats *stats,
     std::string *error) {
-    return reconstruct_chunked_from(&points, nullptr, options, chunking, on_tile, stats, error);
+    return reconstruct_chunked_from(&points, nullptr, options, chunking, on_chunk, stats, error);
 }
 
 bool reconstruct_chunked(
-    const TileBins &bins,
+    const ChunkBins &bins,
     const ReconstructionOptions &options,
     const ChunkingOptions &chunking,
-    const TileCallback &on_tile,
+    const ChunkCallback &on_chunk,
     ChunkingStats *stats,
     std::string *error) {
-    return reconstruct_chunked_from(nullptr, &bins, options, chunking, on_tile, stats, error);
+    return reconstruct_chunked_from(nullptr, &bins, options, chunking, on_chunk, stats, error);
 }

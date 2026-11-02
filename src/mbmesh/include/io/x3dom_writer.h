@@ -162,7 +162,7 @@ struct X3DomWriterOptions {
 
 // The GLBs the page offers: those in the output directory, mesh.glb then
 // track.glb then the rest by name, with mesh.glb and track.glb visible at the start,
-// and then those in the web root, which start switched off. The tile files in the
+// and then those in the web root, which start switched off. The chunk files in the
 // subdirectory of the output directory are not listed, since they repeat mesh.glb.
 //
 // With page_in_output_directory the page is mbmesh.html inside the output directory, so the uris are
@@ -186,8 +186,8 @@ struct X3DomWriterOptions {
 [[nodiscard]] std::filesystem::path survey_page_path();
 
 // Every GLB beneath survey_directory, as models whose groups are the directory paths, starting with the
-// name of the survey directory itself, with uris relative to page_directory. The tiles of a tileset (the
-// directories "tiles" and "tileset") are left out, and the tileset.json of a tileset is offered in their
+// name of the survey directory itself, with uris relative to page_directory. The chunk files and the tiles
+// of a tileset (the directories "chunks" and "tileset") are left out, and the tileset.json of a tileset is offered in their
 // place. mesh.glb comes first in a directory, then track.glb, then the rest by name. The track.glb files start switched on, the others off.
 // From the georeference in the GLBs written by mbmesh, geo gets an overview as a run's page has: its center is
 // the middle of the union of the extents, its height fits them in a 45 degree view. The GeoOrigin of geo is that

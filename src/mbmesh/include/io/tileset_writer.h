@@ -9,7 +9,7 @@
 #include "provenance.h"
 
 /*
- * OGC 3D Tiles output: the tiles of a chunked reconstruction as a tileset that a viewer can load a part at
+ * OGC 3D Tiles output: the chunks of a chunked reconstruction as the tiles of a tileset that a viewer can load a part at
  * a time, instead of one file of the whole surface.
  *
  * A tile's content is a GLB in the local east-north-up frame of the reconstruction, written Y-up as glTF

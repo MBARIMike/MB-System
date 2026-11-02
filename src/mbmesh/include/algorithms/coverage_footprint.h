@@ -11,9 +11,9 @@
 // The support trimming uses it to tell a void inside the surveyed surface (the sonar returns thin out in a depression of
 // the seafloor and under an overhang) from the edge of the survey, and from a sheet of mesh that hangs under the
 // surveyed surface: it asks whether there is a sounding near a point, in three dimensions, however far the soundings
-// are from the tile being reconstructed.
+// are from the chunk being reconstructed.
 //
-// The raster is of the whole survey, so a void that crosses the boundary of two reconstruction tiles is seen whole from
+// The raster is of the whole survey, so a void that crosses the boundary of two reconstruction chunks is seen whole from
 // both. It is in the x, y of the local frame, with z up.
 class CoverageFootprint {
 public:
@@ -48,7 +48,7 @@ public:
 
     // Whether there is a sounding near x, y, z: a cell within the tolerance of x, y, in the horizontal plane, that holds
     // soundings and whose heights, widened by the tolerance, include z. The raster is of the whole survey, so this
-    // knows the soundings of the neighboring tiles, and it knows their heights, so that a point under or over the
+    // knows the soundings of the neighboring chunks, and it knows their heights, so that a point under or over the
     // surface of the soundings, as a sheet of the mesh beyond their edge is, is not near them.
     [[nodiscard]] bool has_sounding_near(double x, double y, double z, double tolerance) const {
         const int ci = cell_index(x, origin_x_);

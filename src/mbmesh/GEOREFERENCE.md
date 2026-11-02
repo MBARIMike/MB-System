@@ -151,7 +151,7 @@ know JSON-LD sees ordinary members, and the names stay readable.
 What PROV-O does not cover has no link and is plain description: `commandLine`, `workingDirectory`,
 `host`, `user` and the details inside `software` and `inputs`. The GLB, which `prov:wasGeneratedBy` the
 run, is the document the block is in, so it is not repeated. No `endedAtTime` is given because the
-extras are fixed before the run has finished (tiles are written while it is still reconstructing).
+extras are fixed before the run has finished (chunks are written while it is still reconstructing).
 
 The `@`-keywords are not data: the X3D `MetadataSet` and the `WorldInfo` lines leave them out and show
 only the values. The block has not been run through a JSON-LD processor; the mapping follows the
@@ -168,12 +168,12 @@ software is free to ignore it. Every file has:
 | `verticalReference` | What the height of a vertex is measured from, in words (see "What these files do not say"). |
 | `vertexConvention` | In words, how to get from vertices to `crs` coordinates. The same statement as `vertexCoordinates` and `center`. |
 | `geoOrigin.mode` | `"none"`, `"automatic"` (the center of the data) or `"specified"` (`--geoorigin=lon,lat,elev`). |
-| `content` | `role` (what this file holds, for example `"mesh"`, `"tile"`, `"track"`) and a `description`; a tile also has `tile`, its `[i, j]` index. |
+| `content` | `role` (what this file holds, for example `"mesh"`, `"chunk"`, `"tileset_tile"`, `"track"`) and a `description`; a chunk also has `chunk`, and a tile of a tileset `tile`, its `[i, j]` index. |
 
 `mbmesh` adds `soundings` (pings, read, accepted, flagged, out of bounds), `area`
 (whether `-R` was applied, and its bounds) and `reconstruction` (level of detail, Poisson
 cell size, normal search radius, point spacing, single-pass or chunked, and for chunked
-runs the tile size, halo and thread count). `mbgrd2gltf` adds `grid` (columns, rows,
+runs the chunk size, halo and thread count). `mbgrd2gltf` adds `grid` (columns, rows,
 longitude and latitude spacing, and the `"gridline"` or `"pixel"` registration) and
 `model` (vertical exaggeration, mean altitude the exaggeration is applied about, whether
 the output is binary and whether and how finely Draco compression quantizes). The
