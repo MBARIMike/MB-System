@@ -148,6 +148,20 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotEqual(proc.returncode, 0, value)
       self.assertIn('not a whole number of soundings', proc.stdout.decode(), value)
 
+  def testVoidSizeIsValidated(self):
+    # --void-size takes a size in meters, zero or more.
+    for value in ('abc', '-5', ''):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--void-size=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('not a size in meters', proc.stdout.decode(), value)
+
+  def testHelpDocumentsVoidSize(self):
+    output = subprocess.check_output([self.cmd, '-h'],
+                                      stderr=subprocess.STDOUT).decode()
+    self.assertIn('--void-size', output)
+
   def testHelpDocumentsSpillPoints(self):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()

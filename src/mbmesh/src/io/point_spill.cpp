@@ -215,6 +215,9 @@ bool TileBins::open(std::string *error) {
 
 bool TileBins::add(const CollectedPoint &point, std::string *error) {
     for_each_tile_of_point(point.point.x, point.point.y, tile_size_, halo_, [&](int i, int j, bool owned) {
+        if (owned && footprint_ != nullptr) {
+            footprint_->add(point.point.x, point.point.y, point.point.z);
+        }
         if (only_tile_ && (i != only_i_ || j != only_j_)) {
             return;
         }

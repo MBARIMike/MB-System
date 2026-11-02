@@ -93,6 +93,10 @@ struct Options {
     // in memory, and sorted into one file per tile (see io/point_spill.h). Zero spills them all.
     std::size_t spill_points = 50000000;
 
+    // --void-size: voids in the surveyed surface that the support trimming would remove, up to this many meters across,
+    // are put back (see SupportTrimmingOptions::footprint). Zero keeps them out.
+    double void_size = 2.0;
+
     PointDecimationOptions decimation;
     NormalEstimationOptions normals;
     ScreenedPoissonOptions poisson;

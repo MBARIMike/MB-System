@@ -78,6 +78,14 @@ if(buildTests)
   target_link_libraries(mbmesh_test_settings PRIVATE mbio Threads::Threads)
   add_test(NAME mbmesh_settings COMMAND mbmesh_test_settings)
 
+  add_executable(mbmesh_test_coverage_footprint
+    tests/test_coverage_footprint.cpp
+    src/algorithms/support_trimming.cpp)
+  target_compile_features(mbmesh_test_coverage_footprint PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_coverage_footprint PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mbmesh_coverage_footprint COMMAND mbmesh_test_coverage_footprint)
+
   add_executable(mbmesh_test_point_spill
     tests/test_point_spill.cpp
     src/io/point_spill.cpp)

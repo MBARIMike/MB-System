@@ -192,6 +192,9 @@ ReconstructionResult reconstruct_chunk(
                 << ", rejected=(neighbors=" << diagnostics.rejected_for_neighbors
                 << ", offset=" << diagnostics.rejected_for_normal_offset
                 << ", alignment=" << diagnostics.rejected_for_normal_alignment << ")"
+                << ", restored_in_voids=" << diagnostics.void_vertices_restored << " (nearest sample median "
+                << diagnostics.void_distance_median << " m, largest " << diagnostics.void_distance_maximum << " m), near_data_restored=" << diagnostics.near_vertices_restored
+                << ", holes_restored=" << diagnostics.holes_restored << ", islands_removed=" << diagnostics.islands_removed
                 << ", output=" << result.mesh.vertices.size() << " vertices, "
                 << result.mesh.indices.size() / 3 << " triangles in " << stage_timer.text()
                 << " (reconstruction total " << total_timer.text() << ")";

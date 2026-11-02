@@ -123,6 +123,7 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `--poisson-iterations` | `n` | Iterations of the solver, from 1 to 100000, for either solver. By default `sor` takes one iteration per cell across the longest edge of each tile's grid, but at least 50, and `jacobi` takes a count chosen from the level of detail, 200 to 500. The relative residual after the iterations is logged (see "Log Messages"). |
 | `--threads` | `n` | Tiles reconstructed at once when chunking. Defaults to the smaller of the core count and 4. Each tile holds its own Poisson grid, so memory grows with this. |
 | `--spill-points` | `n` | A survey with more than `n` accepted soundings (default 50,000,000) is not held in memory: the soundings go to a file in `mbmesh_work` beside the results and are sorted into one file per tile, so memory follows the size of a tile and not of the survey. `0` always does. See [Surveys larger than memory](#surveys-larger-than-memory). |
+| `--void-size` | `m` | Put back voids of up to `m` meters across (default 2) that support trimming would remove from inside the surface, where the soundings thin out in the depressions of the seafloor and under overhangs. Gaps at the edge of the survey stay trimmed. `0` trims them all. See [Voids](#voids-in-the-surveyed-surface). |
 | `--decimate`, `-decimate` | `meters` | Enable voxel-grid point decimation with the specified cell size. |
 | `--info` | none | Read the datalist, print dataset information (counts, bounds, point spacing) and the reconstruction plan (cell size, tile plan, cell count), and exit before mesh reconstruction. This option was called `--metadata` in earlier versions; `--metadata` is no longer accepted. |
 | `--html`, `-html` | none | Write an X3DOM viewer page, with a heads-up display, a check box for each GLB and the processing log, in the parent of the output directory (`mbmesh_output.html`), and print the command to serve and view it. |
@@ -449,6 +450,26 @@ If trimming removes the entire mesh, `mbmesh` exits with an error instead of wri
 
 Known limitation: boundary triangles with one or two rejected vertices are removed entirely rather than clipped, which can leave ragged edges.
 
+#### Voids in the surveyed surface
+
+Sound returns less from the floor of a depression and from under an overhang than from its rim, so the soundings there are sparse. A vertex of the screened Poisson surface bridging the gap fails the neighbor test (too few samples within the support radius, which is a few cells), and trimming removes the surface across the whole void, leaving holes inside a surface that is otherwise there.
+
+`--void-size` (default 2 m) puts these back. Before reconstruction, a raster of the soundings of the whole survey is made (cells of 1/32 of the void size, 0.06 m for the default), keeping the lowest and highest height of the soundings in each cell. The raster is of the whole survey, so a void that crosses the border of two tiles is seen whole from both. After the normal trimming, a vertex that was rejected only for too few neighbors is put back if a sounding is within three support radii of it: the soundings are sparse there, as in the lanes between lines and in the pinholes that the support radius, chosen from the median spacing of the densest parts of the survey, does not reach. A vertex that is farther from the soundings is put back only if it passes three tests:
+
+- Its nearest sounding is no farther than half the void size.
+- Soundings are all around it, in the tangent plane of the mesh. The vertex is probed in eight directions, at twice the distance of its nearest sounding, and a sounding must be within half that distance of the probe, in three dimensions (the raster knows the heights of the soundings of the whole survey and not only those of the tile). Up to two of the eight may fail. This tells a void, which the soundings surround, from the extrapolation of a surface beyond the edge of its soundings, which has none on the far side.
+- Its nearest few soundings are beside it, along the surface, and not above it along its normal. This keeps out the sheet that screened Poisson closes under an overhang or beyond the edge of the data, which hangs below the surveyed surface, so that a raster seen from above cannot tell it from a void.
+
+A vertex rejected because the samples disagree with the surface (the point-to-plane offset) stays out, as does a vertex with no soundings on its far side, so the edge of the survey is trimmed as before.
+
+Finally, small holes that remain inside the trimmed surface are put back, if they pass the second and third test: a patch of rejected triangles that the open boundary of the raw mesh does not touch, so that kept triangles surround it, with an area of up to that of a disk the size of the void (3.1 square meters for the default). The vertices of such a hole were often rejected only because the surface is a few cells off the samples on a rough bottom. The edge of the survey touches the open boundary of the mesh, so it is not filled.
+
+Last, the pieces of the trimmed surface that are not joined to the rest, are smaller than a quarter of that area (0.8 square meters for the default), and do not touch the open boundary of the raw mesh are taken out: the specks that sound reflected from the water column, a fish or a bubble leave, and the end of a sheet of extrapolated surface that the other steps left.
+
+The raster is in the horizontal plane of the local frame, with z up. It takes a few hundred thousand cells for a survey of a few hundred meters, 8 bytes each, and at most 16 million (the cells grow if the survey is larger). The debug log (`-V`) shows its size, and the support-trimming line of each tile shows how many vertices were put back and how far from a sample they are.
+
+The surface in a void is the interpolation of the screened Poisson solution from the rim. It is smooth and plausible, not measured: it will not show a feature that the sonar did not see.
+
 ### 9. Output Generation
 
 Implemented in:
@@ -610,6 +631,8 @@ High-value future work:
 - **tests/test_marching_cubes.cpp** - Marching-cubes test program
 - **tests/test_normal_estimation.cpp** - Normal-estimation test program
 - **tests/test_support_trimming.cpp** - Support-trimming test program
+- **include/algorithms/coverage_footprint.h** - Raster of where the soundings are and how high, for the support trimming
+- **tests/test_coverage_footprint.cpp** - Footprint and void-restoration test program
 - **tests/test_chunking.cpp** - Chunked reconstruction test (accuracy, coverage, ownership, thread-count independence) on a synthetic surface
 - **tests/test_x3dom_writer.cpp** - Viewer page writer tests (controls, GeoOrigin, track checkbox, log escaping)
 - **tests/test_tileset.cpp** - Tileset tests: Y-up content and the transform give back the ECEF position of each vertex, and the structure of `tileset.json`

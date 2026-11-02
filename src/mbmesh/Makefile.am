@@ -27,8 +27,13 @@ mbmesh_SOURCES = \
 
 mbmesh_LDADD = $(top_builddir)/src/mbio/libmbio.la -lpthread
 
-check_PROGRAMS = mbmesh_test_support_trimming
-TESTS = mbmesh_test_support_trimming
+check_PROGRAMS = mbmesh_test_support_trimming mbmesh_test_coverage_footprint
+TESTS = mbmesh_test_support_trimming mbmesh_test_coverage_footprint
+
+mbmesh_test_coverage_footprint_CXXFLAGS = -std=c++17
+mbmesh_test_coverage_footprint_SOURCES = \
+	tests/test_coverage_footprint.cpp \
+	src/algorithms/support_trimming.cpp
 
 mbmesh_test_support_trimming_CXXFLAGS = -std=c++17
 mbmesh_test_support_trimming_SOURCES = \

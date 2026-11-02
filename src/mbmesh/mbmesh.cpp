@@ -30,6 +30,7 @@
 #include "io/track.h"
 #include "io/x3dom_writer.h"
 
+#include "algorithms/coverage_footprint.h"
 #include "algorithms/point_decimation.h"
 #include "algorithms/normal_estimation.h"
 #include "algorithms/reconstruction.h"
@@ -348,6 +349,7 @@ int main(int argc, char **argv) {
             settings << "single-pass reconstruction";
         }
         LOG_INFO("[settings]", settings.str());
+
     }
 
     // What is recorded in every GLB and in the HTML page about where the models are
@@ -482,11 +484,19 @@ int main(int argc, char **argv) {
     // decimation applied on the way, and only the tiles being reconstructed are in memory.
     // ====================================================================================================
 
+    // Where the soundings are, and how high, for the support trimming to tell a void from the edge of the survey.
+    std::unique_ptr<CoverageFootprint> footprint;
+    if (options.void_size > 0.0) {
+        const Bounds3D &b = preprocessed.metadata.bounds;
+        footprint = std::make_unique<CoverageFootprint>(b.min.x, b.min.y, b.max.x, b.max.y, options.void_size / 32.0);
+    }
+
     std::unique_ptr<TileBins> bins;
     std::size_t binned_points = 0;
     if (preprocessed.read_result.spilled) {
         const Stopwatch binning_timer;
         bins = std::make_unique<TileBins>(work_directory(options) / "tiles", options.chunking.tile_size, options.chunking.halo);
+        bins->set_footprint(footprint.get());
         if (options.chunking.single_tile) {
             bins->keep_only_tile(options.chunking.tile_i, options.chunking.tile_j);
         }
@@ -552,7 +562,20 @@ int main(int argc, char **argv) {
     // Reconstruction: normal estimation, screened Poisson, marching cubes, support trimming
     // ====================================================================================================
 
-    const ReconstructionOptions reconstruction = reconstruction_options(options);
+    ReconstructionOptions reconstruction = reconstruction_options(options);
+    if (footprint != nullptr) {
+        if (bins == nullptr) {
+            for (const CollectedPoint &point : decimated_points) {
+                footprint->add(point.point.x, point.point.y, point.point.z);
+            }
+        }
+        reconstruction.trimming.footprint = footprint.get();
+        reconstruction.trimming.max_void_distance = 0.5 * options.void_size;
+        reconstruction.trimming.max_hole_area = 3.141592653589793 * 0.25 * options.void_size * options.void_size;
+        reconstruction.trimming.min_island_area = 0.25 * reconstruction.trimming.max_hole_area;
+        LOG_DEBUG("[footprint]", "raster of the soundings: " + std::to_string(footprint->cell_count()) + " cells of " + std::to_string(footprint->cell_size()) +
+                                     " m (" + mbmesh::format_bytes(static_cast<double>(footprint->cell_count()) * 8.0) + ")");
+    }
 
     Mesh clean_mesh;
     Mesh raw_mesh;
@@ -859,6 +882,7 @@ Options parse_options(int argc, char **argv) {
         {"lifted", required_argument, nullptr, 1023},
         {"pointcloud-colormap", required_argument, nullptr, 1024},
         {"spill-points", required_argument, nullptr, 1025},
+        {"void-size", required_argument, nullptr, 1026},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -1034,6 +1058,17 @@ Options parse_options(int argc, char **argv) {
             break;
         }
 
+        case 1026: {
+            char *end = nullptr;
+            const double size = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(size) || size < 0.0) {
+                LOG_ERROR("invalid --void-size:", std::string("'") + optarg + "' is not a size in meters, zero or more");
+                std::exit(1);
+            }
+            options.void_size = size;
+            break;
+        }
+
         case 1023: {
             char *end = nullptr;
             options.lift_meters = std::strtod(optarg, &end);
@@ -1185,6 +1220,10 @@ void print_usage() {
     std::cout << "                               file in mbmesh_work, beside the results, and are sorted into one file per tile, so that\n";
     std::cout << "                               memory follows the size of a tile, not of the survey; 0 always does. Needs chunking, which\n";
     std::cout << "                               it turns on for such a survey. The point outputs then hold at most 5 million points\n";
+    std::cout << "      --void-size <m>          Put back voids of up to this many meters across [2] that support trimming would remove from\n";
+    std::cout << "                               inside the surface: where the soundings thin out, in the depressions of the seafloor and\n";
+    std::cout << "                               under overhangs, and the surveyed surface surrounds the gap. Gaps at the edge of the\n";
+    std::cout << "                               survey stay trimmed. 0 trims them all\n";
     std::cout << "      --poisson-solver <name>  How the Poisson grid equation is solved: " << poisson_solver_names() << " [sor]\n";
     std::cout << "      --poisson-iterations <n> Iterations of the solver, for either solver [sor: one per cell across the longest grid edge,\n";
     std::cout << "                               at least 50; jacobi: chosen from the level of detail, 200 to 500]. The\n";

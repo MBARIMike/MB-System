@@ -143,6 +143,16 @@ grid, so memory use grows with this value. With automatic tiling, a larger value
 also gives smaller tiles, since at least two tiles per thread are wanted. The
 output does not depend on it.
 .TP
+.B \--void-size \fIm\fR
+Put back voids of up to \fIm\fR meters across (default 2) that support trimming
+would remove from inside the surface. The sonar returns thin out in the depressions
+of the seafloor and under overhangs, so the surface bridging such a gap has too few
+soundings near it and is trimmed, leaving a hole in a surface that is otherwise there.
+A raster of the soundings of the whole survey, with their heights, shows where they are. A mesh vertex that was rejected only for too few neighbors
+is kept if it has a sounding within three support radii, or if its nearest sounding is within half this size, soundings are all around it in the tangent plane
+of the mesh, and the nearest soundings are beside it and not above it. Pieces of the surface that are not joined to the rest and are smaller than a quarter of the area of a disk of this size are taken out. Gaps at the edge of the survey stay trimmed,
+as does surface that disagrees with the soundings, except for holes that are entirely surrounded by surface that is kept, which are filled up to the area of a disk of this size. Zero trims all of them.
+.TP
 .B \--spill-points \fIn\fR
 A survey with more than \fIn\fR accepted soundings (default 50000000) is not held
 in memory. The soundings are written to a file in a directory \fBmbmesh_work\fR
@@ -426,7 +436,8 @@ trimming settings from the data and requested level of detail.
 .LP
 .B Support trimming
 .br
-Unsupported mesh regions are removed after marching cubes. If trimming removes
+Unsupported mesh regions are removed after marching cubes, except for the voids
+inside the surveyed surface that \fB--void-size\fR puts back. If trimming removes
 the entire mesh, \fBmbmesh\fR exits with an error rather than writing an empty
 surface.
 .LP

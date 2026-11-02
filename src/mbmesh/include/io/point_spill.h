@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "../algorithms/coverage_footprint.h"
 #include "../data_types/geometry.h"
 
 /*******************************************************************************
@@ -125,6 +126,10 @@ public:
         only_j_ = j;
     }
 
+    // Adds every point to the footprint (which must outlive the adds), whether or not
+    // keep_only_tile() drops it.
+    void set_footprint(CoverageFootprint *footprint) { footprint_ = footprint; }
+
     // Creates the directory, and empties it of earlier tile files.
     [[nodiscard]] bool open(std::string *error);
     [[nodiscard]] bool add(const CollectedPoint &point, std::string *error);
@@ -158,6 +163,7 @@ private:
     bool only_tile_ = false;
     int only_i_ = 0;
     int only_j_ = 0;
+    CoverageFootprint *footprint_ = nullptr;
     std::map<std::pair<int, int>, TileBinCount> counts_;
     std::map<std::pair<int, int>, CollectedPointCloud> buffers_;
     std::size_t buffered_ = 0;

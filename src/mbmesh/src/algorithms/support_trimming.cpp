@@ -5,7 +5,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <numeric>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -13,6 +17,16 @@ namespace {
 constexpr std::size_t maximum_spacing_samples = 2048;
 constexpr double automatic_support_radius_scale = 2.5;
 constexpr double automatic_normal_offset_scale = 1.5;
+
+// A vertex put back in a void is probed in eight directions in its tangent plane, and a sounding must be within this
+// multiple of the distance of its nearest sounding of each probe; if the nearest is farther than the support radius,
+// the median over its nearest few of the cosine of the angle between the normal of the mesh and the direction to the
+// sounding may not exceed the second constant (see support_trimming()).
+// A vertex short of neighbors is put back if the nearest sounding is within this multiple of the support radius.
+constexpr double near_sounding_scale = 3.0;
+constexpr double void_probe_tolerance = 0.5;
+constexpr std::size_t void_neighbor_count = 5;
+constexpr double void_maximum_normal_alignment = 0.8;
 
 enum class VertexSupportResult {
     supported,
@@ -173,6 +187,195 @@ VertexSupportResult vertex_support_result(
     return VertexSupportResult::supported;
 }
 
+// Vertices on an edge that only one triangle has: the raw mesh is open there.
+std::vector<bool> open_boundary_vertices(const Mesh &raw_mesh) {
+    const std::size_t vertex_count = raw_mesh.vertices.size();
+    const std::size_t triangle_count = raw_mesh.indices.size() / 3;
+    std::unordered_map<std::uint64_t, int> edge_uses;
+    edge_uses.reserve(raw_mesh.indices.size());
+    const auto edge_key = [](unsigned int a, unsigned int b) { return (static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b); };
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        edge_uses[edge_key(tri[0], tri[1])]++;
+        edge_uses[edge_key(tri[1], tri[2])]++;
+        edge_uses[edge_key(tri[2], tri[0])]++;
+    }
+    std::vector<bool> on_open_boundary(vertex_count, false);
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        for (int k = 0; k < 3; k++) {
+            if (edge_uses[edge_key(tri[k], tri[(k + 1) % 3])] == 1) {
+                on_open_boundary[tri[k]] = true;
+                on_open_boundary[tri[(k + 1) % 3]] = true;
+            }
+        }
+    }
+    return on_open_boundary;
+}
+
+// Takes out the pieces of the trimmed surface that are not joined to the rest and are smaller than min_area, which the
+// open boundary of the raw mesh does not touch (a piece at the edge of the reconstructed region may be the end of a
+// larger surface): the specks that sound reflected from the water column, a fish or a bubble leave, and the end of an
+// extrapolated sheet.
+void remove_islands(const Mesh &raw_mesh, double min_area, std::vector<bool> *supported_vertices, SupportTrimmingDiagnostics *diagnostics) {
+    const std::size_t vertex_count = raw_mesh.vertices.size();
+    const std::size_t triangle_count = raw_mesh.indices.size() / 3;
+    const std::vector<bool> on_open_boundary = open_boundary_vertices(raw_mesh);
+
+    std::vector<unsigned int> parent(vertex_count);
+    std::iota(parent.begin(), parent.end(), 0u);
+    const auto find = [&](unsigned int v) {
+        while (parent[v] != v) {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        return v;
+    };
+    std::vector<bool> kept(triangle_count, false);
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        if (tri[0] >= vertex_count || tri[1] >= vertex_count || tri[2] >= vertex_count) {
+            continue;
+        }
+        if ((*supported_vertices)[tri[0]] && (*supported_vertices)[tri[1]] && (*supported_vertices)[tri[2]]) {
+            kept[t] = true;
+            parent[find(tri[1])] = find(tri[0]);
+            parent[find(tri[2])] = find(tri[0]);
+        }
+    }
+    struct Island {
+        double area = 0.0;
+        bool open = false;
+    };
+    std::unordered_map<unsigned int, Island> islands;
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        if (!kept[t]) {
+            continue;
+        }
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        Island &island = islands[find(tri[0])];
+        island.area += 0.5 * cross(raw_mesh.vertices[tri[1]] - raw_mesh.vertices[tri[0]], raw_mesh.vertices[tri[2]] - raw_mesh.vertices[tri[0]]).length();
+        for (int k = 0; k < 3; k++) {
+            island.open = island.open || on_open_boundary[tri[k]];
+        }
+    }
+    std::size_t removed = 0;
+    for (const auto &entry : islands) {
+        if (!entry.second.open && entry.second.area < min_area) {
+            removed++;
+        }
+    }
+    if (removed == 0) {
+        return;
+    }
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        if (!kept[t]) {
+            continue;
+        }
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        const Island &island = islands[find(tri[0])];
+        if (!island.open && island.area < min_area) {
+            for (int k = 0; k < 3; k++) {
+                (*supported_vertices)[tri[k]] = false;
+            }
+        }
+    }
+    if (diagnostics != nullptr) {
+        diagnostics->islands_removed = removed;
+    }
+}
+
+// Puts back the holes that trimming leaves inside the surface: a patch of rejected triangles (they share rejected
+// vertices) that the open boundary of the raw mesh does not touch, so that it is surrounded by triangles that are kept,
+// and no larger than max_area. The vertices of a hole that were rejected only because the surface is a few cells off
+// the samples there, and the sparse patches of a rough bottom, are such holes.
+void restore_holes(const Mesh &raw_mesh, double max_area, const std::function<bool(std::size_t)> &vertex_ok, std::vector<bool> *supported_vertices,
+                   SupportTrimmingDiagnostics *diagnostics) {
+    const std::size_t vertex_count = raw_mesh.vertices.size();
+    const std::size_t triangle_count = raw_mesh.indices.size() / 3;
+
+    const std::vector<bool> on_open_boundary = open_boundary_vertices(raw_mesh);
+
+    // Patches: the rejected vertices of each rejected triangle are joined.
+    std::vector<unsigned int> parent(vertex_count);
+    std::iota(parent.begin(), parent.end(), 0u);
+    const auto find = [&](unsigned int v) {
+        while (parent[v] != v) {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        return v;
+    };
+    constexpr unsigned int none = std::numeric_limits<unsigned int>::max();
+    std::vector<std::size_t> rejected_triangles;
+    std::vector<unsigned int> anchor;   // a rejected vertex of each rejected triangle
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        if (tri[0] >= vertex_count || tri[1] >= vertex_count || tri[2] >= vertex_count) {
+            continue;
+        }
+        unsigned int first = none;
+        for (int k = 0; k < 3; k++) {
+            if ((*supported_vertices)[tri[k]]) {
+                continue;
+            }
+            if (first == none) {
+                first = tri[k];
+            } else {
+                parent[find(tri[k])] = find(first);
+            }
+        }
+        if (first != none) {
+            rejected_triangles.push_back(t);
+            anchor.push_back(first);
+        }
+    }
+
+    struct Patch {
+        double area = 0.0;
+        bool open = false;
+        std::vector<std::size_t> triangles;
+    };
+    std::unordered_map<unsigned int, Patch> patches;
+    for (std::size_t n = 0; n < rejected_triangles.size(); n++) {
+        const std::size_t t = rejected_triangles[n];
+        const unsigned int *tri = &raw_mesh.indices[3 * t];
+        Patch &patch = patches[find(anchor[n])];
+        patch.area += 0.5 * cross(raw_mesh.vertices[tri[1]] - raw_mesh.vertices[tri[0]], raw_mesh.vertices[tri[2]] - raw_mesh.vertices[tri[0]]).length();
+        patch.triangles.push_back(t);
+        for (int k = 0; k < 3; k++) {
+            patch.open = patch.open || on_open_boundary[tri[k]];
+        }
+    }
+    for (const auto &entry : patches) {
+        const Patch &patch = entry.second;
+        if (patch.open || patch.area > max_area) {
+            continue;
+        }
+        bool acceptable = true;
+        for (const std::size_t t : patch.triangles) {
+            for (int k = 0; k < 3 && acceptable; k++) {
+                const unsigned int v = raw_mesh.indices[3 * t + k];
+                acceptable = (*supported_vertices)[v] || vertex_ok(v);
+            }
+            if (!acceptable) {
+                break;
+            }
+        }
+        if (!acceptable) {
+            continue;
+        }
+        for (const std::size_t t : patch.triangles) {
+            for (int k = 0; k < 3; k++) {
+                (*supported_vertices)[raw_mesh.indices[3 * t + k]] = true;
+            }
+        }
+        if (diagnostics != nullptr) {
+            diagnostics->holes_restored++;
+        }
+    }
+}
+
 Mesh compact_supported_triangles(const Mesh &raw_mesh, const std::vector<bool> &supported_vertices) {
     Mesh trimmed_mesh;
     trimmed_mesh.indices.reserve(raw_mesh.indices.size());
@@ -271,6 +474,7 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
     const std::vector<Vec3> mesh_normals = raw_mesh.normals.size() == raw_mesh.vertices.size() ? raw_mesh.normals : calculate_vertex_normals(raw_mesh);
 
     std::vector<bool> supported_vertices(raw_mesh.vertices.size(), false);
+    std::vector<VertexSupportResult> results(raw_mesh.vertices.size(), VertexSupportResult::insufficient_neighbors);
     for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
         const VertexSupportResult result =
             vertex_support_result(raw_mesh.vertices[i],
@@ -281,6 +485,7 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
                                   max_normal_offset,
                                   minimum_neighbors,
                                   minimum_normal_alignment);
+        results[i] = result;
         supported_vertices[i] = result == VertexSupportResult::supported;
 
         if (diagnostics == nullptr) {
@@ -301,6 +506,105 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
             diagnostics->rejected_for_normal_alignment++;
             break;
         }
+    }
+
+    // A vertex of a void, or of a hole, has soundings all around it, in the surface. Three tests tell it from the
+    // extrapolation of a surface beyond the edge of its soundings, which has none on the far side, and from a sheet of
+    // the mesh that hangs under the surveyed surface (the closure of the screened Poisson surface under an overhang),
+    // whose soundings are all above it. The footprint, which is seen from above, and the distance to the nearest
+    // sounding, cannot tell them apart:
+    //  - the nearest sounding is no farther than max_void_distance (if that is set);
+    //  - for a vertex farther than the support radius from its nearest sounding, the soundings near it are beside it
+    //    and not above or below it;
+    //  - the tangent plane of the mesh at the vertex is probed in eight directions, at twice the distance of the
+    //    nearest sounding, and a sounding must be near each probe, from the raster of the footprint, which knows the
+    //    soundings of the whole survey and their heights. Up to two of the eight may fail, for a vertex at the corner of
+    //    a void or in the lanes between lines of soundings. Without a footprint the probes cannot fail.
+    const auto surrounded_by_samples = [&](std::size_t i, double *distance) {
+        const std::vector<KDTree::Neighbor> nearest = tree.k_nearest(raw_mesh.vertices[i], void_neighbor_count);
+        if (nearest.empty()) {
+            return false;
+        }
+        *distance = std::sqrt(nearest[0].distance_squared);
+        if (options.max_void_distance > 0.0 && *distance > options.max_void_distance) {
+            return false;
+        }
+        if (*distance > support_radius) {
+            std::vector<double> alignments;
+            for (const KDTree::Neighbor &neighbor : nearest) {
+                const Vec3 to_sample = points[neighbor.index] - raw_mesh.vertices[i];
+                const double length = to_sample.length();
+                alignments.push_back(length > vec3_epsilon ? std::fabs(dot(to_sample, mesh_normals[i])) / length : 0.0);
+            }
+            std::nth_element(alignments.begin(), alignments.begin() + alignments.size() / 2, alignments.end());
+            if (alignments[alignments.size() / 2] > void_maximum_normal_alignment) {
+                return false;
+            }
+        }
+        const Vec3 normal = normalize(mesh_normals[i]);
+        const Vec3 axis = std::fabs(normal.z) < 0.9 ? Vec3(0.0, 0.0, 1.0) : Vec3(1.0, 0.0, 0.0);
+        const Vec3 u = normalize(cross(normal, axis));
+        const Vec3 w = cross(normal, u);
+        const double reach = std::max(2.0 * *distance, 2.0 * support_radius);
+        const double tolerance = std::max(void_probe_tolerance * *distance, 2.0 * support_radius);
+        int uncovered = 0;
+        for (int k = 0; k < 8; k++) {
+            const double angle = k * 0.25 * 3.14159265358979323846;
+            const Vec3 probe = raw_mesh.vertices[i] + (u * std::cos(angle) + w * std::sin(angle)) * reach;
+            // The footprint knows the soundings of the whole survey, with their heights, so it is right at the border of
+            // the tile too, where the points of this tile do not reach.
+            if (options.footprint != nullptr && !options.footprint->has_sounding_near(probe.x, probe.y, probe.z, tolerance)) {
+                uncovered++;
+            }
+        }
+        return uncovered <= 2;
+    };
+
+    // A vertex that is only short of neighbors, and has a sounding close by, is not a void: the soundings are sparse there.
+    // This puts back the pinholes and the sparse lanes between lines that the support radius, which is chosen from the
+    // median spacing of the densest parts of the survey, does not reach.
+    if (options.max_void_distance > 0.0) {
+        for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
+            if (supported_vertices[i] || results[i] != VertexSupportResult::insufficient_neighbors) {
+                continue;
+            }
+            const std::vector<KDTree::Neighbor> nearest = tree.k_nearest(raw_mesh.vertices[i], 1);
+            if (!nearest.empty() && std::sqrt(nearest[0].distance_squared) <= near_sounding_scale * support_radius) {
+                supported_vertices[i] = true;
+                if (diagnostics != nullptr) {
+                    diagnostics->near_vertices_restored++;
+                }
+            }
+        }
+    }
+
+    if (options.footprint != nullptr) {
+        std::vector<double> distances;
+        for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
+            double distance = 0.0;
+            if (supported_vertices[i] || results[i] != VertexSupportResult::insufficient_neighbors || !surrounded_by_samples(i, &distance)) {
+                continue;
+            }
+            supported_vertices[i] = true;
+            distances.push_back(distance);
+        }
+        if (diagnostics != nullptr && !distances.empty()) {
+            diagnostics->void_vertices_restored = distances.size();
+            std::nth_element(distances.begin(), distances.begin() + distances.size() / 2, distances.end());
+            diagnostics->void_distance_median = distances[distances.size() / 2];
+            diagnostics->void_distance_maximum = *std::max_element(distances.begin(), distances.end());
+        }
+    }
+
+    if (options.max_hole_area > 0.0 && std::isfinite(options.max_hole_area)) {
+        restore_holes(raw_mesh, options.max_hole_area, [&](std::size_t v) {
+            double distance = 0.0;
+            return surrounded_by_samples(v, &distance);
+        }, &supported_vertices, diagnostics);
+    }
+
+    if (options.min_island_area > 0.0 && std::isfinite(options.min_island_area)) {
+        remove_islands(raw_mesh, options.min_island_area, &supported_vertices, diagnostics);
     }
 
     Mesh trimmed_mesh = compact_supported_triangles(raw_mesh, supported_vertices);
