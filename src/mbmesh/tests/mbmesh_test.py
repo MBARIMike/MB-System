@@ -159,6 +159,15 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotEqual(proc.returncode, 0, value)
       self.assertIn('not a size in meters', proc.stdout.decode(), value)
 
+  def testIslandSizeIsValidated(self):
+    # --island-size takes a size in meters, zero or more.
+    for value in ('abc', '-5', ''):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--island-size=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('not a size in meters', proc.stdout.decode(), value)
+
   def testChunkHaloIsValidated(self):
     # --chunk-halo takes a size in meters, more than zero.
     for value in ('abc', '-1', '0', ''):
@@ -188,6 +197,7 @@ class MbmeshTest(unittest.TestCase):
     output = subprocess.check_output([self.cmd, '-h'],
                                       stderr=subprocess.STDOUT).decode()
     self.assertIn('--void-size', output)
+    self.assertIn('--island-size', output)
 
   def testHelpDocumentsSpillPoints(self):
     output = subprocess.check_output([self.cmd, '-h'],

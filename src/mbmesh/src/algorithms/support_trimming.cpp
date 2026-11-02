@@ -614,3 +614,77 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
     }
     return trimmed_mesh;
 }
+
+void remove_unsupported_pieces(Mesh *mesh, const CoverageFootprint &footprint, double tolerance, double max_area, PieceRemoval *removed) {
+    if (removed != nullptr) {
+        *removed = PieceRemoval();
+    }
+    if (mesh == nullptr || mesh->vertices.empty() || mesh->indices.size() < 3 || !(max_area > 0.0)) {
+        return;
+    }
+    const std::size_t vertex_count = mesh->vertices.size();
+    std::vector<unsigned int> parent(vertex_count);
+    std::iota(parent.begin(), parent.end(), 0u);
+    const auto find = [&](unsigned int v) {
+        while (parent[v] != v) {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        return v;
+    };
+    for (std::size_t t = 0; t + 2 < mesh->indices.size(); t += 3) {
+        parent[find(mesh->indices[t + 1])] = find(mesh->indices[t]);
+        parent[find(mesh->indices[t + 2])] = find(mesh->indices[t]);
+    }
+
+    struct Piece {
+        double area = 0.0;
+        std::size_t vertices = 0;
+        std::size_t supported = 0;
+    };
+    std::unordered_map<unsigned int, Piece> pieces;
+    std::vector<bool> used(vertex_count, false);
+    for (std::size_t t = 0; t + 2 < mesh->indices.size(); t += 3) {
+        const unsigned int a = mesh->indices[t], b = mesh->indices[t + 1], c = mesh->indices[t + 2];
+        pieces[find(a)].area += 0.5 * cross(mesh->vertices[b] - mesh->vertices[a], mesh->vertices[c] - mesh->vertices[a]).length();
+        for (const unsigned int v : {a, b, c}) {
+            if (!used[v]) {
+                used[v] = true;
+                Piece &piece = pieces[find(v)];
+                piece.vertices++;
+                const Vec3 &p = mesh->vertices[v];
+                if (footprint.has_sounding_near(p.x, p.y, p.z, tolerance)) {
+                    piece.supported++;
+                }
+            }
+        }
+    }
+    std::unordered_map<unsigned int, bool> remove;
+    std::size_t pieces_removed = 0;
+    for (const auto &entry : pieces) {
+        const bool drop = entry.second.area <= max_area && 2 * entry.second.supported < entry.second.vertices;
+        remove[entry.first] = drop;
+        pieces_removed += drop ? 1 : 0;
+    }
+    if (pieces_removed == 0) {
+        return;
+    }
+    std::vector<bool> keep_vertex(vertex_count, false);
+    std::size_t triangles_removed = 0;
+    for (std::size_t t = 0; t + 2 < mesh->indices.size(); t += 3) {
+        if (remove[find(mesh->indices[t])]) {
+            triangles_removed++;
+            continue;
+        }
+        for (int k = 0; k < 3; k++) {
+            keep_vertex[mesh->indices[t + k]] = true;
+        }
+    }
+    const std::size_t vertices_before = mesh->vertices.size();
+    *mesh = compact_supported_triangles(*mesh, keep_vertex);
+    if (removed != nullptr) {
+        removed->pieces = pieces_removed;
+        removed->triangles = triangles_removed;
+        removed->vertices = vertices_before - mesh->vertices.size();
+    }
+}

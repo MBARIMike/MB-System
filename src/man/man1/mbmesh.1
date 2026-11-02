@@ -183,6 +183,14 @@ is kept if it has a sounding within three support radii, or if its nearest sound
 of the mesh, and the nearest soundings are beside it and not above it. Pieces of the surface that are not joined to the rest and are smaller than a quarter of the area of a disk of this size are taken out. Gaps at the edge of the survey stay trimmed,
 as does surface that disagrees with the soundings, except for holes that are entirely surrounded by surface that is kept, which are filled up to the area of a disk of this size. Zero trims all of them.
 .TP
+.B \--island-size \fIm\fR
+When the survey is reconstructed in chunks, remove from \fImesh.glb\fR the pieces of the
+merged mesh that are not joined to the rest and have an area of up to that of a disk
+\fIm\fR meters across (default 2), if fewer than half of their vertices have a
+sounding within a support radius, in three dimensions, as the raster of the soundings knows
+them. Small pieces with soundings under them, such as rock that the trimming cut from the rest, stay. Zero
+keeps all of them. \fIraw_mesh.glb\fR is not cleaned.
+.TP
 .B \--spill-points \fIn\fR
 A survey with more than \fIn\fR accepted soundings (default 50000000) is not held
 in memory. The soundings are written to a file in a directory \fBmbmesh_work\fR

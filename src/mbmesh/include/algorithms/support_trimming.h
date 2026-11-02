@@ -82,3 +82,18 @@ Mesh support_trimming(
     SupportTrimmingOptions options,
     SupportTrimmingDiagnostics *diagnostics = nullptr
 );
+
+// What remove_unsupported_pieces took out.
+struct PieceRemoval {
+    std::size_t pieces = 0;      // connected pieces of the mesh removed
+    std::size_t triangles = 0;
+    std::size_t vertices = 0;
+};
+
+// The mesh of a survey in chunks, put together, can have pieces that are not joined to the rest and have no soundings near
+// them: the leftovers of the sheets that the trimming of each chunk took the connection of away from, or reflections that
+// the chunks that they were in held and trimmed in part. This removes the pieces of mesh (triangles that share
+// vertices) with an area of at most max_area that are not supported: fewer than half of their vertices have a sounding
+// within tolerance (in three dimensions, as the footprint knows them). A small piece with soundings under it, a
+// real rock or a ledge that the trimming cut from the rest, stays.
+void remove_unsupported_pieces(Mesh *mesh, const CoverageFootprint &footprint, double tolerance, double max_area, PieceRemoval *removed = nullptr);

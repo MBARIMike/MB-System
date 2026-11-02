@@ -106,6 +106,9 @@ struct Options {
     // --void-size: voids in the surveyed surface that the support trimming would remove, up to this many meters across,
     // are put back (see SupportTrimmingOptions::footprint). Zero keeps them out.
     double void_size = 2.0;
+    // --island-size: pieces of the mesh of a survey reconstructed in chunks that are not joined to the rest and have no
+    // soundings near them, up to this many meters across (as a disc), are removed. 0 keeps them.
+    double island_size = 2.0;
 
     PointDecimationOptions decimation;
     NormalEstimationOptions normals;

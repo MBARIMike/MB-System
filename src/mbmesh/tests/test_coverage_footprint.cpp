@@ -213,5 +213,33 @@ int main() {
     if (failures == 0) {
         std::printf("coverage footprint tests passed\n");
     }
+    // Pieces of a mesh not joined to the rest: one with soundings near it stays, one in the air goes, a large one stays.
+    {
+        CoverageFootprint ground(-10.0, -10.0, 10.0, 10.0, 0.1);
+        for (double x = -9.0; x <= 9.0; x += 0.05) {
+            for (double y = -9.0; y <= 9.0; y += 0.05) {
+                ground.add(x, y, 0.0);
+            }
+        }
+        const auto add_square = [](Mesh *mesh, double x, double y, double z, double side) {
+            const unsigned int base = static_cast<unsigned int>(mesh->vertices.size());
+            mesh->vertices.push_back(Vec3(x, y, z));
+            mesh->vertices.push_back(Vec3(x + side, y, z));
+            mesh->vertices.push_back(Vec3(x + side, y + side, z));
+            mesh->vertices.push_back(Vec3(x, y + side, z));
+            for (const unsigned int k : {0u, 1u, 2u, 0u, 2u, 3u}) {
+                mesh->indices.push_back(base + k);
+            }
+        };
+        Mesh pieces;
+        add_square(&pieces, -8.0, -8.0, 0.0, 1.0);    // on the soundings
+        add_square(&pieces, 0.0, 0.0, 2.0, 1.0);      // two meters above them
+        add_square(&pieces, 3.0, 3.0, 2.0, 4.0);      // above them too, but larger than the limit
+        PieceRemoval removed;
+        remove_unsupported_pieces(&pieces, ground, 0.3, 2.0, &removed);
+        check(removed.pieces == 1 && removed.triangles == 2 && removed.vertices == 4, "the small piece in the air is removed");
+        check(pieces.indices.size() == 12 && pieces.vertices.size() == 8 && pieces.normals.size() == 8, "the supported and the large pieces stay");
+    }
+
     return failures == 0 ? 0 : 1;
 }

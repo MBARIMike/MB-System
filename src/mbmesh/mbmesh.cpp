@@ -415,6 +415,19 @@ int main(int argc, char **argv) {
         }
         {
             std::ostringstream text;
+            text << std::setprecision(6);
+            if (options.island_size > 0.0) {
+                text << "islands: when the survey is reconstructed in chunks, pieces of the mesh not joined to the rest, up to "
+                     << 3.141592653589793 * 0.25 * options.island_size * options.island_size
+                     << " square meters (--island-size " << options.island_size << " m across), are removed if no sounding is within "
+                     << options.trimming.support_radius << " m of most of their vertices";
+            } else {
+                text << "islands: kept (--island-size 0)";
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
+            std::ostringstream text;
             text << std::setprecision(6) << "chunks: ";
             if (!options.chunk_selection.empty()) {
                 text << "only ";
@@ -611,9 +624,10 @@ int main(int argc, char **argv) {
 
     // Where the soundings are, and how high, for the support trimming to tell a void from the edge of the survey.
     std::unique_ptr<CoverageFootprint> footprint;
-    if (options.void_size > 0.0) {
+    if (options.void_size > 0.0 || options.island_size > 0.0) {
         const Bounds3D &b = preprocessed.metadata.bounds;
-        footprint = std::make_unique<CoverageFootprint>(b.min.x, b.min.y, b.max.x, b.max.y, options.void_size / 32.0);
+        footprint = std::make_unique<CoverageFootprint>(b.min.x, b.min.y, b.max.x, b.max.y,
+                                                        (options.void_size > 0.0 ? options.void_size : options.island_size) / 32.0);
     }
 
     std::unique_ptr<ChunkBins> bins;
@@ -692,10 +706,12 @@ int main(int argc, char **argv) {
                 footprint->add(point.point.x, point.point.y, point.point.z);
             }
         }
-        reconstruction.trimming.footprint = footprint.get();
-        reconstruction.trimming.max_void_distance = 0.5 * options.void_size;
-        reconstruction.trimming.max_hole_area = 3.141592653589793 * 0.25 * options.void_size * options.void_size;
-        reconstruction.trimming.min_island_area = 0.25 * reconstruction.trimming.max_hole_area;
+        if (options.void_size > 0.0) {
+            reconstruction.trimming.footprint = footprint.get();
+            reconstruction.trimming.max_void_distance = 0.5 * options.void_size;
+            reconstruction.trimming.max_hole_area = 3.141592653589793 * 0.25 * options.void_size * options.void_size;
+            reconstruction.trimming.min_island_area = 0.25 * reconstruction.trimming.max_hole_area;
+        }
         LOG_DEBUG("[footprint]", "raster of the soundings: " + std::to_string(footprint->cell_count()) + " cells of " + std::to_string(footprint->cell_size()) +
                                      " m (" + mbmesh::format_bytes(static_cast<double>(footprint->cell_count()) * 8.0) + ")");
     }
@@ -826,6 +842,22 @@ int main(int argc, char **argv) {
             const std::size_t welded_raw = keep_raw_mesh ? weld_coincident_vertices(&raw_mesh, weld_tolerance) : 0;
             LOG_INFO("[chunking]", "seams: " + std::to_string(welded) + " vertices of the chunk meshes that coincide with another were merged in mesh.glb" +
                                        (keep_raw_mesh ? " (" + std::to_string(welded_raw) + " in the raw mesh)" : std::string()) + ", in " + weld_timer.text());
+        }
+
+        // Small pieces that are not joined to the rest and have no soundings near them.
+        if (options.island_size > 0.0 && footprint != nullptr) {
+            const Stopwatch island_timer;
+            PieceRemoval removed;
+            remove_unsupported_pieces(&clean_mesh, *footprint, options.trimming.support_radius,
+                                      3.141592653589793 * 0.25 * options.island_size * options.island_size, &removed);
+            LOG_INFO("[chunking]", "islands: " + std::to_string(removed.pieces) + " pieces of up to " +
+                                       std::to_string(3.141592653589793 * 0.25 * options.island_size * options.island_size) +
+                                       " square meters with no soundings near them removed from mesh.glb (" + std::to_string(removed.triangles) +
+                                       " triangles), in " + island_timer.text());
+            if (clean_mesh.vertices.empty() || clean_mesh.indices.empty()) {
+                LOG_ERROR("removing the islands left no mesh; use --island-size 0");
+                return 1;
+            }
         }
     }
 
@@ -1062,6 +1094,7 @@ Options parse_options(int argc, char **argv) {
         {"pointcloud-colormap", required_argument, nullptr, 1024},
         {"spill-points", required_argument, nullptr, 1025},
         {"void-size", required_argument, nullptr, 1026},
+        {"island-size", required_argument, nullptr, 1030},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -1272,6 +1305,17 @@ Options parse_options(int argc, char **argv) {
             break;
         }
 
+        case 1030: {
+            char *end = nullptr;
+            const double size = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(size) || size < 0.0) {
+                LOG_ERROR("invalid --island-size:", std::string("'") + optarg + "' is not a size in meters, zero or more");
+                std::exit(1);
+            }
+            options.island_size = size;
+            break;
+        }
+
         case 1023: {
             char *end = nullptr;
             options.lift_meters = std::strtod(optarg, &end);
@@ -1439,6 +1483,9 @@ void print_usage() {
     std::cout << "                               inside the surface: where the soundings thin out, in the depressions of the seafloor and\n";
     std::cout << "                               under overhangs, and the surveyed surface surrounds the gap. Gaps at the edge of the\n";
     std::cout << "                               survey stay trimmed. 0 trims them all\n";
+    std::cout << "      --island-size <m>        When the survey is reconstructed in chunks, remove from mesh.glb the pieces that are not\n";
+    std::cout << "                               joined to the rest, up to this many meters across [2] (the area of a disc), if no\n";
+    std::cout << "                               sounding is near most of their vertices. Pieces with soundings under them stay. 0 keeps all\n";
     std::cout << "      --poisson-solver <name>  How the Poisson grid equation is solved: " << poisson_solver_names() << " [sor]\n";
     std::cout << "      --poisson-iterations <n> Iterations of the solver, for either solver [sor: one per cell across the longest grid edge,\n";
     std::cout << "                               at least 50; jacobi: chosen from the level of detail, 200 to 500]. The\n";
