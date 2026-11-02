@@ -1195,6 +1195,17 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "              </input> Log\n"
            << "            </td>\n"
            << "          </tr>\n";
+    if (!options.chunk_labels.empty()) {
+        output << "          <tr>\n"
+               << "            <td>Chunks:\n"
+               << "            </td>\n"
+               << "            <td align='right'>\n"
+               << "              <input type='checkbox' checked onclick='document.getElementById(&apos;switch_chunks&apos;)"
+                  ".setAttribute(&apos;whichChoice&apos;, this.checked ? 0 : -1);'>\n"
+               << "              </input> Outlines and names\n"
+               << "            </td>\n"
+               << "          </tr>\n";
+    }
 
     // With nested groups: an accordion for each directory, inside the accordion of its parent, in one cell.
     if (options.nested_groups) {
@@ -1375,6 +1386,44 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         } else if (model.visible) {
             output << "            <Inline id='inline_" << i << "' url='" << escape_html(model.uri) << "' nameSpaceName='model_" << i
                    << "' mapDEFToID='true'></Inline>\n";
+        }
+        output << (lift != 0.0 ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
+    }
+
+    // The outline and the file name of each chunk (--label-chunks), in the coordinates of the models and lifted with them.
+    // The names always face the viewer, whatever the orientation of the page's axes.
+    if (!options.chunk_labels.empty()) {
+        output << std::fixed << std::setprecision(3);
+        output << "        <switch id='switch_chunks' whichChoice='0'>\n"
+               << (lift != 0.0 ? "          <GeoTransform id='transform_chunks' geoSystem='\"GD\" \"WE\"' geoCenter='" + lift_center.str() +
+                                          "' translation='0 " + lift_translation + " 0'>\n"
+                                : "          <transform id='transform_chunks'>\n")
+               << "            <shape>\n"
+               << "              <appearance><material emissiveColor='1 0.85 0'></material></appearance>\n"
+               << "              <indexedLineSet coordIndex='";
+        for (std::size_t n = 0; n < options.chunk_labels.size(); n++) {
+            const std::size_t first = 4 * n;
+            output << first << " " << first + 1 << " " << first + 2 << " " << first + 3 << " " << first << " -1" << (n + 1 < options.chunk_labels.size() ? " " : "");
+        }
+        output << "'>\n                <coordinate point='";
+        for (std::size_t n = 0; n < options.chunk_labels.size(); n++) {
+            for (int corner = 0; corner < 4; corner++) {
+                const double *c = options.chunk_labels[n].corners[corner];
+                output << c[0] << " " << c[1] << " " << c[2] << ((n + 1 < options.chunk_labels.size() || corner < 3) ? ", " : "");
+            }
+        }
+        output << "'></coordinate>\n              </indexedLineSet>\n            </shape>\n";
+        for (const X3DomChunkLabel &label : options.chunk_labels) {
+            output << "            <transform translation='" << label.center[0] << " " << label.center[1] << " " << label.center[2] << "'>\n"
+                   << "              <billboard axisOfRotation='0 0 0'>\n"
+                   << "                <shape>\n"
+                   << "                  <appearance><material diffuseColor='0 0 0' emissiveColor='1 0.85 0'></material></appearance>\n"
+                   << "                  <text string='&quot;" << escape_html(label.name) << "&quot;'>\n"
+                   << "                    <fontStyle family='&quot;SANS&quot;' size='" << label.text_size << "' justify='&quot;MIDDLE&quot;'></fontStyle>\n"
+                   << "                  </text>\n"
+                   << "                </shape>\n"
+                   << "              </billboard>\n"
+                   << "            </transform>\n";
         }
         output << (lift != 0.0 ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
     }

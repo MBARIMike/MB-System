@@ -30,6 +30,9 @@ struct Options {
 
     bool write_html = false;
 
+    // --label-chunks: the --html page draws the outline and the file name of each chunk.
+    bool label_chunks = false;
+
     // --tileset: write the chunks as an OGC 3D Tiles tileset in <output>/tileset (see io/tileset_writer.h).
     bool write_tileset = false;
 

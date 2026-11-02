@@ -80,6 +80,16 @@ struct X3DomModel {
     bool is_tileset = false;
 };
 
+// A chunk of the reconstruction, to be drawn in the page: its outline as a closed line of four corners, and its file
+// name as text that always faces the viewer, at the middle. Positions are in the coordinates of the models (ECEF meters
+// minus the GeoOrigin's ECEF position, or plain ECEF without a GeoOrigin).
+struct X3DomChunkLabel {
+    std::string name;            // the text, for example "chunk_2_-10.glb"
+    double corners[4][3] = {};   // in order around the chunk
+    double center[3] = {};       // where the text is
+    double text_size = 1.0;      // height of the text, in meters
+};
+
 struct X3DomWriterOptions {
     // Shown at the top of the page and as its title.
     std::string title;
@@ -106,6 +116,10 @@ struct X3DomWriterOptions {
 
     // The GLBs the page can show.
     std::vector<X3DomModel> models;
+
+    // If not empty, the page draws the outline of each chunk and its file name (--label-chunks), with a check box
+    // to switch them off. They are lifted with the models by lift_meters.
+    std::vector<X3DomChunkLabel> chunk_labels;
 
     // The georeferencing and provenance metadata, written into the page as X3D
     // metadata: WorldInfo, and a GeoMetadata node whose summary is geo_summary and

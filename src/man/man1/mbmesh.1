@@ -136,6 +136,12 @@ trimming. A halo smaller than that reach is used, with a warning. A larger halo 
 disk and time, because every chunk reconstructs its halo again, and it changes the chunk size; it
 did not improve the match of neighboring chunks at their edges. It has an effect only when the run is chunked.
 .TP
+.B \--label-chunks
+With \fB--html\fR, the page draws the outline of each chunk, at the mean height of its surface,
+and its file name, for example \fBchunk_2_-10.glb\fR, as text that faces the viewer. A check box
+switches them off. It is for finding which chunk a seam, a void or an overhang belongs to. It
+needs a chunked run, and has no effect on the survey page that a directory input writes.
+.TP
 .B \--chunk \fIi,j\fR
 Reconstruct only chunk (i,j). Chunk (i,j) covers x from i*size to (i+1)*size and y
 from j*size to (j+1)*size in the local east-north frame. Intended for testing.

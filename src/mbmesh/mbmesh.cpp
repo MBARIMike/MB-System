@@ -440,7 +440,7 @@ int main(int argc, char **argv) {
         }
         {
             std::vector<std::string> outputs;
-            if (options.write_html) outputs.push_back("viewer page (--html)");
+            if (options.write_html) outputs.push_back(options.label_chunks ? "viewer page with chunk outlines and names (--html, --label-chunks)" : "viewer page (--html)");
             if (options.write_tileset) outputs.push_back("3D Tiles tileset (--tileset)");
             if (options.write_raw_mesh_glb) outputs.push_back("raw mesh (--raw-mesh-glb)");
             if (options.write_pointcloud_glb) outputs.push_back(std::string("point cloud colored by ") + point_color_map_name(options.pointcloud_colormap) + " (--pointcloud-glb)");
@@ -681,6 +681,7 @@ int main(int argc, char **argv) {
 
     Mesh clean_mesh;
     Mesh raw_mesh;
+    std::vector<X3DomChunkLabel> chunk_labels;   // for --label-chunks
     OrientedPointCloud oriented_points;
     const Stopwatch reconstruction_timer;
 
@@ -722,6 +723,34 @@ int main(int argc, char **argv) {
 
             if (options.write_tileset) {
                 add_tileset_tile(chunk.result.mesh, chunk.i, chunk.j);
+            }
+
+            if (options.label_chunks && !chunk.result.mesh.vertices.empty()) {
+                // The square that the chunk owns, at the mean height of its surface, and its name at the middle.
+                const double size = options.chunking.chunk_size;
+                double mean_z = 0.0;
+                for (const Vec3 &vertex : chunk.result.mesh.vertices) {
+                    mean_z += vertex.z;
+                }
+                mean_z /= static_cast<double>(chunk.result.mesh.vertices.size());
+                X3DomChunkLabel label;
+                label.name = chunk_name;
+                label.text_size = 0.1 * size;
+                const double x0 = chunk.i * size;
+                const double y0 = chunk.j * size;
+                const double corner_x[4] = {x0, x0 + size, x0 + size, x0};
+                const double corner_y[4] = {y0, y0, y0 + size, y0 + size};
+                for (int corner = 0; corner < 4; corner++) {
+                    const Vec3 at = output_position(Vec3(corner_x[corner], corner_y[corner], mean_z), chunk_frame, chunk_offset);
+                    label.corners[corner][0] = at.x;
+                    label.corners[corner][1] = at.y;
+                    label.corners[corner][2] = at.z;
+                }
+                const Vec3 middle = output_position(Vec3(x0 + 0.5 * size, y0 + 0.5 * size, mean_z), chunk_frame, chunk_offset);
+                label.center[0] = middle.x;
+                label.center[1] = middle.y;
+                label.center[2] = middle.z;
+                chunk_labels.push_back(label);
             }
 
             append_mesh(&clean_mesh, chunk.result.mesh);
@@ -864,6 +893,12 @@ int main(int argc, char **argv) {
         html_options.metadata = run_metadata(run);
         html_options.geo_summary = geo_metadata_summary(run);
         html_options.models = find_viewer_models(web_root, options.output_directory, options.write_tileset);
+        if (options.label_chunks) {
+            if (chunk_labels.empty()) {
+                LOG_WARN("--label-chunks: no chunks were written (the run was not chunked, or no chunk had a surface), so there is nothing to label");
+            }
+            html_options.chunk_labels = chunk_labels;
+        }
         if (!options.x3dom_url.empty()) {
             html_options.x3dom_url = options.x3dom_url;
         }
@@ -973,6 +1008,7 @@ Options parse_options(int argc, char **argv) {
         {"geoorigin", optional_argument, nullptr, 'G'},
         {"chunk-size", required_argument, nullptr, 1013},
         {"chunk-halo", required_argument, nullptr, 1027},
+        {"label-chunks", no_argument, nullptr, 1028},
         {"chunk", required_argument, nullptr, 1014},
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
@@ -1112,6 +1148,10 @@ Options parse_options(int argc, char **argv) {
         case 1013:
             options.chunk_size = std::strtod(optarg, nullptr);
             options.chunk_size_requested = true;
+            break;
+
+        case 1028:
+            options.label_chunks = true;
             break;
 
         case 1027: {
@@ -1259,6 +1299,10 @@ Options parse_options(int argc, char **argv) {
         LOG_ERROR("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
         std::exit(1);
     }
+    if (options.label_chunks && (!options.write_html || directory_input)) {
+        LOG_ERROR("--label-chunks draws the chunks in the page that --html writes after a run; use --html too");
+        std::exit(1);
+    }
     if (options.lift_meters != 0.0 && !options.write_html && !directory_input) {
         LOG_ERROR("--lifted lifts what the page that --html writes shows; use --html too");
         std::exit(1);
@@ -1332,6 +1376,8 @@ void print_usage() {
     std::cout << "      --chunk <i,j>            Reconstruct only chunk (i,j); chunk (i,j) covers x in [i*size,(i+1)*size)\n";
     std::cout << "                               and y in [j*size,(j+1)*size) in the local east-north frame\n";
     std::cout << "      --max-chunks <n>         Stop after n chunks (for testing)\n";
+    std::cout << "      --label-chunks           With --html, draw the outline and the file name of each chunk in the page, with a check\n";
+    std::cout << "                               box to switch them off, to see which chunk a seam or a void belongs to\n";
     std::cout << "      --threads <n>            Chunks reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
     std::cout << "      --spill-points <n>       A survey of more than n soundings [50000000] is not held in memory: the soundings go to a\n";
     std::cout << "                               file in mbmesh_work, beside the results, and are sorted into one file per chunk, so that\n";

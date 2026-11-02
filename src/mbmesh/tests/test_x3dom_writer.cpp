@@ -302,6 +302,36 @@ int main() {
                     "Copy GeoViewpoint takes the lift off");
         ok &= check(contains(write_page(options), "var liftMeters = 0.000;") && !contains(write_page(options), "<GeoTransform"),
                     "without a lift the page has plain transforms");
+
+        // --label-chunks: the outline of each chunk and its name, with a check box, lifted with the models.
+        X3DomWriterOptions labeled = options;
+        for (int n = 0; n < 2; n++) {
+            X3DomChunkLabel label;
+            label.name = n == 0 ? "chunk_2_-10.glb" : "chunk_3_-10.glb";
+            for (int corner = 0; corner < 4; corner++) {
+                label.corners[corner][0] = 3.0 * (n + (corner == 1 || corner == 2 ? 1 : 0));
+                label.corners[corner][1] = corner >= 2 ? 3.0 : 0.0;
+                label.corners[corner][2] = -20.0;
+            }
+            label.center[0] = 3.0 * n + 1.5;
+            label.center[1] = 1.5;
+            label.center[2] = -20.0;
+            label.text_size = 0.3;
+            labeled.chunk_labels.push_back(label);
+        }
+        const std::string labeled_page = write_page(labeled);
+        ok &= check(contains(labeled_page, "&quot;chunk_2_-10.glb&quot;") && contains(labeled_page, "&quot;chunk_3_-10.glb&quot;") &&
+                        contains(labeled_page, "<billboard") && contains(labeled_page, "size='0.300'"),
+                    "each chunk has its name as text that faces the viewer");
+        ok &= check(contains(labeled_page, "coordIndex='0 1 2 3 0 -1 4 5 6 7 4 -1'") && contains(labeled_page, "<coordinate point='0.000 0.000 -20.000, 3.000 0.000 -20.000, "),
+                    "each chunk has a closed outline of four corners");
+        ok &= check(contains(labeled_page, "id='switch_chunks'") && contains(labeled_page, "Outlines and names") && contains(labeled_page, "<transform id='transform_chunks'>"),
+                    "the chunks have a switch and a check box");
+        ok &= check(!contains(write_page(options), "switch_chunks") && !contains(write_page(options), "Outlines and names"),
+                    "without chunk labels the page has neither");
+        labeled.lift_meters = 1000.0;
+        ok &= check(contains(write_page(labeled), "<GeoTransform id='transform_chunks'") && !contains(write_page(labeled), "<transform id='transform_chunks'>"),
+                    "the chunk outlines are lifted with the models");
     }
 
     // ---- a tileset: a GeoTileset in the page, with the GeoOrigin, and the script that has it
