@@ -90,6 +90,8 @@ struct Options {
     // zero does not. Unless given, resolve_chunking() chooses it.
     bool seam_blend_requested = false;
     double seam_blend = 0.0;
+    // --seam-method solve (the default): the neighbors' fields are boundary values of the solve, not blended into it afterward.
+    bool seam_solve = true;
     std::size_t threads = 0;   // chunks reconstructed at once; 0 chooses automatically
     bool use_chunking = false;
     ChunkingOptions chunking;

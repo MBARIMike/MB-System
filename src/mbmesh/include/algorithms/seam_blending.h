@@ -65,6 +65,13 @@ struct SeamBlendResult {
 // two corrections overlap they are combined so that each plane still has exactly its own values.
 SeamBlendResult blend_field_to_planes(ScalarGrid3D *grid, const FieldPlane *west, const FieldPlane *south, double width);
 
+// For a solve with the neighbors' fields as boundary values: puts the values of the planes west and south (as for
+// blend_field_to_planes, either may be null) into the nodes of grid that are on them, and marks those nodes in fixed (one
+// byte per node of the grid, made if it is empty), so that the solver leaves them alone. Where a plane does not cover a
+// node (the grid is taller, or wider, than the neighbor's) the nearest node it does cover gives the value. A node on both planes
+// takes the value of the west one. Returns the number of nodes fixed.
+std::size_t fix_field_planes(ScalarGrid3D *grid, const FieldPlane *west, const FieldPlane *south, std::vector<unsigned char> *fixed);
+
 // The meshes of two chunks that were matched meet at vertices that are the same points, to rounding (they are made from the
 // same field values on a shared plane, in grids with different origins). This merges the vertices of a mesh, such as the
 // chunks put together, that are within tolerance of each other, so that the seams are not edges of the mesh, drops the

@@ -2,6 +2,10 @@
 
 #include "util/stopwatch.h"
 
+#include <algorithm>
+#include <functional>
+#include <thread>
+
 const char *poisson_solver_name(PoissonSolver solver) {
 	switch (solver) {
 	case PoissonSolver::Jacobi:
@@ -266,6 +270,18 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 	}
 	const double cell_size_squared = scalar_indicator_field.cell_size * scalar_indicator_field.cell_size;
 
+	// Nodes that hold the values of a neighbor and are not solved for.
+	std::vector<unsigned char> fixed_nodes;
+	std::size_t fixed_count = 0;
+	if (options.fix_nodes) {
+		fixed_nodes.assign(scalar_indicator_field.values.size(), 0);
+		fixed_count = options.fix_nodes(&scalar_indicator_field, &fixed_nodes);
+		if (fixed_count == 0) {
+			fixed_nodes.clear();
+		}
+	}
+	const bool has_fixed_nodes = !fixed_nodes.empty();
+
 	// The equation at an interior cell is  diagonal * u = (sum of the six neighbors) + right_hand_side.
 	const auto cell_equation = [&](int x, int y, int z, double *diagonal, double *right_hand_side) {
 		*diagonal = 6.0;
@@ -288,6 +304,9 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 		for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
 			for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
 				for (int x = 1; x < scalar_indicator_field.nx - 1; x++) {
+					if (has_fixed_nodes && fixed_nodes[scalar_indicator_field.index(x, y, z)] != 0) {
+						continue;
+					}
 					double diagonal = 0.0;
 					double right_hand_side = 0.0;
 					cell_equation(x, y, z, &diagonal, &right_hand_side);
@@ -327,6 +346,29 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 		diagnostics->splat_seconds = splat_timer.seconds();
 	}
 
+	// Runs body(first z, one past the last z) over the interior slabs of the grid, split between the threads of the solve. Each color
+	// of sor and each sweep of jacobi writes a cell from cells that no thread writes in the same pass, so the result does not
+	// depend on the number of threads.
+	const int solver_threads = std::max(1, std::min({options.threads, static_cast<int>(scalar_indicator_field.nz) / 8, 64}));
+	const auto run_slabs = [&](const std::function<void(int, int)> &body) {
+		const int first = 1;
+		const int last = static_cast<int>(scalar_indicator_field.nz) - 1;
+		if (solver_threads <= 1) {
+			body(first, last);
+			return;
+		}
+		std::vector<std::thread> helpers;
+		helpers.reserve(static_cast<std::size_t>(solver_threads) - 1);
+		const int total = std::max(0, last - first);
+		for (int t = 1; t < solver_threads; t++) {
+			helpers.emplace_back(body, first + total * t / solver_threads, first + total * (t + 1) / solver_threads);
+		}
+		body(first, first + total / solver_threads);
+		for (std::thread &helper : helpers) {
+			helper.join();
+		}
+	};
+
 	const mbmesh::Stopwatch solve_timer;
 	double residual_seconds = 0.0;   // measuring the residual is not part of the solve
 
@@ -338,11 +380,15 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 			// odd. A cell's six neighbors all have the other color, so each color can be
 			// updated in place and the result does not depend on the order within it.
 			for (int color = 0; color < 2; color++) {
-				for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
+				run_slabs([&](int z_begin, int z_end) {
+				for (int z = z_begin; z < z_end; z++) {
 					for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
 						const int first_x = ((1 + y + z) & 1) == color ? 1 : 2;
 						for (int x = first_x; x < scalar_indicator_field.nx - 1; x += 2) {
 
+							if (has_fixed_nodes && fixed_nodes[scalar_indicator_field.index(x, y, z)] != 0) {
+								continue;
+							}
 							const double neighbor_sum = scalar_indicator_field.at(x - 1, y, z) + scalar_indicator_field.at(x + 1, y, z) +
 							                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
 							                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
@@ -356,16 +402,22 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 						}
 					}
 				}
+				});
 			}
 		}
 		else {
 
 			std::fill(next_iteration.values.begin(), next_iteration.values.end(), 0.0);
 
-			for (int z = 1; z < scalar_indicator_field.nz - 1; z++) {
+			run_slabs([&](int z_begin, int z_end) {
+			for (int z = z_begin; z < z_end; z++) {
 				for (int y = 1; y < scalar_indicator_field.ny - 1; y++) {
 					for (int x = 1; x < scalar_indicator_field.nx - 1; x++) {
 
+						if (has_fixed_nodes && fixed_nodes[scalar_indicator_field.index(x, y, z)] != 0) {
+							next_iteration.at(x, y, z) = scalar_indicator_field.at(x, y, z);
+							continue;
+						}
 						const double neighbor_sum = scalar_indicator_field.at(x - 1, y, z) + scalar_indicator_field.at(x + 1, y, z) +
 						                            scalar_indicator_field.at(x, y - 1, z) + scalar_indicator_field.at(x, y + 1, z) +
 						                            scalar_indicator_field.at(x, y, z - 1) + scalar_indicator_field.at(x, y, z + 1);
@@ -378,6 +430,7 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 					}
 				}
 			}
+			});
 
 			scalar_indicator_field.values.swap(next_iteration.values);
 		}
@@ -403,6 +456,10 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 	 * the average scalar value at the input samples, the surface samples
 	 * cluster around iso_value = 0.0.
 	 **************************************************************************/
+
+	if (has_fixed_nodes) {
+		return scalar_indicator_field;
+	}
 
 	double scalar_sum = 0.0;
 

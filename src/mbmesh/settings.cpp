@@ -609,6 +609,7 @@ bool resolve_chunking(Options &options, const DatalistMetadata &metadata, const 
     options.chunking.chunk_size = chunk_size;
     options.chunking.halo = halo;
     // Over 1 m on each side of an edge, or a quarter of a chunk's width if the chunks are smaller than 4 m.
+    options.chunking.seam_solve = options.seam_solve;
     options.chunking.seam_blend = options.seam_blend_requested ? options.seam_blend : std::min(1.0, 0.25 * chunk_size);
     options.chunking.only_chunks = options.chunk_selection;
     options.chunking.max_chunks = options.max_chunks;

@@ -471,6 +471,8 @@ bool reconstruct_chunked_from(
         // face on the global cell lattice so neighboring chunks share grid nodes.
         const double xy_margin = halo + options.poisson.padding;
         ReconstructionOptions chunk_options = options;
+        // Threads that have no chunk to work on (the last chunks of a run, or those that wait for their neighbors) share the sweeps of the solver.
+        chunk_options.poisson.threads = static_cast<int>(std::max<std::size_t>(chunking.threads, 1));
         chunk_options.poisson.use_fixed_domain = true;
         chunk_options.poisson.domain_bounds = Bounds3D(
             Vec3(snap_down(i * chunk - xy_margin, cell),
@@ -518,49 +520,75 @@ bool reconstruct_chunked_from(
         std::unique_ptr<SeamRelease> release;
         if (blend_seams) {
             release = std::make_unique<SeamRelease>(seam, std::make_pair(i, j));
-            chunk_options.adjust_field = [&](ScalarGrid3D *grid) {
-                // The final fields of the chunks to the west and the south, on the edges they share with this chunk.
-                std::shared_ptr<FieldPlane> west;
-                std::shared_ptr<FieldPlane> south;
-                {
-                    std::unique_lock<std::mutex> lock(seam.mutex);
-                    for (const std::pair<int, int> &neighbor : {std::make_pair(i - 1, j), std::make_pair(i, j - 1)}) {
-                        if (job_chunks.count(neighbor) != 0) {
-                            seam.changed.wait(lock, [&] { return abandoned.load() || seam.finished.count(neighbor) != 0; });
-                        }
-                    }
-                    if (abandoned) {
-                        return;
-                    }
-                    const auto east_of_west = seam.east.find({i - 1, j});
-                    if (east_of_west != seam.east.end()) {
-                        west = east_of_west->second;
-                        seam.east.erase(east_of_west);
-                    }
-                    const auto north_of_south = seam.north.find({i, j - 1});
-                    if (north_of_south != seam.north.end()) {
-                        south = north_of_south->second;
-                        seam.north.erase(north_of_south);
+            // The final fields of the chunks to the west and the south, on the edges they share with this chunk, once they have them.
+            const auto take_neighbors = [&](std::shared_ptr<FieldPlane> *west, std::shared_ptr<FieldPlane> *south) {
+                std::unique_lock<std::mutex> lock(seam.mutex);
+                for (const std::pair<int, int> &neighbor : {std::make_pair(i - 1, j), std::make_pair(i, j - 1)}) {
+                    if (job_chunks.count(neighbor) != 0) {
+                        seam.changed.wait(lock, [&] { return abandoned.load() || seam.finished.count(neighbor) != 0; });
                     }
                 }
-                const SeamBlendResult blended = blend_field_to_planes(grid, west.get(), south.get(), chunking.seam_blend);
-                LOG_DEBUG("[chunking]", name + ": field matched to " + std::string(west ? "the west " : "") + std::string(west && south ? "and " : "") +
-                                            std::string(south ? "the south " : "") + std::string(west || south ? "neighbor, " : "no neighbor, ") +
-                                            std::to_string(blended.nodes_changed) + " nodes changed, by at most " + std::to_string(blended.largest_correction));
-
-                // This chunk's own final field on its east and north edges, for the chunks that come after it.
+                if (abandoned) {
+                    return false;
+                }
+                const auto east_of_west = seam.east.find({i - 1, j});
+                if (east_of_west != seam.east.end()) {
+                    *west = east_of_west->second;
+                    seam.east.erase(east_of_west);
+                }
+                const auto north_of_south = seam.north.find({i, j - 1});
+                if (north_of_south != seam.north.end()) {
+                    *south = north_of_south->second;
+                    seam.north.erase(north_of_south);
+                }
+                return true;
+            };
+            const auto neighbors_text = [&](bool west, bool south) {
+                return std::string(west ? "the west " : "") + std::string(west && south ? "and " : "") + std::string(south ? "the south " : "") +
+                       std::string(west || south ? "neighbor" : "no neighbor");
+            };
+            // This chunk's own final field on its east and north edges, for the chunks that come after it.
+            const auto publish = [&](const ScalarGrid3D &grid) {
                 const long east_edge = std::lround((i + 1) * chunk / cell);
                 const long north_edge = std::lround((j + 1) * chunk / cell);
                 const long west_edge = std::lround(i * chunk / cell);
                 const long south_edge = std::lround(j * chunk / cell);
-                auto east = std::make_shared<FieldPlane>(extract_field_plane(*grid, 0, east_edge, south_edge, north_edge));
-                auto north = std::make_shared<FieldPlane>(extract_field_plane(*grid, 1, north_edge, west_edge, east_edge));
+                auto east = std::make_shared<FieldPlane>(extract_field_plane(grid, 0, east_edge, south_edge, north_edge));
+                auto north = std::make_shared<FieldPlane>(extract_field_plane(grid, 1, north_edge, west_edge, east_edge));
                 std::lock_guard<std::mutex> lock(seam.mutex);
                 seam.east[{i, j}] = std::move(east);
                 seam.north[{i, j}] = std::move(north);
                 seam.finished.insert({i, j});
                 seam.changed.notify_all();
             };
+            if (chunking.seam_solve) {
+                // The neighbors' fields are boundary values of the solve, so the chunk waits for them before it.
+                chunk_options.poisson.fix_nodes = [&, take_neighbors, neighbors_text](ScalarGrid3D *grid, std::vector<unsigned char> *fixed) -> std::size_t {
+                    const Stopwatch wait_timer;
+                    std::shared_ptr<FieldPlane> west;
+                    std::shared_ptr<FieldPlane> south;
+                    if (!take_neighbors(&west, &south)) {
+                        return 0;
+                    }
+                    const std::size_t count = fix_field_planes(grid, west.get(), south.get(), fixed);
+                    LOG_DEBUG("[chunking]", name + ": solved with the field of " + neighbors_text(west != nullptr, south != nullptr) + " fixed on " +
+                                                std::to_string(count) + " nodes, after waiting " + wait_timer.text());
+                    return count;
+                };
+                chunk_options.adjust_field = [&, publish](ScalarGrid3D *grid) { publish(*grid); };
+            } else {
+                chunk_options.adjust_field = [&, take_neighbors, neighbors_text, publish](ScalarGrid3D *grid) {
+                    std::shared_ptr<FieldPlane> west;
+                    std::shared_ptr<FieldPlane> south;
+                    if (!take_neighbors(&west, &south)) {
+                        return;
+                    }
+                    const SeamBlendResult blended = blend_field_to_planes(grid, west.get(), south.get(), chunking.seam_blend);
+                    LOG_DEBUG("[chunking]", name + ": field matched to " + neighbors_text(west != nullptr, south != nullptr) + ", " +
+                                                std::to_string(blended.nodes_changed) + " nodes changed, by at most " + std::to_string(blended.largest_correction));
+                    publish(*grid);
+                };
+            }
         }
         chunk_result.result = reconstruct_chunk(chunk_points, chunk_options, name);
         chunk_points = CollectedPointCloud();

@@ -163,6 +163,38 @@ int main() {
         check(std::fabs(above - at_edge) < 1.0e-12, "above the neighbor's grid the correction is that of its highest node");
     }
 
+    // The neighbor's plane as boundary values: its nodes take its values and are marked, and no others.
+    {
+        ScalarGrid3D g = b_before;
+        std::vector<unsigned char> fixed;
+        const std::size_t count = fix_field_planes(&g, &west, nullptr, &fixed);
+        std::size_t marked = 0;
+        bool on_plane = true;
+        bool values = true;
+        for (int z = 0; z < static_cast<int>(g.nz); z++) {
+            for (int y = 0; y < static_cast<int>(g.ny); y++) {
+                for (int x = 0; x < static_cast<int>(g.nx); x++) {
+                    const std::size_t at = g.index(x, y, z);
+                    if (fixed[at] == 0) {
+                        values = values && g.values[at] == b_before.values[at];
+                        continue;
+                    }
+                    marked++;
+                    on_plane = on_plane && x == 7;
+                    if (west.covers(-7 + y, -10 + z)) {
+                        values = values && g.values[at] == west.at(-7 + y, -10 + z);
+                    }
+                }
+            }
+        }
+        check(count > 0 && count == marked, "the nodes of the plane are fixed, and counted");
+        check(on_plane, "only nodes on the plane are fixed");
+        check(values, "fixed nodes have the neighbor's values and the others are left alone");
+        std::vector<unsigned char> none;
+        ScalarGrid3D h = b_before;
+        check(fix_field_planes(&h, nullptr, nullptr, &none) == 0 && h.values == b_before.values, "without planes nothing is fixed");
+    }
+
     // No neighbors, and no width: nothing changes.
     {
         ScalarGrid3D untouched_grid = a;

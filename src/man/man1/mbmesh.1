@@ -136,8 +136,17 @@ trimming. A halo smaller than that reach is used, with a warning. A larger halo 
 disk and time, because every chunk reconstructs its halo again, and it changes the chunk size; it
 did not improve the match of neighboring chunks at their edges. It has an effect only when the run is chunked.
 .TP
+.B \--seam-method \fIname\fR
+How chunks are matched on the edges they share: \fBsolve\fR (the default) solves each chunk with the final fields of its west and south neighbors held
+fixed on the shared edges, which removes the edge effect on those sides, but a chunk
+waits for those neighbors before its solve, so fewer chunks are solved at the same time, and
+the threads without a chunk to solve share the sweeps of the solver of those that have one.
+The output does not depend on the number of threads.
+\fBblend\fR solves each chunk free, all of them at the same time, and then blends its field to the neighbors'
+over \fB--seam-blend\fR.
+.TP
 .B \--seam-blend \fImeters\fR
-Over this width on each side of an edge between two chunks, the Poisson field of a chunk is made
+With \fB--seam-method blend\fR, over this width on each side of an edge between two chunks, the Poisson field of a chunk is made
 to match the final field of the chunk to its west or to its south on that edge, so that the two
 meshes meet exactly, with no step and no gap. The fields of neighboring chunks are solved apart and
 differ where they meet (by about 2 cm on one multibeam survey at \fB-L 0.1\fR). The chunks share one

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include <string>
+#include <vector>
 
 #include "../data_types/geometry.h"
 
@@ -37,6 +39,9 @@ struct ScreenedPoissonOptions {
     // adhere more closely to samples but can reproduce more measurement noise.
     double screening_weight = 4.0;
 
+    // Threads that share the sweeps of the solver (one: the calling thread alone). The solution does not depend on it.
+    int threads = 1;
+
     // The method that solves the grid equation.
     PoissonSolver solver = PoissonSolver::Sor;
 
@@ -56,6 +61,13 @@ struct ScreenedPoissonOptions {
     // chunk's grid nodes sit on one global lattice.
     bool use_fixed_domain = false;
     Bounds3D domain_bounds;
+
+    // Called once the grid is made and before the iterations, with the field (zero) and one byte per node, zero, that the
+    // function may set to a value in the field and mark with 1: the solver leaves such nodes alone, so that they are
+    // boundary values of the solution. Chunked reconstruction uses this to take the fields of the neighbors solved
+    // before as the values on the edges they share. It returns the number of nodes fixed. When some are, the field is not
+    // shifted to put the samples on iso_value, since the fixed values are in the gauge of the neighbors.
+    std::function<std::size_t(ScalarGrid3D *, std::vector<unsigned char> *)> fix_nodes;
 
     // Scalar value assigned to the observed surface after centering the field.
     // MarchingCubesOptions::iso_value should normally use the same value.

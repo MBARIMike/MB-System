@@ -102,6 +102,12 @@ struct ChunkingOptions {
     // lets them be started in any order.
     double seam_blend = 0.0;
 
+    // How the chunks are matched on their edges (when seam_blend is above zero): false by solving each chunk free and then
+    // blending its field to the neighbors' over seam_blend; true by solving each chunk with the fields of its west and
+    // south neighbors fixed on the edges they share, so that there is nothing to blend. A chunk then waits for those
+    // neighbors before its solve, and not after it.
+    bool seam_solve = false;
+
     // Testing aids: process only these chunks (all of them if the set is empty), or stop after a number of chunks.
     std::set<std::pair<int, int>> only_chunks;
     std::size_t max_chunks = 0;   // 0 = no limit

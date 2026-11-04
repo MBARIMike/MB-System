@@ -452,7 +452,11 @@ int main(int argc, char **argv) {
             }
             if (options.use_chunking) {
                 if (options.chunking.seam_blend > 0.0) {
-                    text << "; the fields of neighboring chunks are matched on their shared edges over " << options.chunking.seam_blend << " m (--seam-blend)";
+                    if (options.chunking.seam_solve) {
+                        text << "; each chunk is solved with the fields of its west and south neighbors as boundary values on their shared edges (--seam-method solve)";
+                    } else {
+                        text << "; the fields of neighboring chunks are matched on their shared edges over " << options.chunking.seam_blend << " m (--seam-blend)";
+                    }
                 } else {
                     text << "; the fields of neighboring chunks are not matched on their shared edges (--seam-blend 0)";
                 }
@@ -1081,6 +1085,7 @@ Options parse_options(int argc, char **argv) {
         {"chunk-halo", required_argument, nullptr, 1027},
         {"label-chunks", no_argument, nullptr, 1028},
         {"seam-blend", required_argument, nullptr, 1029},
+        {"seam-method", required_argument, nullptr, 1031},
         {"chunk", required_argument, nullptr, 1014},
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
@@ -1236,6 +1241,16 @@ Options parse_options(int argc, char **argv) {
             }
             options.seam_blend = width;
             options.seam_blend_requested = true;
+            break;
+        }
+
+        case 1031: {
+            const std::string method = optarg;
+            if (method != "blend" && method != "solve") {
+                LOG_ERROR("invalid --seam-method:", std::string("'") + optarg + "' is not blend or solve");
+                std::exit(1);
+            }
+            options.seam_solve = method == "solve";
             break;
         }
 
@@ -1486,6 +1501,8 @@ void print_usage() {
     std::cout << "      --island-size <m>        When the survey is reconstructed in chunks, remove from mesh.glb the pieces that are not\n";
     std::cout << "                               joined to the rest, up to this many meters across [2] (the area of a disc), if no\n";
     std::cout << "                               sounding is near most of their vertices. Pieces with soundings under them stay. 0 keeps all\n";
+    std::cout << "      --seam-method <name>     How chunks are matched on their edges: blend (solve each, then blend toward the neighbors over --seam-blend)\n";
+    std::cout << "                               or solve (solve each with its west and south neighbors' fields fixed on the shared edges) [solve]\n";
     std::cout << "      --poisson-solver <name>  How the Poisson grid equation is solved: " << poisson_solver_names() << " [sor]\n";
     std::cout << "      --poisson-iterations <n> Iterations of the solver, for either solver [sor: one per cell across the longest grid edge,\n";
     std::cout << "                               at least 50; jacobi: chosen from the level of detail, 200 to 500]. The\n";

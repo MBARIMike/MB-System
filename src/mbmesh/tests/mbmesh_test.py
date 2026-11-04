@@ -168,6 +168,15 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotEqual(proc.returncode, 0, value)
       self.assertIn('not a size in meters', proc.stdout.decode(), value)
 
+  def testSeamMethodIsValidated(self):
+    # --seam-method is blend or solve.
+    for value in ('abc', '', 'Solve'):
+      proc = subprocess.run([self.cmd, '-I', 'nonexistent', '--seam-method=' + value],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, check=False)
+      self.assertNotEqual(proc.returncode, 0, value)
+      self.assertIn('is not blend or solve', proc.stdout.decode(), value)
+
   def testChunkHaloIsValidated(self):
     # --chunk-halo takes a size in meters, more than zero.
     for value in ('abc', '-1', '0', ''):

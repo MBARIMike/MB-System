@@ -209,6 +209,49 @@ SeamBlendResult blend_field_to_planes(ScalarGrid3D *grid, const FieldPlane *west
     return result;
 }
 
+std::size_t fix_field_planes(ScalarGrid3D *grid, const FieldPlane *west, const FieldPlane *south, std::vector<unsigned char> *fixed) {
+    if (grid == nullptr || fixed == nullptr || grid->nx < 2 || grid->ny < 2 || grid->nz < 2 || grid->cell_size <= 0.0) {
+        return 0;
+    }
+    const double cell = grid->cell_size;
+    const long x0 = lattice_index(grid->origin.x, cell);
+    const long y0 = lattice_index(grid->origin.y, cell);
+    const long z0 = lattice_index(grid->origin.z, cell);
+    if (fixed->size() != grid->values.size()) {
+        fixed->assign(grid->values.size(), 0);
+    }
+    std::size_t count = 0;
+    const auto apply = [&](const FieldPlane *plane, int axis, long origin_along, long origin_across, std::size_t along_count) {
+        if (plane == nullptr || plane->empty() || plane->axis != axis) {
+            return;
+        }
+        const long node = plane->plane_index - origin_along;
+        if (node < 0 || node >= static_cast<long>(along_count)) {
+            return;
+        }
+        const PlaneCorrection correction = plane_correction(*grid, *plane, axis, node, origin_across, z0);
+        if (!correction.valid) {
+            return;
+        }
+        for (std::size_t height = 0; height < correction.heights; height++) {
+            for (std::size_t row = 0; row < correction.rows; row++) {
+                const int x = static_cast<int>(axis == 0 ? node : static_cast<long>(row));
+                const int y = static_cast<int>(axis == 0 ? static_cast<long>(row) : node);
+                const std::size_t at = grid->index(x, y, static_cast<int>(height));
+                if ((*fixed)[at] != 0) {
+                    continue;
+                }
+                grid->values[at] += correction.at(row, height);   // the correction is the plane's value minus the grid's
+                (*fixed)[at] = 1;
+                count++;
+            }
+        }
+    };
+    apply(west, 0, x0, y0, grid->nx);
+    apply(south, 1, y0, x0, grid->ny);
+    return count;
+}
+
 namespace {
 
 struct WeldCell {
