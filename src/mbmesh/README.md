@@ -475,6 +475,8 @@ The raster is in the horizontal plane of the local frame, with z up. It takes a 
 
 The surface in a void is the interpolation of the screened Poisson solution from the rim. It is smooth and plausible, not measured: it will not show a feature that the sonar did not see.
 
+The tests of the vertices, and the putting back of the vertices short of neighbors, of the vertices of voids and of the vertices of the holes, are split between `--threads` threads (a test of a vertex does not depend on the others, and the results are put together in vertex order, so the mesh does not depend on the number of threads). The connected pieces and the open boundary are found once, by sorting the edges of the raw mesh, and shared by the holes and the islands. On one chunk of 264,030 raw vertices the step took 5.7 s before, 4.8 s with one thread now (the open boundary is found by sorting the edges and not with a hash table), and 1.5 s with eight; on 12 chunks run together, the time summed over the chunks went from 3 min 28 s to 1 min 37 s and the run from 1 min 58 s to 1 min 49 s, with a `mesh.glb` that is the same, vertex for vertex.
+
 ### 9. Output Generation
 
 Implemented in:
@@ -636,6 +638,7 @@ High-value future work:
 - **include/data_types/geometry.h** - Point, mesh, bounds, reconstruction-domain, and grid data types
 - **include/data_types/swathfile.h** - Swath-file data types
 - **include/util/stopwatch.h** - Wall-clock timer used for the timing messages
+- **include/util/parallel.h** - `parallel_for_ranges`, which splits a range between threads (the solver sweeps and the support trimming)
 - **include/util/logger.h** - Header-only logger producing the same line format as `mbgrd2gltf`
 - **include/math/vec2.h**, **vec3.h**, **mat3.h** - Basic vector and matrix helpers
 - **include/math/eigen.h** - Symmetric 3x3 eigen decomposition

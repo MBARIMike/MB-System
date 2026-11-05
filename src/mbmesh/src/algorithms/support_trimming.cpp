@@ -1,6 +1,8 @@
 #include "algorithms/support_trimming.h"
 
 #include "math/kdtree.h"
+#include "util/parallel.h"
+#include "util/stopwatch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -191,24 +193,31 @@ VertexSupportResult vertex_support_result(
 std::vector<bool> open_boundary_vertices(const Mesh &raw_mesh) {
     const std::size_t vertex_count = raw_mesh.vertices.size();
     const std::size_t triangle_count = raw_mesh.indices.size() / 3;
-    std::unordered_map<std::uint64_t, int> edge_uses;
-    edge_uses.reserve(raw_mesh.indices.size());
     const auto edge_key = [](unsigned int a, unsigned int b) { return (static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b); };
+    std::vector<std::uint64_t> edges;
+    edges.reserve(3 * triangle_count);
     for (std::size_t t = 0; t < triangle_count; t++) {
         const unsigned int *tri = &raw_mesh.indices[3 * t];
-        edge_uses[edge_key(tri[0], tri[1])]++;
-        edge_uses[edge_key(tri[1], tri[2])]++;
-        edge_uses[edge_key(tri[2], tri[0])]++;
+        edges.push_back(edge_key(tri[0], tri[1]));
+        edges.push_back(edge_key(tri[1], tri[2]));
+        edges.push_back(edge_key(tri[2], tri[0]));
     }
+    std::sort(edges.begin(), edges.end());
     std::vector<bool> on_open_boundary(vertex_count, false);
-    for (std::size_t t = 0; t < triangle_count; t++) {
-        const unsigned int *tri = &raw_mesh.indices[3 * t];
-        for (int k = 0; k < 3; k++) {
-            if (edge_uses[edge_key(tri[k], tri[(k + 1) % 3])] == 1) {
-                on_open_boundary[tri[k]] = true;
-                on_open_boundary[tri[(k + 1) % 3]] = true;
+    for (std::size_t n = 0; n < edges.size();) {
+        std::size_t last = n + 1;
+        while (last < edges.size() && edges[last] == edges[n]) {
+            last++;
+        }
+        if (last - n == 1) {
+            const std::size_t a = static_cast<std::size_t>(edges[n] >> 32);
+            const std::size_t b = static_cast<std::size_t>(edges[n] & 0xffffffffu);
+            if (a < vertex_count && b < vertex_count) {
+                on_open_boundary[a] = true;
+                on_open_boundary[b] = true;
             }
         }
+        n = last;
     }
     return on_open_boundary;
 }
@@ -217,11 +226,10 @@ std::vector<bool> open_boundary_vertices(const Mesh &raw_mesh) {
 // open boundary of the raw mesh does not touch (a piece at the edge of the reconstructed region may be the end of a
 // larger surface): the specks that sound reflected from the water column, a fish or a bubble leave, and the end of an
 // extrapolated sheet.
-void remove_islands(const Mesh &raw_mesh, double min_area, std::vector<bool> *supported_vertices, SupportTrimmingDiagnostics *diagnostics) {
+void remove_islands(const Mesh &raw_mesh, const std::vector<bool> &on_open_boundary, double min_area, std::vector<bool> *supported_vertices,
+                    SupportTrimmingDiagnostics *diagnostics) {
     const std::size_t vertex_count = raw_mesh.vertices.size();
     const std::size_t triangle_count = raw_mesh.indices.size() / 3;
-    const std::vector<bool> on_open_boundary = open_boundary_vertices(raw_mesh);
-
     std::vector<unsigned int> parent(vertex_count);
     std::iota(parent.begin(), parent.end(), 0u);
     const auto find = [&](unsigned int v) {
@@ -289,12 +297,10 @@ void remove_islands(const Mesh &raw_mesh, double min_area, std::vector<bool> *su
 // vertices) that the open boundary of the raw mesh does not touch, so that it is surrounded by triangles that are kept,
 // and no larger than max_area. The vertices of a hole that were rejected only because the surface is a few cells off
 // the samples there, and the sparse patches of a rough bottom, are such holes.
-void restore_holes(const Mesh &raw_mesh, double max_area, const std::function<bool(std::size_t)> &vertex_ok, std::vector<bool> *supported_vertices,
-                   SupportTrimmingDiagnostics *diagnostics) {
+void restore_holes(const Mesh &raw_mesh, const std::vector<bool> &on_open_boundary, double max_area, const std::function<bool(std::size_t)> &vertex_ok,
+                   int threads, std::vector<bool> *supported_vertices, SupportTrimmingDiagnostics *diagnostics) {
     const std::size_t vertex_count = raw_mesh.vertices.size();
     const std::size_t triangle_count = raw_mesh.indices.size() / 3;
-
-    const std::vector<bool> on_open_boundary = open_boundary_vertices(raw_mesh);
 
     // Patches: the rejected vertices of each rejected triangle are joined.
     std::vector<unsigned int> parent(vertex_count);
@@ -347,6 +353,33 @@ void restore_holes(const Mesh &raw_mesh, double max_area, const std::function<bo
             patch.open = patch.open || on_open_boundary[tri[k]];
         }
     }
+
+    // With threads, the vertices that the patches that could be put back need to have tested are tested at once (a test does not
+    // depend on the others), where with one thread each is tested when its patch comes to it, and the first to fail ends the patch.
+    std::vector<unsigned char> tested(threads > 1 ? vertex_count : 0, 0);
+    std::vector<unsigned char> passed(threads > 1 ? vertex_count : 0, 0);
+    if (threads > 1) {
+        std::vector<unsigned int> to_test;
+        for (const auto &entry : patches) {
+            if (entry.second.open || entry.second.area > max_area) {
+                continue;
+            }
+            for (const std::size_t t : entry.second.triangles) {
+                for (int k = 0; k < 3; k++) {
+                    const unsigned int v = raw_mesh.indices[3 * t + k];
+                    if (!(*supported_vertices)[v] && tested[v] == 0) {
+                        tested[v] = 1;
+                        to_test.push_back(v);
+                    }
+                }
+            }
+        }
+        mbmesh::parallel_for_ranges(0, static_cast<long>(to_test.size()), threads, [&](long begin, long end) {
+            for (long n = begin; n < end; n++) {
+                passed[to_test[static_cast<std::size_t>(n)]] = vertex_ok(to_test[static_cast<std::size_t>(n)]) ? 1 : 0;
+            }
+        });
+    }
     for (const auto &entry : patches) {
         const Patch &patch = entry.second;
         if (patch.open || patch.area > max_area) {
@@ -356,7 +389,7 @@ void restore_holes(const Mesh &raw_mesh, double max_area, const std::function<bo
         for (const std::size_t t : patch.triangles) {
             for (int k = 0; k < 3 && acceptable; k++) {
                 const unsigned int v = raw_mesh.indices[3 * t + k];
-                acceptable = (*supported_vertices)[v] || vertex_ok(v);
+                acceptable = (*supported_vertices)[v] || (threads > 1 ? passed[v] != 0 : vertex_ok(v));
             }
             if (!acceptable) {
                 break;
@@ -444,8 +477,13 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
         return Mesh();
     }
 
+    const mbmesh::Stopwatch tree_timer;
     const std::vector<Vec3> points = sample_positions(oriented_points);
     const KDTree tree(points);
+    if (diagnostics != nullptr) {
+        diagnostics->tree_seconds = tree_timer.seconds();
+    }
+    const int threads = std::max(1, options.threads);
 
     const std::size_t minimum_neighbors = static_cast<std::size_t>(std::max(1, options.minimum_neighbors));
     const bool needs_automatic_support_radius = !std::isfinite(options.support_radius) || options.support_radius <= 0.0;
@@ -473,19 +511,23 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
     const double minimum_normal_alignment = std::clamp(options.minimum_normal_alignment, 0.0, 1.0);
     const std::vector<Vec3> mesh_normals = raw_mesh.normals.size() == raw_mesh.vertices.size() ? raw_mesh.normals : calculate_vertex_normals(raw_mesh);
 
+    const mbmesh::Stopwatch vertex_timer;
     std::vector<bool> supported_vertices(raw_mesh.vertices.size(), false);
     std::vector<VertexSupportResult> results(raw_mesh.vertices.size(), VertexSupportResult::insufficient_neighbors);
+    mbmesh::parallel_for_ranges(0, static_cast<long>(raw_mesh.vertices.size()), threads, [&](long begin, long end) {
+        for (long i = begin; i < end; i++) {
+            results[static_cast<std::size_t>(i)] = vertex_support_result(raw_mesh.vertices[static_cast<std::size_t>(i)],
+                                                                         mesh_normals[static_cast<std::size_t>(i)],
+                                                                         oriented_points,
+                                                                         tree,
+                                                                         support_radius,
+                                                                         max_normal_offset,
+                                                                         minimum_neighbors,
+                                                                         minimum_normal_alignment);
+        }
+    });
     for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
-        const VertexSupportResult result =
-            vertex_support_result(raw_mesh.vertices[i],
-                                  mesh_normals[i],
-                                  oriented_points,
-                                  tree,
-                                  support_radius,
-                                  max_normal_offset,
-                                  minimum_neighbors,
-                                  minimum_normal_alignment);
-        results[i] = result;
+        const VertexSupportResult result = results[i];
         supported_vertices[i] = result == VertexSupportResult::supported;
 
         if (diagnostics == nullptr) {
@@ -507,6 +549,10 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
             break;
         }
     }
+    if (diagnostics != nullptr) {
+        diagnostics->vertex_seconds = vertex_timer.seconds();
+    }
+    const mbmesh::Stopwatch restore_timer;
 
     // A vertex of a void, or of a hole, has soundings all around it, in the surface. Three tests tell it from the
     // extrapolation of a surface beyond the edge of its soundings, which has none on the far side, and from a sheet of
@@ -564,12 +610,19 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
     // This puts back the pinholes and the sparse lanes between lines that the support radius, which is chosen from the
     // median spacing of the densest parts of the survey, does not reach.
     if (options.max_void_distance > 0.0) {
-        for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
-            if (supported_vertices[i] || results[i] != VertexSupportResult::insufficient_neighbors) {
-                continue;
+        std::vector<unsigned char> near_sounding(raw_mesh.vertices.size(), 0);
+        mbmesh::parallel_for_ranges(0, static_cast<long>(raw_mesh.vertices.size()), threads, [&](long begin, long end) {
+            for (long n = begin; n < end; n++) {
+                const std::size_t i = static_cast<std::size_t>(n);
+                if (supported_vertices[i] || results[i] != VertexSupportResult::insufficient_neighbors) {
+                    continue;
+                }
+                const std::vector<KDTree::Neighbor> nearest = tree.k_nearest(raw_mesh.vertices[i], 1);
+                near_sounding[i] = !nearest.empty() && std::sqrt(nearest[0].distance_squared) <= near_sounding_scale * support_radius;
             }
-            const std::vector<KDTree::Neighbor> nearest = tree.k_nearest(raw_mesh.vertices[i], 1);
-            if (!nearest.empty() && std::sqrt(nearest[0].distance_squared) <= near_sounding_scale * support_radius) {
+        });
+        for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
+            if (near_sounding[i] != 0) {
                 supported_vertices[i] = true;
                 if (diagnostics != nullptr) {
                     diagnostics->near_vertices_restored++;
@@ -579,14 +632,27 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
     }
 
     if (options.footprint != nullptr) {
+        std::vector<unsigned char> in_void(raw_mesh.vertices.size(), 0);
+        std::vector<double> void_distance(raw_mesh.vertices.size(), 0.0);
+        mbmesh::parallel_for_ranges(0, static_cast<long>(raw_mesh.vertices.size()), threads, [&](long begin, long end) {
+            for (long n = begin; n < end; n++) {
+                const std::size_t i = static_cast<std::size_t>(n);
+                if (supported_vertices[i] || results[i] != VertexSupportResult::insufficient_neighbors) {
+                    continue;
+                }
+                double distance = 0.0;
+                if (surrounded_by_samples(i, &distance)) {
+                    in_void[i] = 1;
+                    void_distance[i] = distance;
+                }
+            }
+        });
         std::vector<double> distances;
         for (std::size_t i = 0; i < raw_mesh.vertices.size(); i++) {
-            double distance = 0.0;
-            if (supported_vertices[i] || results[i] != VertexSupportResult::insufficient_neighbors || !surrounded_by_samples(i, &distance)) {
-                continue;
+            if (in_void[i] != 0) {
+                supported_vertices[i] = true;
+                distances.push_back(void_distance[i]);
             }
-            supported_vertices[i] = true;
-            distances.push_back(distance);
         }
         if (diagnostics != nullptr && !distances.empty()) {
             diagnostics->void_vertices_restored = distances.size();
@@ -596,19 +662,21 @@ Mesh support_trimming(const Mesh &raw_mesh, const OrientedPointCloud &oriented_p
         }
     }
 
+    const std::vector<bool> open_boundary = (options.max_hole_area > 0.0 || options.min_island_area > 0.0) ? open_boundary_vertices(raw_mesh) : std::vector<bool>();
     if (options.max_hole_area > 0.0 && std::isfinite(options.max_hole_area)) {
-        restore_holes(raw_mesh, options.max_hole_area, [&](std::size_t v) {
+        restore_holes(raw_mesh, open_boundary, options.max_hole_area, [&](std::size_t v) {
             double distance = 0.0;
             return surrounded_by_samples(v, &distance);
-        }, &supported_vertices, diagnostics);
+        }, threads, &supported_vertices, diagnostics);
     }
 
     if (options.min_island_area > 0.0 && std::isfinite(options.min_island_area)) {
-        remove_islands(raw_mesh, options.min_island_area, &supported_vertices, diagnostics);
+        remove_islands(raw_mesh, open_boundary, options.min_island_area, &supported_vertices, diagnostics);
     }
 
     Mesh trimmed_mesh = compact_supported_triangles(raw_mesh, supported_vertices);
     if (diagnostics != nullptr) {
+        diagnostics->restore_seconds = restore_timer.seconds();
         diagnostics->output_vertices = trimmed_mesh.vertices.size();
         diagnostics->output_triangles = trimmed_mesh.indices.size() / 3;
     }

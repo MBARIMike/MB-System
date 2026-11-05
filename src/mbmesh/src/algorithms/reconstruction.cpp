@@ -207,7 +207,8 @@ ReconstructionResult reconstruct_chunk(
                 << diagnostics.void_distance_median << " m, largest " << diagnostics.void_distance_maximum << " m), near_data_restored=" << diagnostics.near_vertices_restored
                 << ", holes_restored=" << diagnostics.holes_restored << ", islands_removed=" << diagnostics.islands_removed
                 << ", output=" << result.mesh.vertices.size() << " vertices, "
-                << result.mesh.indices.size() / 3 << " triangles in " << stage_timer.text()
+                << result.mesh.indices.size() / 3 << " triangles in " << stage_timer.text() << " (tree " << mbmesh::format_duration(diagnostics.tree_seconds)
+                << ", vertices " << mbmesh::format_duration(diagnostics.vertex_seconds) << ", restoring " << mbmesh::format_duration(diagnostics.restore_seconds) << ")"
                 << " (reconstruction total " << total_timer.text() << ")";
         log_stage_completed("[support-trimming]", label, message.str());
     }
@@ -471,6 +472,7 @@ bool reconstruct_chunked_from(
         // face on the global cell lattice so neighboring chunks share grid nodes.
         const double xy_margin = halo + options.poisson.padding;
         ReconstructionOptions chunk_options = options;
+        chunk_options.trimming.threads = static_cast<int>(std::max<std::size_t>(chunking.threads, 1));
         // Threads that have no chunk to work on (the last chunks of a run, or those that wait for their neighbors) share the sweeps of the solver.
         chunk_options.poisson.threads = static_cast<int>(std::max<std::size_t>(chunking.threads, 1));
         chunk_options.poisson.use_fixed_domain = true;

@@ -1,5 +1,6 @@
  #include "algorithms/screened_poisson.h"
 
+#include "util/parallel.h"
 #include "util/stopwatch.h"
 
 #include <algorithm>
@@ -351,22 +352,8 @@ ScalarGrid3D screened_poisson(const OrientedPointCloud &oriented_points, Screene
 	// depend on the number of threads.
 	const int solver_threads = std::max(1, std::min({options.threads, static_cast<int>(scalar_indicator_field.nz) / 8, 64}));
 	const auto run_slabs = [&](const std::function<void(int, int)> &body) {
-		const int first = 1;
-		const int last = static_cast<int>(scalar_indicator_field.nz) - 1;
-		if (solver_threads <= 1) {
-			body(first, last);
-			return;
-		}
-		std::vector<std::thread> helpers;
-		helpers.reserve(static_cast<std::size_t>(solver_threads) - 1);
-		const int total = std::max(0, last - first);
-		for (int t = 1; t < solver_threads; t++) {
-			helpers.emplace_back(body, first + total * t / solver_threads, first + total * (t + 1) / solver_threads);
-		}
-		body(first, first + total / solver_threads);
-		for (std::thread &helper : helpers) {
-			helper.join();
-		}
+		mbmesh::parallel_for_ranges(1, static_cast<long>(scalar_indicator_field.nz) - 1, solver_threads,
+		                            [&](long begin, long end) { body(static_cast<int>(begin), static_cast<int>(end)); });
 	};
 
 	const mbmesh::Stopwatch solve_timer;

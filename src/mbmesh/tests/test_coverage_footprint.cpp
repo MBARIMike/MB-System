@@ -209,6 +209,12 @@ int main() {
     SupportTrimmingDiagnostics larger;
     const Mesh removed_island = support_trimming(square, middle, island_options, &larger);
     check(larger.islands_removed == 1 && removed_island.indices.empty(), "a piece smaller than the limit is taken out");
+    island_options.threads = 4;
+    SupportTrimmingDiagnostics threaded;
+    const Mesh removed_threaded = support_trimming(square, middle, island_options, &threaded);
+    check(threaded.islands_removed == larger.islands_removed && removed_threaded.indices == removed_island.indices &&
+              removed_threaded.vertices.size() == removed_island.vertices.size(),
+          "the threads do not change the result");
 
     if (failures == 0) {
         std::printf("coverage footprint tests passed\n");

@@ -51,12 +51,21 @@ struct SupportTrimmingOptions {
     // is not at the edge of the reconstructed region is taken out: sound reflected from the water column leaves
     // specks, and the end of a sheet of extrapolated surface can be left as one. Zero keeps them.
     double min_island_area = 0.0;
+
+    // Threads that test the vertices (one: the calling thread alone). The result does not depend on it.
+    int threads = 1;
 };
 
 struct SupportTrimmingDiagnostics {
     double estimated_point_spacing = 0.0;
     double resolved_support_radius = 0.0;
     double resolved_max_normal_offset = 0.0;
+
+    // Where the time went, in seconds: the tree of the samples, the test of every vertex, and the rest (the vertices put
+    // back, the holes, the islands, and the mesh that is left).
+    double tree_seconds = 0.0;
+    double vertex_seconds = 0.0;
+    double restore_seconds = 0.0;
 
     std::size_t input_vertices = 0;
     std::size_t supported_vertices = 0;
