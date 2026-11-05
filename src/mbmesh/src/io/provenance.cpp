@@ -331,5 +331,24 @@ MetaValue content_metadata(const GlbContent &content) {
         index.add(MetaValue::from_number(content.index_j));
         block.set(content.role == "tileset_tile" ? "tile" : "chunk", index);
     }
+    if (content.chunk_label.present) {
+        const auto position = [](const double *at) {
+            MetaValue value = MetaValue::make_array();
+            for (int k = 0; k < 3; k++) {
+                value.add(MetaValue::from_number(at[k]));
+            }
+            return value;
+        };
+        MetaValue label = MetaValue::make_object();
+        MetaValue corners = MetaValue::make_array();
+        for (int corner = 0; corner < 4; corner++) {
+            corners.add(position(content.chunk_label.corners[corner]));
+        }
+        label.set("corners", corners);
+        label.set("center", position(content.chunk_label.center));
+        label.set("rise", MetaValue::from_number(content.chunk_label.rise));
+        label.set("textSize", MetaValue::from_number(content.chunk_label.text_size));
+        block.set("chunkLabel", label);
+    }
     return block;
 }

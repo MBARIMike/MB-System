@@ -663,6 +663,38 @@ int main() {
                         "the overview is centered on, and as high as to see, all the georeferenced GLBs");
         }
 
+        // The chunks of the runs beneath the survey, for --label-chunks: only the chunk files that say where their chunk is
+        {
+            const std::filesystem::path chunks = survey / "multibeam" / "mbmesh_output" / "chunks";
+            const auto write_glb = [](const std::filesystem::path &path, const std::string &json_text) {
+                const std::string json = json_text + std::string((4 - json_text.size() % 4) % 4, ' ');
+                std::ofstream glb(path, std::ios::binary);
+                const std::uint32_t length = static_cast<std::uint32_t>(json.size());
+                const std::uint32_t words[5] = {0x46546C67, 2, 28 + length, length, 0x4E4F534A};
+                glb.write(reinterpret_cast<const char *>(words), sizeof(words));
+                glb.write(json.data(), static_cast<std::streamsize>(json.size()));
+            };
+            write_glb(chunks / "chunk_2_-10.glb",
+                      "{\"asset\":{\"extras\":{\"MB-System\":{\"content\":{\"role\":\"chunk\",\"chunk\":[2,-10],\"chunkLabel\":{"
+                      "\"corners\":[[-122.3,36.4,-900],[-122.2999,36.4,-900],[-122.2999,36.4001,-900],[-122.3,36.4001,-900]],"
+                      "\"center\":[-122.29995,36.40005,-900],\"rise\":1.5,\"textSize\":0.3}}}}}}");
+            write_glb(chunks / "chunk_3_-10.glb", "{\"asset\":{\"extras\":{\"MB-System\":{\"content\":{\"role\":\"chunk\",\"chunk\":[3,-10]}}}}}");
+            std::size_t without = 0;
+            const std::vector<X3DomChunkLabel> labels = find_survey_chunk_labels(survey, true, survey_geo, &without);
+            ok &= check(labels.size() == 1 && labels[0].name == "chunk_2_-10.glb" && without == 1, "only the chunk files that say where they are are labeled, and the others are counted");
+            if (labels.size() == 1) {
+                // The first corner is at the GeoOrigin of the survey (-122.3, 36.4, -900), so it is at the origin of the models
+                ok &= check(std::fabs(labels[0].corners[0][0]) < 1e-6 && std::fabs(labels[0].corners[0][1]) < 1e-6 && std::fabs(labels[0].corners[0][2]) < 1e-6,
+                            "the corner at the GeoOrigin is at the origin of the model coordinates");
+                const double east = std::hypot(labels[0].corners[1][0] - labels[0].corners[0][0], labels[0].corners[1][1] - labels[0].corners[0][1]);
+                ok &= check(east > 7.0 && east < 12.0 && std::fabs(labels[0].rise - 1.5) < 1e-9 && std::fabs(labels[0].text_size - 0.3) < 1e-9 &&
+                                std::fabs(labels[0].latitude - 36.40005) < 1e-9 && std::fabs(labels[0].longitude + 122.29995) < 1e-9,
+                            "the corners are 0.0001 degrees of longitude apart, about 9 m, with the rise, text size and position of the label");
+            }
+            std::filesystem::remove(chunks / "chunk_2_-10.glb");
+            std::filesystem::remove(chunks / "chunk_3_-10.glb");
+        }
+
         // The accordions: one per directory, inside the one before, the survey directory open
         X3DomWriterOptions options;
         options.title = "20260101A";

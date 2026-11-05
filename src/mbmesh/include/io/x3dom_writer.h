@@ -217,6 +217,16 @@ struct X3DomWriterOptions {
 // The GLBs are meant to be placed relative to one GeoOrigin. If geoorigin_mismatches is given, a message is added
 // to it for each GLB whose GeoOrigin is not that of the first with relative vertices (its center differs by more than 1 cm), and for each
 // whose vertices are absolute when there is a GeoOrigin, since such a GLB does not line up with the others.
+// The outlines and names of the chunks of the runs beneath a survey directory (--label-chunks for the survey page): each
+// "chunk_*.glb" in a directory named "chunks" that has the place of its chunk in its metadata ("MB-System.content.chunkLabel"),
+// in the coordinates of the models, which are relative to the GeoOrigin geo if use_geoorigin. *without_labels counts the
+// chunk files that do not (made before the place was kept).
+[[nodiscard]] std::vector<X3DomChunkLabel> find_survey_chunk_labels(
+    const std::filesystem::path &survey_directory,
+    bool use_geoorigin,
+    const X3DomGeoOrigin &geo,
+    std::size_t *without_labels = nullptr);
+
 [[nodiscard]] std::vector<X3DomModel> find_survey_models(
     const std::filesystem::path &survey_directory,
     const std::filesystem::path &page_directory,

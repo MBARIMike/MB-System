@@ -121,6 +121,17 @@ struct GlbContent {
     bool has_index = false;   // a chunk or a tile of a tileset, with its index
     int index_i = 0;
     int index_j = 0;
+    // Where a chunk is, for the page of a survey directory to draw its outline and name (--label-chunks): the corners of the
+    // square that the chunk owns at the mean height of its surface, in order around it, and the middle, each as longitude,
+    // latitude and height above the ellipsoid; how far above the middle the name is, in meters along the local vertical;
+    // and the height of its text. Written for each chunk, when present.
+    struct ChunkLabelPlace {
+        bool present = false;
+        double corners[4][3] = {};
+        double center[3] = {};
+        double rise = 0.0;
+        double text_size = 1.0;
+    } chunk_label;
     // Metadata to write in place of the run metadata that set_glb_run_metadata() set, for a file whose
     // georeference differs, such as a tileset's content. The content of this file is added to it.
     const MetaValue *metadata = nullptr;

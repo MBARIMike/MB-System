@@ -162,7 +162,7 @@ namespace {
 
 // The page of a directory input: every GLB beneath it. Returns false after logging an error.
 bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url, const std::vector<std::string> &geoviewpoints,
-                       double lift_meters) {
+                       double lift_meters, bool label_chunks) {
     const std::filesystem::path html_path = survey_page_path();
     X3DomWriterOptions html_options;
     html_options.title = viewer_title(survey_directory);
@@ -192,6 +192,16 @@ bool write_survey_page(const std::filesystem::path &survey_directory, const std:
             return false;
         }
         html_options.user_viewpoints.push_back(viewpoint);
+    }
+    if (label_chunks) {
+        std::size_t without_labels = 0;
+        html_options.chunk_labels = find_survey_chunk_labels(survey_directory, html_options.use_geoorigin, html_options.geo, &without_labels);
+        if (html_options.chunk_labels.empty()) {
+            LOG_WARN("--label-chunks: no chunk file beneath " + survey_directory.string() + " says where its chunk is" +
+                     (without_labels > 0 ? " (" + std::to_string(without_labels) + " chunk files made by an earlier version of mbmesh do not; run it again)" : std::string(" (there are no chunk files)")));
+        } else if (without_labels > 0) {
+            LOG_WARN("--label-chunks: " + std::to_string(without_labels) + " chunk files made by an earlier version of mbmesh do not say where their chunk is, and are not drawn");
+        }
     }
     html_options.log_messages = mbmesh::Logger::captured_messages();
     html_options.log_messages_omitted = mbmesh::Logger::captured_omitted();
@@ -256,7 +266,7 @@ int main(int argc, char **argv) {
     {
         std::error_code directory_error;
         if (std::filesystem::is_directory(options.input_datalist, directory_error)) {
-            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints, options.lift_meters) ? 0 : 1;
+            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints, options.lift_meters, options.label_chunks) ? 0 : 1;
         }
     }
 
@@ -756,18 +766,14 @@ int main(int argc, char **argv) {
 
         const ChunkCallback on_chunk = [&](ChunkResult &chunk) {
             const std::string chunk_name = "chunk_" + std::to_string(chunk.i) + "_" + std::to_string(chunk.j) + ".glb";
-            std::string chunk_error;
-            if (!write_mesh_glb_file(chunks_directory / chunk_name, output_mesh(chunk.result.mesh, chunk_frame, chunk_offset), &chunk_error,
-                                     GlbContent{"chunk", "Surface of one reconstruction chunk; the chunks together make mesh.glb", true, chunk.i, chunk.j})) {
-                LOG_WARN(chunk_error);
-            }
 
-            if (options.write_tileset) {
-                add_tileset_tile(chunk.result.mesh, chunk.i, chunk.j);
-            }
-
-            if (options.label_chunks && !chunk.result.mesh.vertices.empty()) {
-                // The square that the chunk owns, at the mean height of its surface, and its name at the middle.
+            // Where the chunk is: the square that it owns, at the mean height of its surface, and its name at the middle, raised to one
+            // text height over the highest point of the chunk, along the local vertical. Kept in the chunk file, for the page of the survey
+            // directory, and drawn in this run's page with --label-chunks.
+            GlbContent chunk_content{"chunk", "Surface of one reconstruction chunk; the chunks together make mesh.glb", true, chunk.i, chunk.j};
+            X3DomChunkLabel label;
+            const bool has_label = !chunk.result.mesh.vertices.empty();
+            if (has_label) {
                 const double size = options.chunking.chunk_size;
                 double mean_z = 0.0;
                 double highest_z = std::numeric_limits<double>::lowest();
@@ -776,7 +782,6 @@ int main(int argc, char **argv) {
                     highest_z = std::max(highest_z, vertex.z);
                 }
                 mean_z /= static_cast<double>(chunk.result.mesh.vertices.size());
-                X3DomChunkLabel label;
                 label.name = chunk_name;
                 label.text_size = 0.1 * size;
                 const double x0 = chunk.i * size;
@@ -788,16 +793,37 @@ int main(int argc, char **argv) {
                     label.corners[corner][0] = at.x;
                     label.corners[corner][1] = at.y;
                     label.corners[corner][2] = at.z;
+                    const GeodeticPosition geodetic = ecef_to_geodetic(local_to_ecef(Vec3(corner_x[corner], corner_y[corner], mean_z), chunk_frame));
+                    chunk_content.chunk_label.corners[corner][0] = geodetic.longitude;
+                    chunk_content.chunk_label.corners[corner][1] = geodetic.latitude;
+                    chunk_content.chunk_label.corners[corner][2] = geodetic.elevation;
                 }
                 const Vec3 middle = output_position(Vec3(x0 + 0.5 * size, y0 + 0.5 * size, mean_z), chunk_frame, chunk_offset);
                 label.center[0] = middle.x;
                 label.center[1] = middle.y;
                 label.center[2] = middle.z;
-                // The name is raised to one text height over the highest point of the chunk, along the local vertical.
                 label.rise = (highest_z - mean_z) + label.text_size;
                 const GeodeticPosition at_middle = ecef_to_geodetic(local_to_ecef(Vec3(x0 + 0.5 * size, y0 + 0.5 * size, mean_z), chunk_frame));
                 label.latitude = at_middle.latitude;
                 label.longitude = at_middle.longitude;
+                chunk_content.chunk_label.present = true;
+                chunk_content.chunk_label.center[0] = at_middle.longitude;
+                chunk_content.chunk_label.center[1] = at_middle.latitude;
+                chunk_content.chunk_label.center[2] = at_middle.elevation;
+                chunk_content.chunk_label.rise = label.rise;
+                chunk_content.chunk_label.text_size = label.text_size;
+            }
+
+            std::string chunk_error;
+            if (!write_mesh_glb_file(chunks_directory / chunk_name, output_mesh(chunk.result.mesh, chunk_frame, chunk_offset), &chunk_error, chunk_content)) {
+                LOG_WARN(chunk_error);
+            }
+
+            if (options.write_tileset) {
+                add_tileset_tile(chunk.result.mesh, chunk.i, chunk.j);
+            }
+
+            if (options.label_chunks && has_label) {
                 chunk_labels.push_back(label);
             }
 
@@ -1406,8 +1432,8 @@ Options parse_options(int argc, char **argv) {
         LOG_ERROR("--geoviewpoint adds a GeoViewpoint to the page that --html writes; use --html too");
         std::exit(1);
     }
-    if (options.label_chunks && (!options.write_html || directory_input)) {
-        LOG_ERROR("--label-chunks draws the chunks in the page that --html writes after a run; use --html too");
+    if (options.label_chunks && !options.write_html && !directory_input) {
+        LOG_ERROR("--label-chunks draws the chunks in the page that --html writes; use --html too");
         std::exit(1);
     }
     if (options.lift_meters != 0.0 && !options.write_html && !directory_input) {
@@ -1488,7 +1514,8 @@ void print_usage() {
     std::cout << "                               match that of the chunk to its west or south on the edge, so that the meshes meet exactly,\n";
     std::cout << "                               with no step and no gap [1, or a quarter of a chunk if that is less]. 0 does not\n";
     std::cout << "      --label-chunks           With --html, draw the outline and the file name of each chunk in the page, with a check\n";
-    std::cout << "                               box to switch them off, to see which chunk a seam or a void belongs to\n";
+    std::cout << "                               box to switch them off, to see which chunk a seam or a void belongs to. Also for the survey\n";
+    std::cout << "                               page of a directory input (-I directory), for the chunk files that say where they are\n";
     std::cout << "      --threads <n>            Chunks reconstructed at once when chunking [min(cores,4)]; each holds its own grid\n";
     std::cout << "      --spill-points <n>       A survey of more than n soundings [50000000] is not held in memory: the soundings go to a\n";
     std::cout << "                               file in mbmesh_work, beside the results, and are sorted into one file per chunk, so that\n";

@@ -824,6 +824,99 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
 
 namespace {
 
+// n numbers from the array that follows the first occurrence of "key" at or after start, whatever brackets and commas are between them.
+bool json_numbers_after(const std::string &text, const std::string &key, std::size_t start, int n, double *values) {
+    const std::size_t found = text.find("\"" + key + "\"", start);
+    const std::size_t array = found == std::string::npos ? std::string::npos : text.find('[', found);
+    if (array == std::string::npos) {
+        return false;
+    }
+    const char *cursor = text.c_str() + array;
+    for (int i = 0; i < n; i++) {
+        while (*cursor == '[' || *cursor == ']' || *cursor == ',' || *cursor == ' ' || *cursor == '\n') {
+            cursor++;
+        }
+        char *stop = nullptr;
+        values[i] = std::strtod(cursor, &stop);
+        if (stop == cursor || !std::isfinite(values[i])) {
+            return false;
+        }
+        cursor = stop;
+    }
+    return true;
+}
+
+} // namespace
+
+std::vector<X3DomChunkLabel> find_survey_chunk_labels(const std::filesystem::path &survey_directory, bool use_geoorigin, const X3DomGeoOrigin &geo,
+                                                      std::size_t *without_labels) {
+    constexpr std::size_t maximum_labels = 5000;
+    if (without_labels != nullptr) {
+        *without_labels = 0;
+    }
+    double origin_ecef[3] = {0.0, 0.0, 0.0};
+    if (use_geoorigin) {
+        geodetic_to_ecef_array(geo.origin_lon, geo.origin_lat, geo.origin_elevation, origin_ecef);
+    }
+    // The chunk files, in order of path, so that the page does not depend on the order the file system lists them in.
+    std::vector<std::filesystem::path> files;
+    std::error_code filesystem_error;
+    for (std::filesystem::recursive_directory_iterator it(normalized_directory(survey_directory), filesystem_error), end; !filesystem_error && it != end;
+         it.increment(filesystem_error)) {
+        const std::filesystem::path &path = it->path();
+        const std::string name = path.filename().string();
+        if (it->is_directory(filesystem_error)) {
+            if (!name.empty() && name[0] == '.') {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+        if (path.parent_path().filename() == "chunks" && name.rfind("chunk_", 0) == 0 && is_glb(*it)) {
+            files.push_back(path);
+        }
+    }
+    std::sort(files.begin(), files.end());
+
+    std::vector<X3DomChunkLabel> labels;
+    for (const std::filesystem::path &path : files) {
+        const std::string json = glb_json(path);
+        const std::size_t at = json.find("\"chunkLabel\"");
+        double corners[12], center[3], rise = 0.0, text_size = 1.0;
+        if (at == std::string::npos || !json_numbers_after(json, "corners", at, 12, corners) || !json_numbers_after(json, "center", at, 3, center) ||
+            !json_number_after(json, "rise", at, &rise) || !json_number_after(json, "textSize", at, &text_size)) {
+            if (without_labels != nullptr) {
+                (*without_labels)++;
+            }
+            continue;
+        }
+        if (labels.size() >= maximum_labels) {
+            break;
+        }
+        X3DomChunkLabel label;
+        label.name = path.filename().string();
+        for (int corner = 0; corner < 4; corner++) {
+            double ecef[3];
+            geodetic_to_ecef_array(corners[3 * corner], corners[3 * corner + 1], corners[3 * corner + 2], ecef);
+            for (int k = 0; k < 3; k++) {
+                label.corners[corner][k] = ecef[k] - origin_ecef[k];
+            }
+        }
+        double ecef[3];
+        geodetic_to_ecef_array(center[0], center[1], center[2], ecef);
+        for (int k = 0; k < 3; k++) {
+            label.center[k] = ecef[k] - origin_ecef[k];
+        }
+        label.longitude = center[0];
+        label.latitude = center[1];
+        label.rise = rise;
+        label.text_size = text_size;
+        labels.push_back(label);
+    }
+    return labels;
+}
+
+namespace {
+
 // The rotation with the given matrix, as an axis and an angle.
 void matrix_to_axis_angle(const double r[3][3], double axis[3], double *angle) {
     const double trace = r[0][0] + r[1][1] + r[2][2];

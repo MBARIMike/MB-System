@@ -162,7 +162,9 @@ With \fB--html\fR, the page draws the outline of each chunk, at the mean height 
 and its file name, for example \fBchunk_2_-10.glb\fR, as text that faces the viewer, one text height above
 the highest point of the chunk. A check box
 switches them off. It is for finding which chunk a seam, a void or an overhang belongs to. It
-needs a chunked run, and has no effect on the survey page that a directory input writes.
+needs a chunked run. The survey page that a directory input writes draws them too, for the chunk files
+in the \fBchunks\fR directories beneath it that say where their chunk is (each carries it in
+\fBMB-System.content.chunkLabel\fR); those of a run made before that was written are not drawn.
 .TP
 .B \--chunk \fIi,j\fR
 Reconstruct only chunk (i,j). Chunk (i,j) covers x from i*size to (i+1)*size and y

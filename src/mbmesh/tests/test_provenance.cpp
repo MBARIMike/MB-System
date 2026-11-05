@@ -226,6 +226,12 @@ int main() {
         content.has_index = true;
         content.index_i = 3;
         content.index_j = -2;
+        content.chunk_label.present = true;
+        content.chunk_label.corners[1][0] = -122.2999;
+        content.chunk_label.corners[2][1] = 36.4001;
+        content.chunk_label.center[2] = -900.5;
+        content.chunk_label.rise = 1.5;
+        content.chunk_label.text_size = 0.3;
         ok &= check(write_and_read(directory / "a.glb", content, &model), label + "round trip");
 
         const tinygltf::Value &extras = model.asset.extras;
@@ -271,6 +277,10 @@ int main() {
         ok &= check(found["georeference.crs"] == "EPSG:4978", label + "crs");
         ok &= check(found["MB-System.content.role"] == "chunk", label + "content role");
         ok &= check(found["MB-System.content.chunk[0]"] == "3" && found["MB-System.content.chunk[1]"] == "-2", label + "chunk indices");
+        ok &= check(found["MB-System.content.chunkLabel.corners[1][0]"].rfind("-122.2999", 0) == 0 && found["MB-System.content.chunkLabel.corners[2][1]"].rfind("36.4001", 0) == 0 &&
+                        found["MB-System.content.chunkLabel.center[2]"].rfind("-900.5", 0) == 0 && found["MB-System.content.chunkLabel.rise"].rfind("1.5", 0) == 0 &&
+                        found["MB-System.content.chunkLabel.textSize"].rfind("0.3", 0) == 0,
+                    label + "the place of the chunk for the survey page");
         ok &= check(found.count("MB-System.verticalReference") == 1, label + "vertical reference stated");
         ok &= check(found["provenance.commandLine"] == run.command_line, label + "command line survives exactly");
 
