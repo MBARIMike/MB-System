@@ -24,6 +24,7 @@
 
 #include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
+#include "io/draco_mesh.h"
 #include "io/glb_writer.h"
 #include "io/tileset_writer.h"
 #include "io/point_spill.h"
@@ -488,6 +489,20 @@ int main(int argc, char **argv) {
             LOG_INFO("[settings]", text.str());
         }
         {
+            std::ostringstream text;
+            text << std::setprecision(6);
+            if (!options.draco) {
+                text << "compression: none (--no-draco); the meshes are written as arrays of 32-bit floats and integers";
+            } else if (!draco_available()) {
+                text << "compression: none; this build of mbmesh does not include Draco, so the meshes are written as arrays of 32-bit floats and integers";
+            } else {
+                text << "compression: Draco (KHR_draco_mesh_compression) for the triangle meshes (mesh.glb, the raw mesh, the chunks and the tileset tiles), with positions kept to "
+                     << options.draco_precision << " m (--draco-precision) and normals in " << options.draco_normal_bits
+                     << " bits (--draco-normal-bits); the point cloud, normals, sensor positions and track are not compressed, as the extension is for triangles";
+            }
+            LOG_INFO("[settings]", text.str());
+        }
+        {
             std::vector<std::string> outputs;
             if (options.write_html) outputs.push_back(options.label_chunks ? "viewer page with chunk outlines and names (--html, --label-chunks)" : "viewer page (--html)");
             if (options.write_tileset) outputs.push_back("3D Tiles tileset (--tileset)");
@@ -586,6 +601,13 @@ int main(int argc, char **argv) {
         run.threads = options.use_chunking ? static_cast<std::size_t>(options.chunking.threads) : 1;
     }
     set_glb_run_metadata(run_metadata(run));
+    {
+        GlbCompression compression;
+        compression.draco = options.draco;
+        compression.position_precision = options.draco_precision;
+        compression.normal_bits = options.draco_normal_bits;
+        set_glb_compression(compression);
+    }
 
     // The OGC 3D Tiles tileset: one tile for each chunk, the surface of the chunk in the local east-north-up frame, written Y-up as glTF requires,
     // and tileset.json, whose root transform is that frame in ECEF. It does not depend on the GeoOrigin.
@@ -1112,6 +1134,9 @@ Options parse_options(int argc, char **argv) {
         {"label-chunks", no_argument, nullptr, 1028},
         {"seam-blend", required_argument, nullptr, 1029},
         {"seam-method", required_argument, nullptr, 1031},
+        {"no-draco", no_argument, nullptr, 1032},
+        {"draco-precision", required_argument, nullptr, 1033},
+        {"draco-normal-bits", required_argument, nullptr, 1034},
         {"chunk", required_argument, nullptr, 1014},
         {"max-chunks", required_argument, nullptr, 1015},
         {"threads", required_argument, nullptr, 1016},
@@ -1267,6 +1292,32 @@ Options parse_options(int argc, char **argv) {
             }
             options.seam_blend = width;
             options.seam_blend_requested = true;
+            break;
+        }
+
+        case 1032:
+            options.draco = false;
+            break;
+
+        case 1033: {
+            char *end = nullptr;
+            const double precision = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(precision) || precision <= 0.0) {
+                LOG_ERROR("invalid --draco-precision:", std::string("'") + optarg + "' is not a size in meters, more than zero");
+                std::exit(1);
+            }
+            options.draco_precision = precision;
+            break;
+        }
+
+        case 1034: {
+            char *end = nullptr;
+            const long bits = std::strtol(optarg, &end, 10);
+            if (end == optarg || *end != '\0' || bits < 2 || bits > 30) {
+                LOG_ERROR("invalid --draco-normal-bits:", std::string("'") + optarg + "' is not a number of bits, 2 to 30");
+                std::exit(1);
+            }
+            options.draco_normal_bits = static_cast<int>(bits);
             break;
         }
 
@@ -1530,6 +1581,12 @@ void print_usage() {
     std::cout << "                               sounding is near most of their vertices. Pieces with soundings under them stay. 0 keeps all\n";
     std::cout << "      --seam-method <name>     How chunks are matched on their edges: blend (solve each, then blend toward the neighbors over --seam-blend)\n";
     std::cout << "                               or solve (solve each with its west and south neighbors' fields fixed on the shared edges) [solve]\n";
+    std::cout << "      --no-draco               Write the meshes as arrays. By default the triangle meshes of the GLB files (mesh.glb, the raw\n";
+    std::cout << "                               mesh, the chunks and the tileset tiles) are compressed with Draco (KHR_draco_mesh_compression);\n";
+    std::cout << "                               point clouds, normals, sensor positions and the track are never compressed\n";
+    std::cout << "      --draco-precision <m>    With Draco, keep positions to this many meters [0.001]: each file gets the bits that make the\n";
+    std::cout << "                               step of the quantization no more than this over its extent\n";
+    std::cout << "      --draco-normal-bits <n>  With Draco, the bits of each normal, 2 to 30 [10]\n";
     std::cout << "      --poisson-solver <name>  How the Poisson grid equation is solved: " << poisson_solver_names() << " [sor]\n";
     std::cout << "      --poisson-iterations <n> Iterations of the solver, for either solver [sor: one per cell across the longest grid edge,\n";
     std::cout << "                               at least 50; jacobi: chosen from the level of detail, 200 to 500]. The\n";

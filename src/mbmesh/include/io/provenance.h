@@ -132,6 +132,13 @@ struct GlbContent {
         double rise = 0.0;
         double text_size = 1.0;
     } chunk_label;
+    // How the geometry in this file is compressed, if it is (KHR_draco_mesh_compression): filled in by the writer.
+    struct Compression {
+        bool present = false;
+        int position_bits = 0;
+        double position_step = 0.0;   // meters between the positions that the bits can tell apart
+        int normal_bits = 0;          // 0 for a file without normals
+    } compression;
     // Metadata to write in place of the run metadata that set_glb_run_metadata() set, for a file whose
     // georeference differs, such as a tileset's content. The content of this file is added to it.
     const MetaValue *metadata = nullptr;

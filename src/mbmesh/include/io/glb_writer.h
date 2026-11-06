@@ -15,6 +15,22 @@
 void set_glb_run_metadata(const MetaValue &run_metadata);
 void clear_glb_run_metadata();
 
+// Draco compression (KHR_draco_mesh_compression) of the triangle meshes that write_mesh_glb_file() writes: mesh.glb, raw_mesh.glb,
+// the chunks and the tiles of a tileset. Point clouds, lines and the track are not compressed, since the extension is for triangles.
+// The positions are quantized over the largest range of the three axes of the mesh, so the number of bits is chosen for each
+// file from the range, to be no coarser than position_precision meters; the normals are quantized in normal_bits bits.
+// Off until set; needs a build with Draco (draco_available()), and without one the files are written uncompressed.
+struct GlbCompression {
+    bool draco = false;
+    double position_precision = 0.001;   // meters
+    int normal_bits = 10;
+};
+void set_glb_compression(const GlbCompression &compression);
+
+// The bits of position that make the step of the quantization no more than precision meters over a range of range meters, at
+// least 8 and at most 30 (Draco's limit).
+[[nodiscard]] int draco_position_bits(double range, double precision);
+
 [[nodiscard]] bool write_mesh_glb_file(
     const std::filesystem::path &path,
     const Mesh &mesh,

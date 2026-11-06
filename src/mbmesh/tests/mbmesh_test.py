@@ -168,6 +168,17 @@ class MbmeshTest(unittest.TestCase):
       self.assertNotEqual(proc.returncode, 0, value)
       self.assertIn('not a size in meters', proc.stdout.decode(), value)
 
+  def testDracoOptionsAreValidated(self):
+    # --draco-precision is a size in meters above zero, --draco-normal-bits a number of bits from 2 to 30.
+    for option, values, message in (('--draco-precision=', ('abc', '-1', '0', ''), 'not a size in meters'),
+                                    ('--draco-normal-bits=', ('abc', '1', '31', ''), 'not a number of bits')):
+      for value in values:
+        proc = subprocess.run([self.cmd, '-I', 'nonexistent', option + value],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, check=False)
+        self.assertNotEqual(proc.returncode, 0, option + value)
+        self.assertIn(message, proc.stdout.decode(), option + value)
+
   def testSeamMethodIsValidated(self):
     # --seam-method is blend or solve.
     for value in ('abc', '', 'Solve'):
@@ -207,6 +218,7 @@ class MbmeshTest(unittest.TestCase):
                                       stderr=subprocess.STDOUT).decode()
     self.assertIn('--void-size', output)
     self.assertIn('--island-size', output)
+    self.assertIn('--no-draco', output)
 
   def testHelpDocumentsSpillPoints(self):
     output = subprocess.check_output([self.cmd, '-h'],

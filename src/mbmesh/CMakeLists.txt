@@ -19,6 +19,7 @@ set(MBMESH_SOURCES
   src/io/track.cpp
   src/io/provenance.cpp
   src/io/glb_writer.cpp
+  src/io/draco_mesh.cpp
   src/io/tileset_writer.cpp
   src/io/x3dom_writer.cpp
   src/algorithms/point_decimation.cpp
@@ -31,11 +32,29 @@ set(MBMESH_SOURCES
 
 find_package(Threads REQUIRED)
 
+# Draco, for the compression of the triangle meshes of the GLB files (KHR_draco_mesh_compression): the encoder source that
+# mbgrd2gltf holds, built here as a library of its own. Without it the GLBs are not compressed.
+set(MBMESH_DRACO_DIR "${CMAKE_SOURCE_DIR}/src/mbgrd2gltf/draco")
+if(EXISTS "${MBMESH_DRACO_DIR}/compression/encode.cc")
+  file(GLOB_RECURSE MBMESH_DRACO_SOURCES "${MBMESH_DRACO_DIR}/*.cc")
+  list(FILTER MBMESH_DRACO_SOURCES EXCLUDE REGEX ".*/.*test.*")
+  add_library(mbmesh_draco STATIC ${MBMESH_DRACO_SOURCES})
+  target_compile_features(mbmesh_draco PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_draco PUBLIC ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
+  target_compile_options(mbmesh_draco PRIVATE -w)
+  set_target_properties(mbmesh_draco PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_source_files_properties(src/io/draco_mesh.cpp PROPERTIES COMPILE_DEFINITIONS MBMESH_WITH_DRACO)
+  set(MBMESH_DRACO_LIBRARY mbmesh_draco)
+else()
+  message(WARNING "mbmesh: the Draco source was not found in src/mbgrd2gltf/draco; GLBs will not be compressed")
+  set(MBMESH_DRACO_LIBRARY "")
+endif()
+
 add_executable(mbmesh ${MBMESH_SOURCES})
 target_compile_features(mbmesh PRIVATE cxx_std_17)
 
 # Link to MB-System mbio library
-target_link_libraries(mbmesh PRIVATE mbio Threads::Threads)
+target_link_libraries(mbmesh PRIVATE mbio Threads::Threads ${MBMESH_DRACO_LIBRARY})
 
 target_include_directories(mbmesh PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -51,7 +70,8 @@ if(buildTests)
     src/algorithms/screened_poisson.cpp
     src/algorithms/marching_cubes.cpp
     src/io/provenance.cpp
-    src/io/glb_writer.cpp)
+    src/io/glb_writer.cpp
+    src/io/draco_mesh.cpp)
   target_compile_features(mbmesh_test_support_trimming PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_support_trimming PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -132,7 +152,8 @@ if(buildTests)
     tests/test_track.cpp
     src/io/track.cpp
     src/io/provenance.cpp
-    src/io/glb_writer.cpp)
+    src/io/glb_writer.cpp
+    src/io/draco_mesh.cpp)
   target_compile_features(mbmesh_test_track PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_track PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -165,6 +186,7 @@ if(buildTests)
     src/io/coordinate_frame.cpp
     src/io/provenance.cpp
     src/io/glb_writer.cpp
+    src/io/draco_mesh.cpp
     src/io/x3dom_writer.cpp)
   target_compile_features(mbmesh_test_provenance PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_provenance PRIVATE
@@ -176,7 +198,8 @@ if(buildTests)
     tests/test_marching_cubes.cpp
     src/algorithms/marching_cubes.cpp
     src/io/provenance.cpp
-    src/io/glb_writer.cpp)
+    src/io/glb_writer.cpp
+    src/io/draco_mesh.cpp)
   target_compile_features(mbmesh_test_marching_cubes PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_marching_cubes PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -187,12 +210,35 @@ if(buildTests)
     tests/test_normal_estimation.cpp
     src/algorithms/normal_estimation.cpp
     src/io/provenance.cpp
-    src/io/glb_writer.cpp)
+    src/io/glb_writer.cpp
+    src/io/draco_mesh.cpp)
   target_compile_features(mbmesh_test_normal_estimation PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_normal_estimation PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
   add_test(NAME mbmesh_normal_estimation COMMAND mbmesh_test_normal_estimation)
+
+  add_executable(mbmesh_test_draco_mesh
+    tests/test_draco_mesh.cpp
+    src/io/provenance.cpp
+    src/io/glb_writer.cpp
+    src/io/draco_mesh.cpp)
+  target_compile_features(mbmesh_test_draco_mesh PRIVATE cxx_std_17)
+  target_include_directories(mbmesh_test_draco_mesh PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
+  add_test(NAME mbmesh_draco_mesh COMMAND mbmesh_test_draco_mesh)
+
+  # draco_mesh.cpp is built with Draco in it, so every test that holds it needs the library.
+  if(MBMESH_DRACO_LIBRARY)
+    get_property(mbmesh_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(mbmesh_target ${mbmesh_targets})
+      get_target_property(mbmesh_target_sources ${mbmesh_target} SOURCES)
+      if(mbmesh_target_sources MATCHES "draco_mesh.cpp" AND NOT mbmesh_target STREQUAL "mbmesh")
+        target_link_libraries(${mbmesh_target} PRIVATE ${MBMESH_DRACO_LIBRARY})
+      endif()
+    endforeach()
+  endif()
 
   add_test(NAME mbmesh_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/mbmesh_test.py")
 endif()

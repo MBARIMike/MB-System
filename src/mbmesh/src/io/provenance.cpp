@@ -331,6 +331,16 @@ MetaValue content_metadata(const GlbContent &content) {
         index.add(MetaValue::from_number(content.index_j));
         block.set(content.role == "tileset_tile" ? "tile" : "chunk", index);
     }
+    if (content.compression.present) {
+        MetaValue compression = MetaValue::make_object();
+        compression.set("extension", MetaValue::from_string("KHR_draco_mesh_compression"));
+        compression.set("positionBits", MetaValue::from_number(content.compression.position_bits));
+        compression.set("positionStep", MetaValue::from_number(content.compression.position_step));
+        if (content.compression.normal_bits > 0) {
+            compression.set("normalBits", MetaValue::from_number(content.compression.normal_bits));
+        }
+        block.set("compression", compression);
+    }
     if (content.chunk_label.present) {
         const auto position = [](const double *at) {
             MetaValue value = MetaValue::make_array();

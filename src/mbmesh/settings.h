@@ -33,6 +33,10 @@ struct Options {
 
     // --label-chunks: the --html page draws the outline and the file name of each chunk.
     bool label_chunks = false;
+    // Draco compression of the triangle meshes written to GLB files (--no-draco, --draco-precision, --draco-normal-bits).
+    bool draco = true;
+    double draco_precision = 0.001;   // meters
+    int draco_normal_bits = 10;
 
     // --tileset: write the chunks as an OGC 3D Tiles tileset in <output>/tileset (see io/tileset_writer.h).
     bool write_tileset = false;

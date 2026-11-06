@@ -136,6 +136,19 @@ trimming. A halo smaller than that reach is used, with a warning. A larger halo 
 disk and time, because every chunk reconstructs its halo again, and it changes the chunk size; it
 did not improve the match of neighboring chunks at their edges. It has an effect only when the run is chunked.
 .TP
+.B \--no-draco
+Write the triangle meshes of the GLB files as arrays of 32-bit floats and integers. By default
+\fImesh.glb\fR, \fIraw_mesh.glb\fR, the chunks and the tileset tiles are compressed with Draco
+(the glTF extension \fBKHR_draco_mesh_compression\fR), which makes them about a tenth of the size.
+The point cloud, normals, sensor positions and track are never compressed, since the extension is for triangles.
+.TP
+.B \--draco-precision \fImeters\fR
+With Draco, keep the positions to this many meters (default 0.001). Each file gets the number of bits
+(8 to 30) that makes the step of its quantization no more than this over its extent.
+.TP
+.B \--draco-normal-bits \fIn\fR
+With Draco, the bits of each normal, 2 to 30 (default 10).
+.TP
 .B \--seam-method \fIname\fR
 How chunks are matched on the edges they share: \fBsolve\fR (the default) solves each chunk with the final fields of its west and south neighbors held
 fixed on the shared edges, which removes the edge effect on those sides, but a chunk
