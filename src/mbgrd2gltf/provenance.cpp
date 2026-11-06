@@ -241,22 +241,21 @@ MetaValue program_block(const GridRunInfo& run) {
   model.set("verticalExaggeration", number(run.exaggeration));
   model.set("meanAltitude", number(run.mean_altitude));
   model.set("binary", MetaValue::from_bool(run.binary));
-  MetaValue draco = MetaValue::make_object();
-  draco.set("enabled", MetaValue::from_bool(run.draco));
-  if (run.draco) {
-    MetaValue bits = MetaValue::make_object();
-    bits.set("position", number(run.draco_position_bits));
-    bits.set("normal", number(run.draco_normal_bits));
-    bits.set("texcoord", number(run.draco_texcoord_bits));
-    bits.set("color", number(run.draco_color_bits));
-    draco.set("quantizationBits", bits);
-  }
-  model.set("draco", draco);
   block.set("model", model);
 
   MetaValue content = MetaValue::make_object();
   content.set("role", text("mesh"));
   content.set("description", text("The gridded seafloor surface"));
+  if (run.draco.present) {
+    // As mbmesh writes it, under the same names (GEOREFERENCE.md).
+    MetaValue compression = MetaValue::make_object();
+    compression.set("extension", text("KHR_draco_mesh_compression"));
+    compression.set("positionBits", number(run.draco.position_bits));
+    compression.set("positionStep", number(run.draco.position_step));
+    if (run.draco.normal_bits > 0)
+      compression.set("normalBits", number(run.draco.normal_bits));
+    content.set("compression", compression);
+  }
   block.set("content", content);
   return block;
 }

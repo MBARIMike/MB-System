@@ -1,4 +1,4 @@
-#include "io/draco_mesh.h"
+#include "draco_mesh.h"
 #include "io/glb_writer.h"
 
 #include <algorithm>
@@ -36,10 +36,10 @@ std::uint32_t word(const std::vector<unsigned char> &bytes, std::size_t at) {
 
 int main() {
     // The bits for a precision: a step of at most a millimeter over 3 m takes 12 bits, over 120 m 17; never fewer than 8 or more than 30.
-    check(draco_position_bits(3.0, 0.001) == 12, "3 m at a millimeter takes 12 bits");
-    check(draco_position_bits(120.0, 0.001) == 17, "120 m at a millimeter takes 17 bits");
-    check(draco_position_bits(0.0001, 0.001) == 8 && draco_position_bits(1.0e9, 0.001) == 30, "the bits are kept to 8 to 30");
-    check(draco_position_bits(0.0, 0.001) == 8 && draco_position_bits(5.0, 0.0) == 8, "no range or no precision gives the least");
+    check(mbdraco::position_bits(3.0, 0.001) == 12, "3 m at a millimeter takes 12 bits");
+    check(mbdraco::position_bits(120.0, 0.001) == 17, "120 m at a millimeter takes 17 bits");
+    check(mbdraco::position_bits(0.0001, 0.001) == 8 && mbdraco::position_bits(1.0e9, 0.001) == 30, "the bits are kept to 8 to 30");
+    check(mbdraco::position_bits(0.0, 0.001) == 8 && mbdraco::position_bits(5.0, 0.0) == 8, "no range or no precision gives the least");
 
     // A hilly grid of 40 x 40 vertices, 10 cm apart, with normals pointing mostly up.
     constexpr int n = 40;
@@ -65,23 +65,27 @@ int main() {
     const std::filesystem::path directory = std::filesystem::temp_directory_path() / "mbmesh_test_draco";
     std::filesystem::create_directories(directory);
     std::string error;
-    set_glb_compression(GlbCompression());
+    {
+        mbdraco::Settings off;
+        off.enabled = false;
+        set_glb_compression(off);
+    }
     check(write_mesh_glb_file(directory / "plain.glb", mesh, &error), "writes without compression");
 
-    if (!draco_available()) {
+    if (!mbdraco::available()) {
         std::printf("this build has no Draco: the compressed case is not tested\n");
         return failures == 0 ? 0 : 1;
     }
 
-    GlbCompression compression;
-    compression.draco = true;
-    compression.position_precision = 0.001;
-    compression.normal_bits = 10;
-    set_glb_compression(compression);
+    set_glb_compression(mbdraco::Settings());   // the defaults: on, a millimeter, 10 bits
     GlbContent content;
     content.role = "mesh";
     check(write_mesh_glb_file(directory / "draco.glb", mesh, &error, content), "writes with compression");
-    set_glb_compression(GlbCompression());
+    {
+        mbdraco::Settings off;
+        off.enabled = false;
+        set_glb_compression(off);
+    }
 
     const std::vector<unsigned char> plain = read_file(directory / "plain.glb");
     const std::vector<unsigned char> packed = read_file(directory / "draco.glb");
@@ -99,11 +103,11 @@ int main() {
     std::vector<unsigned char> stream(packed.begin() + static_cast<std::ptrdiff_t>(binary_start), packed.begin() + static_cast<std::ptrdiff_t>(binary_start + binary_length));
     std::vector<float> positions;
     std::vector<std::uint32_t> indices;
-    check(draco_decode_mesh(stream, &positions, &indices, &error), "the stream decodes");
+    check(mbdraco::decode(stream, &positions, &indices, &error), "the stream decodes");
     check(positions.size() == 3 * mesh.vertices.size() && indices.size() == mesh.indices.size(), "to as many points and triangles as went in");
 
     // Every vertex has a decoded point within the step of the quantization, which is the range (3.9 m) over 2^12 - 1.
-    const double step = 3.9 / (std::pow(2.0, draco_position_bits(3.9, 0.001)) - 1.0);
+    const double step = 3.9 / (std::pow(2.0, mbdraco::position_bits(3.9, 0.001)) - 1.0);
     double worst = 0.0;
     for (const Vec3 &vertex : mesh.vertices) {
         double nearest = 1.0e9;

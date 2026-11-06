@@ -93,12 +93,10 @@ int main(int argc, char* argv[]) {
              "(" + std::string(input_size_str) + " MB)");
     LOG_INFO("Binary output:", options.is_binary_output() ? "enabled," : "disabled,",
              "Draco compression:", options.is_draco_compressed() ? "enabled" : "disabled");
-    
+
     if (options.is_draco_compressed()) {
-      LOG_INFO("Draco quantization bits - Position:", options.draco_quantization(0),
-               "Normal:", options.draco_quantization(1),
-               "Texcoord:", options.draco_quantization(2),
-               "Color:", options.draco_quantization(3));
+      LOG_INFO("Draco: positions kept to", options.draco().precision, "m in each tile (--draco-precision), normals in",
+               options.draco().normal_bits, "bits (--draco-normal-bits)");
     }
 
     Bathymetry bathymetry(options);
@@ -197,11 +195,6 @@ int main(int argc, char* argv[]) {
     }
     run.exaggeration = options.exaggeration();
     run.binary = options.is_binary_output();
-    run.draco = options.is_draco_compressed();
-    run.draco_position_bits = options.draco_quantization(0);
-    run.draco_normal_bits = options.draco_quantization(1);
-    run.draco_texcoord_bits = options.draco_quantization(2);
-    run.draco_color_bits = options.draco_quantization(3);
 
     model::write_gltf(geometry, options, run);
     

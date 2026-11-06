@@ -49,11 +49,9 @@ GridRunInfo example_run(bool with_center) {
   run.mean_altitude = -940.5;
   run.exaggeration = 2.0;
   run.binary = true;
-  run.draco = true;
-  run.draco_position_bits = 16;
-  run.draco_normal_bits = 7;
-  run.draco_texcoord_bits = 10;
-  run.draco_color_bits = 8;
+  run.draco.present = true;
+  run.draco.position_bits = 17;
+  run.draco.position_step = 0.0009;
   if (with_center) {
     run.geoorigin_mode = "automatic";
     run.has_center = true;
@@ -98,7 +96,9 @@ int main() {
     ok &= check(value_of(tree, "MB-System.grid.columns") == "2001", label + "grid columns");
     ok &= check(value_of(tree, "MB-System.grid.registration") == "pixel", label + "registration");
     ok &= check(value_of(tree, "MB-System.model.verticalExaggeration") == "2", label + "exaggeration");
-    ok &= check(value_of(tree, "MB-System.model.draco.quantizationBits.position") == "16", label + "draco position bits");
+    ok &= check(value_of(tree, "MB-System.content.compression.extension") == "KHR_draco_mesh_compression", label + "draco extension");
+    ok &= check(value_of(tree, "MB-System.content.compression.positionBits") == "17", label + "draco position bits");
+    ok &= check(value_of(tree, "MB-System.content.compression.normalBits") == "(missing)", label + "no normal bits for a mesh without normals");
     ok &= check(value_of(tree, "MB-System.verticalReference") != "(missing)", label + "vertical reference stated");
 
     if (with_center) {

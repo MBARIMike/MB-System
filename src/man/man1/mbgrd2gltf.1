@@ -5,15 +5,13 @@ mbgrd2gltf \- convert bathymetric grid data to GLTF format with optional setting
 .SH SYNOPSIS
 .B mbgrd2gltf
 \fB\-\-input\fP \fIFILE\fP
-[\fB\-\-binary\fP]
+[\fB\-\-no-binary\fP]
 [\fB\-\-output\fP \fIROOT\fP]
 [\fB\-\-exaggeration\fP \fINUM\fP]
 [\fB\-\-geoorigin\fP[\fB=\fP\fILON,LAT,ELEV\fP]]
-[\fB\-\-draco\fP]
-[\fB\-\-quantize-position\fP \fINUM\fP]
-[\fB\-\-quantize-normal\fP \fINUM\fP]
-[\fB\-\-quantize-texcoord\fP \fINUM\fP]
-[\fB\-\-quantize-color\fP \fINUM\fP]
+[\fB\-\-no-draco\fP]
+[\fB\-\-draco-precision\fP \fIMETERS\fP]
+[\fB\-\-draco-normal-bits\fP \fINUM\fP]
 [\fB\-\-html\fP]
 [\fB\-\-geoviewpoint\fP=\fIVALUES\fP]
 [\fB\-\-verbose\fP]
@@ -25,7 +23,7 @@ mbgrd2gltf \- convert bathymetric grid data to GLTF format with optional setting
 
 .SH DESCRIPTION
 .B mbgrd2gltf
-is a tool designed to convert grid data files (GRD) to Graphics Library Transmission Format (GLTF) files. It can generate output in binary format to create a more compact GLTF file and exaggerate vertex altitude to enhance topographic features. The tool uses tiling to efficiently handle large datasets. Optional Draco compression can reduce the output GLTF file size significantly while maintaining good visual quality. With Draco, one can specify the quantization level, which affects the compression level of mesh vertices.
+is a tool designed to convert grid data files (GRD) to Graphics Library Transmission Format (GLTF) files. It writes binary GLTF (GLB) by default, which is more compact, and can write text-based GLTF with \fB\-\-no-binary\fP; it can exaggerate vertex altitude to enhance topographic features. The tool uses tiling to efficiently handle large datasets. Draco compression, which is the default, reduces the output GLTF file size by about a factor of ten while keeping the positions to a stated precision (by default a millimeter).
 .PP
 The output mesh vertices are positioned in an Earth-Centered, Earth-Fixed (ECEF) Cartesian coordinate system with units in meters. ECEF is a 3D right-handed coordinate system with its origin at Earth's center of mass, the Z-axis pointing toward the North Pole, the X-axis intersecting the equator at the prime meridian, and the Y-axis completing the right-handed system at 90 degrees east longitude.
 .PP
@@ -75,8 +73,8 @@ Mentor: Mike McCann - Monterey Bay Aquarium Research Institute
 Input GMT GRD format bathymetry grid file. This option is required.
 
 .TP
-.B \-\-binary, \-B
-Generate the output in binary GLTF (GLB) format. Binary GLTF is more compact and typically loads faster in applications than text-based GLTF. Default: text-based GLTF output.
+.B \-\-no-binary
+Write text-based GLTF (a \fI.gltf\fR file of JSON with the buffers embedded) in place of the binary GLTF (GLB, a \fI.glb\fR file) that is written by default. Binary GLTF is more compact and typically loads faster. \fB\-\-binary\fP, \fB\-B\fP are still accepted and do nothing, since binary is the default.
 
 .TP
 .B \-\-output, \-O
@@ -106,32 +104,21 @@ The value must be attached to the option. For the long form write an equals sign
 GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about 6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to preserve sub-meter detail.
 
 .TP
-.B \-\-draco, \-D
-Enable Draco mesh compression to reduce the file size by encoding meshes and point clouds. This can significantly reduce file sizes while maintaining visual quality.
+.B \-\-no-draco
+Write the mesh as arrays. By default the mesh is compressed with Draco (the glTF extension
+\fBKHR_draco_mesh_compression\fP), as mbmesh(1) compresses its meshes, with the code that the two programs
+share (\fBsrc/mbdraco\fP). \fB\-\-draco\fP, \fB\-D\fP are still accepted and do nothing, since compression is the default.
 
 .TP
-.B \-\-quantize-position
-\fINUM\fP (or \fB-Qp\fP\fINUM\fP)
-.br
-Draco position quantization bits (2-30). Affects the compression level of mesh vertex positions. Lower values increase compression but reduce precision, potentially affecting the visual quality of the terrain. Requires \fB\-\-draco\fP option. Default: 16.
+.B \-\-draco-precision \fIMETERS\fP
+With Draco, keep the positions to this many meters (default 0.001). Each tile of the model gets the number of bits
+(8 to 30) that makes the step of its quantization no more than this over its extent, so a small tile gets few bits and a large one more.
+This replaces \fB\-\-quantize-position\fP and its fixed 16 bits, which gave a step that depended on the size of the tile. The options
+\fB\-\-quantize-position\fP, \fB\-\-quantize-normal\fP, \fB\-\-quantize-texcoord\fP, \fB\-\-quantize-color\fP and \fB\-Q\fP are refused with a message that names the new options.
 
 .TP
-.B \-\-quantize-normal
-\fINUM\fP (or \fB-Qn\fP\fINUM\fP)
-.br
-Draco normal quantization bits (2-30). Affects the compression of surface normal vectors. Requires \fB\-\-draco\fP option. Default: 7.
-
-.TP
-.B \-\-quantize-texcoord
-\fINUM\fP (or \fB-Qt\fP\fINUM\fP)
-.br
-Draco texture coordinate quantization bits (2-30). Affects the compression of texture coordinates. Requires \fB\-\-draco\fP option. Default: 10.
-
-.TP
-.B \-\-quantize-color
-\fINUM\fP (or \fB-Qc\fP\fINUM\fP)
-.br
-Draco color quantization bits (2-30). Affects the compression of vertex colors. Requires \fB\-\-draco\fP option. Default: 8.
+.B \-\-draco-normal-bits \fINUM\fP
+With Draco, the bits of each normal, 2 to 30 (default 10). The mesh has no normals today, so this changes nothing; it is the option that mbmesh(1) takes.
 
 .TP
 .B \-\-html, \-W
@@ -168,7 +155,7 @@ point as \fBgeodeticCenter\fR (longitude, latitude, height), the \fBheightRefere
 ellipsoid) and the \fBextent\fR of the grid. \fBprovenance\fR gives the software and
 version, the time of execution (UTC), the command line, working directory, user and host,
 and the input grid file. \fBMB-System\fR gives the grid size, spacing and registration, the
-vertical exaggeration, the Draco quantization and the vertical reference. The page written
+vertical exaggeration, the vertical reference, and \fBcontent.compression\fP (the Draco bits and step) when the mesh is compressed. The page written
 by \fB\-\-html\fR holds the same in X3D \fBGeoMetadata\fR and \fBWorldInfo\fR nodes. The
 names are shared with mbmesh(1) and are described in \fBsrc/mbmesh/GEOREFERENCE.md\fR.
 The grid value is used as a height above the WGS 84 ellipsoid, with no geoid correction.
@@ -181,17 +168,17 @@ Convert a GMT GRD file to a GLTF file with default settings:
 .fi
 .RE
 
-Convert a GRD file to GLB (Binary GLTF) with specified output folder and Draco compression:
+Convert a GRD file to GLB (Binary GLTF) with specified output folder, keeping the positions to a centimeter (Draco compression is the default):
 .RS
 .nf
-.B mbgrd2gltf --input input.grd --binary --output /path/to/output/mymodel --draco --quantize-position 20
+.B mbgrd2gltf --input input.grd --binary --output /path/to/output/mymodel --draco-precision 0.01
 .fi
 .RE
 
-Convert with vertical exaggeration, Draco compression, and verbose output:
+Convert with vertical exaggeration, without compression, and verbose output:
 .RS
 .nf
-.B mbgrd2gltf --input input.grd --output /path/to/output/mymodel --draco --binary --quantize-position 20 --exaggeration 20 --verbose
+.B mbgrd2gltf --input input.grd --output /path/to/output/mymodel --binary --no-draco --exaggeration 20 --verbose
 .fi
 .RE
 

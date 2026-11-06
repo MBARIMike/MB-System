@@ -24,7 +24,7 @@
 
 #include "io/coordinate_frame.h"
 #include "io/xyz_writer.h"
-#include "io/draco_mesh.h"
+#include "draco_mesh.h"
 #include "io/glb_writer.h"
 #include "io/tileset_writer.h"
 #include "io/point_spill.h"
@@ -491,13 +491,13 @@ int main(int argc, char **argv) {
         {
             std::ostringstream text;
             text << std::setprecision(6);
-            if (!options.draco) {
+            if (!options.draco.enabled) {
                 text << "compression: none (--no-draco); the meshes are written as arrays of 32-bit floats and integers";
-            } else if (!draco_available()) {
+            } else if (!mbdraco::available()) {
                 text << "compression: none; this build of mbmesh does not include Draco, so the meshes are written as arrays of 32-bit floats and integers";
             } else {
                 text << "compression: Draco (KHR_draco_mesh_compression) for the triangle meshes (mesh.glb, the raw mesh, the chunks and the tileset tiles), with positions kept to "
-                     << options.draco_precision << " m (--draco-precision) and normals in " << options.draco_normal_bits
+                     << options.draco.precision << " m (--draco-precision) and normals in " << options.draco.normal_bits
                      << " bits (--draco-normal-bits); the point cloud, normals, sensor positions and track are not compressed, as the extension is for triangles";
             }
             LOG_INFO("[settings]", text.str());
@@ -602,11 +602,7 @@ int main(int argc, char **argv) {
     }
     set_glb_run_metadata(run_metadata(run));
     {
-        GlbCompression compression;
-        compression.draco = options.draco;
-        compression.position_precision = options.draco_precision;
-        compression.normal_bits = options.draco_normal_bits;
-        set_glb_compression(compression);
+        set_glb_compression(options.draco);
     }
 
     // The OGC 3D Tiles tileset: one tile for each chunk, the surface of the chunk in the local east-north-up frame, written Y-up as glTF requires,
@@ -1296,28 +1292,24 @@ Options parse_options(int argc, char **argv) {
         }
 
         case 1032:
-            options.draco = false;
+            options.draco.enabled = false;
             break;
 
         case 1033: {
-            char *end = nullptr;
-            const double precision = std::strtod(optarg, &end);
-            if (end == optarg || *end != '\0' || !std::isfinite(precision) || precision <= 0.0) {
-                LOG_ERROR("invalid --draco-precision:", std::string("'") + optarg + "' is not a size in meters, more than zero");
+            std::string reason;
+            if (!mbdraco::parse_precision(optarg, &options.draco.precision, &reason)) {
+                LOG_ERROR("invalid --draco-precision:", reason);
                 std::exit(1);
             }
-            options.draco_precision = precision;
             break;
         }
 
         case 1034: {
-            char *end = nullptr;
-            const long bits = std::strtol(optarg, &end, 10);
-            if (end == optarg || *end != '\0' || bits < 2 || bits > 30) {
-                LOG_ERROR("invalid --draco-normal-bits:", std::string("'") + optarg + "' is not a number of bits, 2 to 30");
+            std::string reason;
+            if (!mbdraco::parse_normal_bits(optarg, &options.draco.normal_bits, &reason)) {
+                LOG_ERROR("invalid --draco-normal-bits:", reason);
                 std::exit(1);
             }
-            options.draco_normal_bits = static_cast<int>(bits);
             break;
         }
 

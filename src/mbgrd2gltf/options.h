@@ -38,6 +38,8 @@
 #include <string>
 #include <vector>
 
+#include "draco_mesh.h"
+
 namespace mbgrd2gltf {
 class Options {
 private: // members
@@ -47,16 +49,15 @@ private: // members
   double _geoorigin_lon = 0.0;
   double _geoorigin_lat = 0.0;
   double _geoorigin_elev = 0.0;
-  bool _is_binary_output = false;
+  bool _is_binary_output = true;   // GLB unless --no-binary
   bool _is_help = false;
   bool _is_verbose = false;
   bool _is_exaggeration_set = false;
   bool _is_output_folder_set = false;
-  bool _is_draco_compressed = false;
   bool _is_geoorigin_set = false;
   bool _is_geoorigin_auto = false;
   bool _is_html_output = false;
-  int _draco_quantization[4] = {16, 7, 10, 8}; // [POSITION, NORMAL, TEXCOORD, COLOR]
+  mbdraco::Settings _draco;                       // on by default; see src/mbdraco/draco_mesh.h
   std::vector<std::string> _geoviewpoints;        // --geoviewpoint values, as given
 
 public: // members
@@ -73,13 +74,12 @@ public: // members
   bool is_verbose() const { return _is_verbose; }
   bool is_exaggeration_set() const { return _is_exaggeration_set; }
   bool is_output_folder_set() const { return _is_output_folder_set; }
-  bool is_draco_compressed() const { return _is_draco_compressed; }
+  bool is_draco_compressed() const { return _draco.enabled; }
   bool is_geoorigin_set() const { return _is_geoorigin_set; }
   bool is_geoorigin_auto() const { return _is_geoorigin_auto; }
   bool is_html_output() const { return _is_html_output; }
-  int draco_quantization(int i) const { return _draco_quantization[i]; }
+  const mbdraco::Settings& draco() const { return _draco; }
   const std::vector<std::string>& geoviewpoints() const { return _geoviewpoints; }
-  bool draco_quantization_valid() const;
 };
 } // namespace mbgrd2gltf
 

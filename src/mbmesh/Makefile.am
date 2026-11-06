@@ -3,6 +3,7 @@ bin_PROGRAMS = mbmesh
 AM_CPPFLAGS =
 AM_CPPFLAGS += -I$(top_srcdir)/src/mbio
 AM_CPPFLAGS += -I$(top_srcdir)/src/mbgrd2gltf
+AM_CPPFLAGS += -I$(top_srcdir)/src/mbdraco
 AM_CPPFLAGS += -I$(top_srcdir)/src/mbmesh/include
 
 mbmesh_CXXFLAGS = -std=c++17
@@ -16,7 +17,7 @@ mbmesh_SOURCES = \
 	src/io/track.cpp \
 	src/io/provenance.cpp \
 	src/io/glb_writer.cpp \
-	src/io/draco_mesh.cpp \
+	../mbdraco/draco_mesh.cpp \
 	src/io/tileset_writer.cpp \
 	src/io/x3dom_writer.cpp \
 	src/algorithms/point_decimation.cpp \

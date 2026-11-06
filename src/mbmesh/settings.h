@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "draco_mesh.h"
 #include "algorithms/marching_cubes.h"
 #include "algorithms/normal_estimation.h"
 #include "algorithms/point_decimation.h"
@@ -34,9 +35,7 @@ struct Options {
     // --label-chunks: the --html page draws the outline and the file name of each chunk.
     bool label_chunks = false;
     // Draco compression of the triangle meshes written to GLB files (--no-draco, --draco-precision, --draco-normal-bits).
-    bool draco = true;
-    double draco_precision = 0.001;   // meters
-    int draco_normal_bits = 10;
+    mbdraco::Settings draco;   // on, 0.001 m and 10 bits unless changed, as in mbgrd2gltf (src/mbdraco)
 
     // --tileset: write the chunks as an OGC 3D Tiles tileset in <output>/tileset (see io/tileset_writer.h).
     bool write_tileset = false;

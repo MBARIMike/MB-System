@@ -168,7 +168,7 @@ software is free to ignore it. Every file has:
 | `verticalReference` | What the height of a vertex is measured from, in words (see "What these files do not say"). |
 | `vertexConvention` | In words, how to get from vertices to `crs` coordinates. The same statement as `vertexCoordinates` and `center`. |
 | `geoOrigin.mode` | `"none"`, `"automatic"` (the center of the data) or `"specified"` (`--geoorigin=lon,lat,elev`). |
-| `content` | `role` (what this file holds, for example `"mesh"`, `"chunk"`, `"tileset_tile"`, `"track"`) and a `description`; a chunk also has `chunk`, and a tile of a tileset `tile`, its `[i, j]` index, a Draco-compressed file has `compression` (`extension`, `positionBits`, `positionStep` in meters and `normalBits`), and a chunk has `chunkLabel`, where it is, for drawing its outline and name in a survey page: `corners` (the four corners of the square the chunk owns, at the mean height of its surface, in order around it) and `center`, each `[longitude, latitude, height above the ellipsoid]`, `rise` (meters above the center, along the local vertical, where the name is) and `textSize` (meters). |
+| `content` | `role` (what this file holds, for example `"mesh"`, `"chunk"`, `"tileset_tile"`, `"track"`) and a `description`; a chunk also has `chunk`, and a tile of a tileset `tile`, its `[i, j]` index, a Draco-compressed file has `compression` (`extension`, `positionBits`, `positionStep` in meters and `normalBits`; `mbgrd2gltf` writes it as well, with the most bits and the coarsest step of its tiles and no `normalBits`), and a chunk has `chunkLabel`, where it is, for drawing its outline and name in a survey page: `corners` (the four corners of the square the chunk owns, at the mean height of its surface, in order around it) and `center`, each `[longitude, latitude, height above the ellipsoid]`, `rise` (meters above the center, along the local vertical, where the name is) and `textSize` (meters). |
 
 `mbmesh` adds `soundings` (pings, read, accepted, flagged, out of bounds), `area`
 (whether `-R` was applied, and its bounds) and `reconstruction` (level of detail, Poisson
@@ -176,7 +176,7 @@ cell size, normal search radius, point spacing, single-pass or chunked, and for 
 runs the chunk size, halo and thread count). `mbgrd2gltf` adds `grid` (columns, rows,
 longitude and latitude spacing, and the `"gridline"` or `"pixel"` registration) and
 `model` (vertical exaggeration, mean altitude the exaggeration is applied about, whether
-the output is binary and whether and how finely Draco compression quantizes). The
+and whether the output is binary). The
 `provenance.inputs` of `mbmesh` list the datalist, the MBIO formats, the swath files (at
 most 1000 are named, the count is always given) and the time of the first and last ping;
 those of `mbgrd2gltf` give the `gridFile` and its `format`.

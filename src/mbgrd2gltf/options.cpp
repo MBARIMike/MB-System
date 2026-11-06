@@ -114,7 +114,8 @@ void print_help() {
   std::cout << "usage: " << usage_message << "\n\n";
   std::cout << "Options:\n";
   std::cout << "  --input, -I FILE              Input GMT GRD format bathymetry grid file (required)\n";
-  std::cout << "  --binary, -B                  Output in binary glTF (GLB) format\n";
+  std::cout << "  --no-binary                   Write glTF (.gltf, JSON with the buffers embedded) in place of the binary glTF (.glb)\n";
+  std::cout << "                                that is written by default; --binary, -B are accepted and do nothing\n";
   std::cout << "  --output, -O ROOT             Output file root [default: input file basename]\n";
   std::cout << "  --exaggeration, -E NUM        Vertical exaggeration factor, applied about the grid's mean altitude [default: 1.0]\n";
   std::cout << "  --geoorigin[=LON,LAT,EL]      GeoOrigin for high-precision local coordinates\n";
@@ -128,12 +129,12 @@ void print_help() {
   std::cout << "                                GLB positions are 32-bit floats, so absolute ECEF (magnitudes of about\n";
   std::cout << "                                6.4 million meters) resolves only about 0.5 m; use a GeoOrigin to\n";
   std::cout << "                                preserve sub-meter detail\n";
-  std::cout << "  --draco, -D                   Enable Draco mesh compression\n";
-  std::cout << "  --quantize-position NUM       Draco position quantization bits (2-30) [default: 16]\n";
-  std::cout << "  --quantize-normal NUM         Draco normal quantization bits (2-30) [default: 7]\n";
-  std::cout << "  --quantize-texcoord NUM       Draco texcoord quantization bits (2-30) [default: 10]\n";
-  std::cout << "  --quantize-color NUM          Draco color quantization bits (2-30) [default: 8]\n";
-  std::cout << "                      (-Qp, -Qn, -Qt, -Qc for legacy style)\n";
+  std::cout << "  --no-draco                    Write the mesh as arrays. By default the mesh is compressed with Draco\n";
+  std::cout << "                                (KHR_draco_mesh_compression), as mbmesh does; --draco, -D are accepted and do nothing\n";
+  std::cout << "  --draco-precision NUM         With Draco, keep positions to this many meters [default: 0.001]: each tile gets the\n";
+  std::cout << "                                bits that make the step of its quantization no coarser, between 8 and 30\n";
+  std::cout << "  --draco-normal-bits NUM       With Draco, the bits of each normal, 2-30 [default: 10]; the mesh has no normals\n";
+  std::cout << "                                today, so this changes nothing\n";
   std::cout << "  --geoviewpoint=VALUES         With --html, add a GeoViewpoint to the page; can be repeated. The values are\n";
   std::cout << "                                geodetic, in the order of --geoorigin, so they do not depend on the GeoOrigin\n";
   std::cout << "                                or the grid and can be used again: lon,lat,elev,clon,clat,celev, the camera\n";
@@ -144,13 +145,6 @@ void print_help() {
   std::cout << "  --html, -W                    Generate HTML viewer with inline glTF/GLB model and print the command to view it\n";
   std::cout << "  --verbose, -V                 Enable verbose output\n";
   std::cout << "  --help, -H                    Print this help message\n\n";
-}
-
-bool Options::draco_quantization_valid() const {
-  for (int i = 0; i < 4; i++)
-    if (_draco_quantization[i] < 2 || _draco_quantization[i] > 30)
-      return false;
-  return true;
 }
 
 // Helper to check if argument starts with prefix
@@ -197,7 +191,7 @@ Options::Options(unsigned argc, const char* argv[]) {
       // Get value from next arg if not in --option=value format
       if (!value_ptr && i + 1 < argc && argv[i + 1][0] != '-') {
         // Don't consume next arg for flags
-        if (opt_name != "binary" && opt_name != "draco" && opt_name != "verbose" && opt_name != "help" && opt_name != "geoorigin" && opt_name != "html") {
+        if (opt_name != "binary" && opt_name != "no-binary" && opt_name != "draco" && opt_name != "no-draco" && opt_name != "verbose" && opt_name != "help" && opt_name != "geoorigin" && opt_name != "html") {
           value_ptr = argv[++i];
         }
       }
@@ -218,10 +212,26 @@ Options::Options(unsigned argc, const char* argv[]) {
         _is_exaggeration_set = true;
       }
       else if (opt_name == "binary") {
-        _is_binary_output = true;
+        _is_binary_output = true;   // the default; accepted for the scripts that give it
+      }
+      else if (opt_name == "no-binary") {
+        _is_binary_output = false;
       }
       else if (opt_name == "draco") {
-        _is_draco_compressed = true;
+        _draco.enabled = true;   // the default; accepted for the scripts that give it
+      }
+      else if (opt_name == "no-draco") {
+        _draco.enabled = false;
+      }
+      else if (opt_name == "draco-precision") {
+        if (!value_ptr) throw std::invalid_argument("--draco-precision requires a size in meters");
+        std::string reason;
+        if (!mbdraco::parse_precision(value_ptr, &_draco.precision, &reason)) throw std::invalid_argument("Invalid --draco-precision: " + reason);
+      }
+      else if (opt_name == "draco-normal-bits") {
+        if (!value_ptr) throw std::invalid_argument("--draco-normal-bits requires a number of bits");
+        std::string reason;
+        if (!mbdraco::parse_normal_bits(value_ptr, &_draco.normal_bits, &reason)) throw std::invalid_argument("Invalid --draco-normal-bits: " + reason);
       }
       else if (opt_name == "geoorigin") {
         if (!value_ptr) {
@@ -239,29 +249,9 @@ Options::Options(unsigned argc, const char* argv[]) {
           _is_geoorigin_set = true;
         }
       }
-      else if (opt_name == "quantize-position") {
-        if (!value_ptr) throw std::invalid_argument("--quantize-position requires a numeric value");
-        int val = std::atoi(value_ptr);
-        if (val < 2 || val > 30) throw std::invalid_argument("Quantization value must be between 2 and 30");
-        _draco_quantization[0] = val;
-      }
-      else if (opt_name == "quantize-normal") {
-        if (!value_ptr) throw std::invalid_argument("--quantize-normal requires a numeric value");
-        int val = std::atoi(value_ptr);
-        if (val < 2 || val > 30) throw std::invalid_argument("Quantization value must be between 2 and 30");
-        _draco_quantization[1] = val;
-      }
-      else if (opt_name == "quantize-texcoord") {
-        if (!value_ptr) throw std::invalid_argument("--quantize-texcoord requires a numeric value");
-        int val = std::atoi(value_ptr);
-        if (val < 2 || val > 30) throw std::invalid_argument("Quantization value must be between 2 and 30");
-        _draco_quantization[2] = val;
-      }
-      else if (opt_name == "quantize-color") {
-        if (!value_ptr) throw std::invalid_argument("--quantize-color requires a numeric value");
-        int val = std::atoi(value_ptr);
-        if (val < 2 || val > 30) throw std::invalid_argument("Quantization value must be between 2 and 30");
-        _draco_quantization[3] = val;
+      else if (opt_name.compare(0, 9, "quantize-") == 0) {
+        throw std::invalid_argument("--" + opt_name + " is replaced by --draco-precision (the step of the positions in meters, for "
+                                    "each tile) and --draco-normal-bits, which mbmesh takes as well");
       }
       else if (opt_name == "geoviewpoint") {
         if (!value_ptr) throw std::invalid_argument("--geoviewpoint requires a value, attached: --geoviewpoint=lon,lat,elev,clon,clat,celev");
@@ -337,7 +327,7 @@ Options::Options(unsigned argc, const char* argv[]) {
 
         case 'D':
         case 'd':
-          _is_draco_compressed = true;
+          _draco.enabled = true;   // the default; accepted for the scripts that give it
           break;
 
         case 'G':
@@ -364,31 +354,8 @@ Options::Options(unsigned argc, const char* argv[]) {
 
         case 'Q':
         case 'q':
-          if (!_is_draco_compressed) {
-            throw std::invalid_argument("Quantization options require -D (Draco compression)");
-          }
-          if (!value_ptr) {
-            throw std::invalid_argument("Quantization option requires a value");
-          }
-          {
-            char quant_type = arg[2];
-            const char* quant_value = (arg[3] != '\0') ? &arg[3] : value_ptr;
-            int quant_int = std::atoi(quant_value);
-            
-            if (quant_int < 2 || quant_int > 30) {
-              throw std::invalid_argument("Quantization value must be between 2 and 30");
-            }
-            
-            switch (quant_type) {
-              case 'p': case 'P': _draco_quantization[0] = quant_int; break;
-              case 'n': case 'N': _draco_quantization[1] = quant_int; break;
-              case 't': case 'T': _draco_quantization[2] = quant_int; break;
-              case 'c': case 'C': _draco_quantization[3] = quant_int; break;
-              default:
-                throw std::invalid_argument(std::string("Unknown quantization type: -Q") + quant_type);
-            }
-          }
-          break;
+          throw std::invalid_argument("-Q is replaced by --draco-precision (the step of the positions in meters, for each tile) "
+                                      "and --draco-normal-bits, which mbmesh takes as well");
 
         case 'V':
         case 'v':

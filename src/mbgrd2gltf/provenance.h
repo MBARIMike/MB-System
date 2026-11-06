@@ -16,6 +16,7 @@
 #ifndef PROVENANCE_H
 #define PROVENANCE_H
 
+#include "draco_mesh.h"
 #include <cstddef>
 #include <ostream>
 #include <string>
@@ -85,8 +86,9 @@ struct GridRunInfo {
   // How it was made.
   double exaggeration = 1.0;
   bool binary = false;
-  bool draco = false;
-  int draco_position_bits = 0, draco_normal_bits = 0, draco_texcoord_bits = 0, draco_color_bits = 0;
+  // What the mesh was compressed with (KHR_draco_mesh_compression), filled in by write_gltf(): for the many tiles of the file, the
+  // most bits and the coarsest step. Not present when the file is written as arrays.
+  mbdraco::Compression draco;
 };
 
 // The three blocks of asset.extras: "georeference", "provenance" and "MB-System".

@@ -1,6 +1,6 @@
 #include "io/glb_writer.h"
 
-#include "io/draco_mesh.h"
+#include "draco_mesh.h"
 #include "util/logger.h"
 
 #include <algorithm>
@@ -390,9 +390,13 @@ void linear_color_bounds(double minimum, double maximum, std::vector<double> *bo
     return material;
 }
 
-GlbCompression &compression_storage() {
-    static GlbCompression compression;
-    return compression;
+mbdraco::Settings &compression_storage() {
+    static mbdraco::Settings settings = [] {
+        mbdraco::Settings off;
+        off.enabled = false;   // not compressed until set_glb_compression() says so
+        return off;
+    }();
+    return settings;
 }
 
 MetaValue &run_metadata_storage() {
@@ -550,104 +554,9 @@ void clear_glb_run_metadata() {
     has_run_metadata() = false;
 }
 
-void set_glb_compression(const GlbCompression &compression) {
-    compression_storage() = compression;
+void set_glb_compression(const mbdraco::Settings &settings) {
+    compression_storage() = settings;
 }
-
-int draco_position_bits(double range, double precision) {
-    if (!(range > 0.0) || !(precision > 0.0) || !std::isfinite(range) || !std::isfinite(precision)) {
-        return 8;
-    }
-    const int bits = static_cast<int>(std::ceil(std::log2(range / precision + 1.0)));
-    return std::max(8, std::min(30, bits));
-}
-
-namespace {
-
-// The mesh as a glTF with its triangles compressed by Draco, in place of the accessors of the arrays. Returns false, with the
-// reason in *reason, if it cannot be, and the caller writes the arrays.
-[[nodiscard]] bool compress_mesh_primitive(const Mesh &mesh, const std::vector<float> &positions, const std::vector<std::uint32_t> &indices,
-                                           tinygltf::Model *model, GlbContent *content, std::string *reason) {
-    const GlbCompression &settings = compression_storage();
-    const std::array<double, 3> minimum = vec3_min_values(mesh.vertices);
-    const std::array<double, 3> maximum = vec3_max_values(mesh.vertices);
-    const double range = std::max({maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]});
-    const int position_bits = draco_position_bits(range, settings.position_precision);
-    std::vector<float> normals;
-    if (!mesh.normals.empty()) {
-        normals = flatten_vec3_values(mesh.normals);
-    }
-    DracoMesh compressed;
-    if (!draco_encode_mesh(positions, mesh.normals.empty() ? nullptr : &normals, indices, position_bits, settings.normal_bits, &compressed, reason)) {
-        return false;
-    }
-
-    tinygltf::Buffer buffer;
-    buffer.data = compressed.data;
-    append_padding(&buffer.data);
-    model->buffers.push_back(std::move(buffer));
-    const int view = add_buffer_view(model, 0, 0, compressed.data.size());
-
-    tinygltf::Accessor position_accessor;
-    position_accessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-    position_accessor.count = compressed.point_count;
-    position_accessor.type = TINYGLTF_TYPE_VEC3;
-    position_accessor.minValues = {minimum[0], minimum[1], minimum[2]};
-    position_accessor.maxValues = {maximum[0], maximum[1], maximum[2]};
-    model->accessors.push_back(std::move(position_accessor));
-    const int position_index = static_cast<int>(model->accessors.size()) - 1;
-
-    int normal_index = -1;
-    if (compressed.normal_id >= 0) {
-        tinygltf::Accessor normal_accessor;
-        normal_accessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-        normal_accessor.count = compressed.point_count;
-        normal_accessor.type = TINYGLTF_TYPE_VEC3;
-        model->accessors.push_back(std::move(normal_accessor));
-        normal_index = static_cast<int>(model->accessors.size()) - 1;
-    }
-
-    tinygltf::Accessor index_accessor;
-    index_accessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
-    index_accessor.count = 3 * compressed.face_count;
-    index_accessor.type = TINYGLTF_TYPE_SCALAR;
-    model->accessors.push_back(std::move(index_accessor));
-    const int index_index = static_cast<int>(model->accessors.size()) - 1;
-
-    tinygltf::Primitive primitive;
-    primitive.mode = TINYGLTF_MODE_TRIANGLES;
-    primitive.attributes["POSITION"] = position_index;
-    if (normal_index >= 0) {
-        primitive.attributes["NORMAL"] = normal_index;
-    }
-    primitive.indices = index_index;
-    primitive.material = 0;
-
-    std::map<std::string, tinygltf::Value> attributes;
-    attributes["POSITION"] = tinygltf::Value(compressed.position_id);
-    if (compressed.normal_id >= 0) {
-        attributes["NORMAL"] = tinygltf::Value(compressed.normal_id);
-    }
-    std::map<std::string, tinygltf::Value> extension;
-    extension["bufferView"] = tinygltf::Value(view);
-    extension["attributes"] = tinygltf::Value(attributes);
-    primitive.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(extension);
-
-    tinygltf::Mesh gltf_mesh;
-    gltf_mesh.name = "mesh";
-    gltf_mesh.primitives.push_back(std::move(primitive));
-    model->meshes.push_back(std::move(gltf_mesh));
-    model->extensionsUsed.push_back("KHR_draco_mesh_compression");
-    model->extensionsRequired.push_back("KHR_draco_mesh_compression");
-
-    content->compression.present = true;
-    content->compression.position_bits = position_bits;
-    content->compression.position_step = range / (std::pow(2.0, position_bits) - 1.0);
-    content->compression.normal_bits = compressed.normal_id >= 0 ? settings.normal_bits : 0;
-    return true;
-}
-
-} // namespace
 
 bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, std::string *error, const GlbContent &content_in) {
     if (error != nullptr) {
@@ -672,12 +581,25 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
     }
 
     // Compressed by Draco if it is on and there is a Draco: one buffer view holds the whole mesh. If that fails, the arrays are written.
-    if (compression_storage().draco && draco_available()) {
+    if (compression_storage().enabled && mbdraco::available()) {
         tinygltf::Model compressed_model;
         compressed_model.asset.version = "2.0";
         compressed_model.asset.generator = "MB-System mbmesh";
+        std::vector<float> normals;
+        if (!mesh.normals.empty()) {
+            normals = flatten_vec3_values(mesh.normals);
+        }
+        tinygltf::Mesh gltf_mesh;
+        gltf_mesh.name = "mesh";
+        std::vector<unsigned char> stream;
         std::string reason;
-        if (compress_mesh_primitive(mesh, positions, indices, &compressed_model, &content, &reason)) {
+        if (mbdraco::add_primitive(&compressed_model, &gltf_mesh, &stream, positions, mesh.normals.empty() ? nullptr : &normals, indices,
+                                   compression_storage(), 0, &content.compression, &reason)) {
+            compressed_model.meshes.push_back(std::move(gltf_mesh));
+            tinygltf::Buffer buffer;
+            buffer.data = std::move(stream);
+            append_padding(&buffer.data);
+            compressed_model.buffers.push_back(std::move(buffer));
             apply_asset_extras(&compressed_model, content);
             tinygltf::Material material;
             material.doubleSided = true;
@@ -700,7 +622,7 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
             return true;
         }
         LOG_WARN("Draco compression of " + path.filename().string() + " failed (" + reason + "); written without compression");
-        content.compression = GlbContent::Compression();
+        content.compression = mbdraco::Compression();
     }
 
     std::vector<unsigned char> binary_buffer;

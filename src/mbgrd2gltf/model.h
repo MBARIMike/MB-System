@@ -45,7 +45,8 @@
 
 namespace mbgrd2gltf {
 namespace model {
-void write_gltf(const Geometry& geometry, const Options& options, const GridRunInfo& run);
+// Writes the model. run.draco is filled in with what the mesh was compressed with, for the page that write_html() writes after.
+void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& run);
 void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Options& options, 
                 const std::string& command_line, const std::string& timestamp,
                 const std::vector<std::string>& log_messages, const GridRunInfo& run);
