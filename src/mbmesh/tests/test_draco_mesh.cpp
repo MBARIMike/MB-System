@@ -1,6 +1,10 @@
 #include "draco_mesh.h"
 #include "io/glb_writer.h"
 
+#define TINYGLTF_NO_STB_IMAGE
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#include "tinygltf/tiny_gltf.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -72,6 +76,30 @@ int main() {
     }
     check(write_mesh_glb_file(directory / "plain.glb", mesh, &error), "writes without compression");
 
+    // Split into blocks of 1 m: the 3.9 m square is 4 x 4 blocks, one primitive each, with the vertices that its triangles use.
+    const std::vector<std::uint32_t> groups = triangle_blocks(mesh, 1.0);
+    check(groups.size() == mesh.indices.size() / 3 && *std::max_element(groups.begin(), groups.end()) == 15, "triangle_blocks makes 16 groups for 16 blocks");
+    check(triangle_blocks(mesh, 0.0).empty(), "and none for a block size of zero");
+    check(write_mesh_glb_file(directory / "split_plain.glb", mesh, &error, GlbContent(), &groups), "writes the blocks without compression");
+    {
+        tinygltf::Model model;
+        tinygltf::TinyGLTF loader;
+        std::string load_error, warning;
+        check(loader.LoadBinaryFromFile(&model, &load_error, &warning, (directory / "split_plain.glb").string()), "the split file loads");
+        check(model.meshes.size() == 1 && model.meshes[0].primitives.size() == 16, "as one mesh of 16 primitives");
+        std::size_t index_count = 0, vertex_count = 0;
+        bool local = true;
+        for (const tinygltf::Primitive &primitive : model.meshes[0].primitives) {
+            const tinygltf::Accessor &position = model.accessors[primitive.attributes.at("POSITION")];
+            const tinygltf::Accessor &index = model.accessors[primitive.indices];
+            index_count += index.count;
+            vertex_count += position.count;
+            local = local && index.maxValues[0] + 1 == static_cast<double>(position.count);
+        }
+        check(index_count == mesh.indices.size(), "which hold all the triangles");
+        check(local && vertex_count > mesh.vertices.size() && vertex_count < 2 * mesh.vertices.size(), "each with its own vertices, those on the edges in two");
+    }
+
     if (!mbdraco::available()) {
         std::printf("this build has no Draco: the compressed case is not tested\n");
         return failures == 0 ? 0 : 1;
@@ -81,6 +109,31 @@ int main() {
     GlbContent content;
     content.role = "mesh";
     check(write_mesh_glb_file(directory / "draco.glb", mesh, &error, content), "writes with compression");
+    check(write_mesh_glb_file(directory / "split_draco.glb", mesh, &error, content, &groups), "writes the blocks with compression");
+    {
+        tinygltf::Model model;
+        tinygltf::TinyGLTF loader;
+        std::string load_error, warning;
+        loader.LoadBinaryFromFile(&model, &load_error, &warning, (directory / "split_draco.glb").string());
+        check(model.meshes.size() == 1 && model.meshes[0].primitives.size() == 16, "the compressed blocks are one mesh of 16 primitives");
+        std::size_t faces = 0;
+        bool all_decode = true;
+        for (const tinygltf::Primitive &primitive : model.meshes[0].primitives) {
+            const auto found = primitive.extensions.find("KHR_draco_mesh_compression");
+            if (found == primitive.extensions.end()) {
+                all_decode = false;
+                continue;
+            }
+            const tinygltf::BufferView &view = model.bufferViews[found->second.Get("bufferView").GetNumberAsInt()];
+            const unsigned char *start = model.buffers[view.buffer].data.data() + view.byteOffset;
+            std::vector<float> block_positions;
+            std::vector<std::uint32_t> block_indices;
+            all_decode = mbdraco::decode(std::vector<unsigned char>(start, start + view.byteLength), &block_positions, &block_indices, &error) && all_decode;
+            faces += block_indices.size() / 3;
+        }
+        check(all_decode, "each block's stream decodes by itself");
+        check(faces == mesh.indices.size() / 3, "to all the triangles");
+    }
     {
         mbdraco::Settings off;
         off.enabled = false;

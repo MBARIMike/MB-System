@@ -1147,6 +1147,7 @@ Options parse_options(int argc, char **argv) {
         {"spill-points", required_argument, nullptr, 1025},
         {"void-size", required_argument, nullptr, 1026},
         {"island-size", required_argument, nullptr, 1030},
+        {"primitive-size", required_argument, nullptr, 1035},
         {"diagnostics", no_argument, nullptr, 1011},
         {"all-outputs", no_argument, nullptr, 1012},
         {"verbose", no_argument, nullptr, 'V'},
@@ -1389,6 +1390,17 @@ Options parse_options(int argc, char **argv) {
             break;
         }
 
+        case 1035: {
+            char *end = nullptr;
+            const double size = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(size) || size < 0.0) {
+                LOG_ERROR("invalid --primitive-size:", std::string("'") + optarg + "' is not a size in meters, zero or more");
+                std::exit(1);
+            }
+            options.primitive_size = size;
+            break;
+        }
+
         case 1030: {
             char *end = nullptr;
             const double size = std::strtod(optarg, &end);
@@ -1571,6 +1583,10 @@ void print_usage() {
     std::cout << "      --island-size <m>        When the survey is reconstructed in chunks, remove from mesh.glb the pieces that are not\n";
     std::cout << "                               joined to the rest, up to this many meters across [2] (the area of a disc), if no\n";
     std::cout << "                               sounding is near most of their vertices. Pieces with soundings under them stay. 0 keeps all\n";
+    std::cout << "      --primitive-size <m>     Write mesh.glb and the raw mesh as one primitive for each square of this many meters of the\n";
+    std::cout << "                               local frame, each with its own vertices and its own Draco stream, as mbgrd2gltf writes blocks\n";
+    std::cout << "                               of 256 cells, so that a viewer decodes and draws them separately [256 Poisson cells]. 0 writes one\n";
+    std::cout << "                               primitive. The vertices on the edges of the squares are in both\n";
     std::cout << "      --seam-method <name>     How chunks are matched on their edges: blend (solve each, then blend toward the neighbors over --seam-blend)\n";
     std::cout << "                               or solve (solve each with its west and south neighbors' fields fixed on the shared edges) [solve]\n";
     std::cout << "      --no-draco               Write the meshes as arrays. By default the triangle meshes of the GLB files (mesh.glb, the raw\n";
@@ -1777,18 +1793,22 @@ bool write_outputs(
                                   std::to_string(track_points) + " points drawn");
     }
 
+    // One primitive for each block of 256 cells, as in mbgrd2gltf, unless --primitive-size says otherwise.
+    const double primitive_block = options.primitive_size >= 0.0 ? options.primitive_size : 256.0 * options.poisson.cell_size;
     if (options.write_raw_mesh_glb) {
         const auto raw_mesh_glb_path = options.output_directory / "raw_mesh.glb";
+        const std::vector<std::uint32_t> raw_groups = triangle_blocks(raw_mesh, primitive_block);
         if (!write_mesh_glb_file(raw_mesh_glb_path, output_mesh(raw_mesh, frame, offset), error,
-                                  GlbContent{"raw_mesh", "The reconstructed surface before support trimming"})) {
+                                  GlbContent{"raw_mesh", "The reconstructed surface before support trimming"}, &raw_groups)) {
             return false;
         }
         LOG_DEBUG("[output]", "wrote " + raw_mesh_glb_path.string());
     }
 
     const auto clean_mesh_glb_path = options.output_directory / "mesh.glb";
+    const std::vector<std::uint32_t> mesh_groups = triangle_blocks(mesh, primitive_block);
     if (!write_mesh_glb_file(clean_mesh_glb_path, output_mesh(mesh, frame, offset), error,
-                              GlbContent{"mesh", "The reconstructed seafloor surface"})) {
+                              GlbContent{"mesh", "The reconstructed seafloor surface"}, &mesh_groups)) {
         return false;
     }
     LOG_DEBUG("[output]", "wrote " + clean_mesh_glb_path.string());

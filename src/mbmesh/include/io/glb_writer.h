@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -24,11 +25,21 @@ void clear_glb_run_metadata();
 // Until set, the meshes are not compressed. A build without Draco (mbdraco::available() false) writes them uncompressed.
 void set_glb_compression(const mbdraco::Settings &settings);
 
+// The primitive that each triangle of a mesh goes in, for write_mesh_glb_file: the triangles whose centers are in the same square
+// of a lattice of block_size meters (anchored at the origin of the mesh's frame, so the squares are the chunks when block_size is the
+// chunk size) are one group. The mesh must be in the local east-north-up frame, in meters. Empty if block_size is not more than zero.
+[[nodiscard]] std::vector<std::uint32_t> triangle_blocks(const Mesh &mesh, double block_size);
+
+// Writes the mesh as one mesh of one primitive for each group of triangles (one primitive of everything if there are no groups), as
+// mbgrd2gltf writes the blocks of a grid: each primitive has the vertices its triangles use, numbered from zero, and is a Draco stream
+// by itself when Draco is on, so no part of a viewer has to hold the whole surface in one array. The vertices on the edge of a group are
+// in both. triangle_groups holds the group of each triangle, one for each, numbered from zero without gaps.
 [[nodiscard]] bool write_mesh_glb_file(
     const std::filesystem::path &path,
     const Mesh &mesh,
     std::string *error,
-    const GlbContent &content = GlbContent());
+    const GlbContent &content = GlbContent(),
+    const std::vector<std::uint32_t> *triangle_groups = nullptr);
 
 // How the points of a point cloud are colored by height: with the Haxby color table that mbm_grdplot uses by default, 11
 // colors from dark blue to white, changing linearly between 11 heights. HaxbyLinear is "mbm_grdplot -G5": the heights

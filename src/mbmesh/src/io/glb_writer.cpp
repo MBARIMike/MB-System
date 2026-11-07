@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iomanip>
 #include <map>
+#include <unordered_map>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -558,7 +559,40 @@ void set_glb_compression(const mbdraco::Settings &settings) {
     compression_storage() = settings;
 }
 
-bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, std::string *error, const GlbContent &content_in) {
+std::vector<std::uint32_t> triangle_blocks(const Mesh &mesh, double block_size) {
+    std::vector<std::uint32_t> groups;
+    if (!(block_size > 0.0)) {
+        return groups;
+    }
+    const std::size_t triangle_count = mesh.indices.size() / 3;
+    groups.resize(triangle_count);
+    std::unordered_map<std::uint64_t, std::uint32_t> ids;
+    std::uint64_t last_key = 0;
+    std::uint32_t last_id = 0;
+    bool have_last = false;
+    for (std::size_t t = 0; t < triangle_count; t++) {
+        const Vec3 &a = mesh.vertices[mesh.indices[3 * t]];
+        const Vec3 &b = mesh.vertices[mesh.indices[3 * t + 1]];
+        const Vec3 &c = mesh.vertices[mesh.indices[3 * t + 2]];
+        const auto bi = static_cast<std::int64_t>(std::floor((a.x + b.x + c.x) / 3.0 / block_size));
+        const auto bj = static_cast<std::int64_t>(std::floor((a.y + b.y + c.y) / 3.0 / block_size));
+        const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(bi)) << 32) | static_cast<std::uint32_t>(bj);
+        if (!have_last || key != last_key) {
+            auto found = ids.find(key);
+            if (found == ids.end()) {
+                found = ids.emplace(key, static_cast<std::uint32_t>(ids.size())).first;
+            }
+            last_key = key;
+            last_id = found->second;
+            have_last = true;
+        }
+        groups[t] = last_id;
+    }
+    return groups;
+}
+
+bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, std::string *error, const GlbContent &content_in,
+                         const std::vector<std::uint32_t> *triangle_groups) {
     if (error != nullptr) {
         error->clear();
     }
@@ -573,108 +607,164 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
         return false;
     }
 
-    const std::vector<float> positions = flatten_vec3_values(mesh.vertices);
-    std::vector<std::uint32_t> indices;
-    indices.reserve(mesh.indices.size());
-    for (const unsigned int index : mesh.indices) {
-        indices.push_back(static_cast<std::uint32_t>(index));
+    const std::size_t triangle_count = mesh.indices.size() / 3;
+    if (triangle_groups != nullptr && !triangle_groups->empty() && triangle_groups->size() != triangle_count) {
+        set_error(error, "the triangle groups do not match the triangles of the mesh");
+        return false;
     }
 
-    // Compressed by Draco if it is on and there is a Draco: one buffer view holds the whole mesh. If that fails, the arrays are written.
-    if (compression_storage().enabled && mbdraco::available()) {
-        tinygltf::Model compressed_model;
-        compressed_model.asset.version = "2.0";
-        compressed_model.asset.generator = "MB-System mbmesh";
+    // The triangles of each group, as lists of triangle numbers (counting sort). One group, the whole mesh, when there are no groups.
+    std::uint32_t group_count = 1;
+    std::vector<std::size_t> group_start;
+    std::vector<std::uint32_t> group_triangles;
+    const bool split = triangle_groups != nullptr && !triangle_groups->empty();
+    if (split) {
+        group_count = *std::max_element(triangle_groups->begin(), triangle_groups->end()) + 1;
+        group_start.assign(group_count + 1, 0);
+        for (const std::uint32_t group : *triangle_groups) {
+            group_start[group + 1]++;
+        }
+        for (std::uint32_t g = 0; g < group_count; g++) {
+            group_start[g + 1] += group_start[g];
+        }
+        group_triangles.resize(triangle_count);
+        std::vector<std::size_t> fill(group_start.begin(), group_start.end() - 1);
+        for (std::size_t t = 0; t < triangle_count; t++) {
+            group_triangles[fill[(*triangle_groups)[t]]++] = static_cast<std::uint32_t>(t);
+        }
+    }
+
+    // Each part holds the vertices that its triangles use, numbered from zero in the order they are first used, as mbgrd2gltf's primitives do,
+    // so a primitive decodes by itself and its indices are small.
+    struct Part {
+        std::vector<float> positions;
         std::vector<float> normals;
-        if (!mesh.normals.empty()) {
-            normals = flatten_vec3_values(mesh.normals);
-        }
-        tinygltf::Mesh gltf_mesh;
-        gltf_mesh.name = "mesh";
-        std::vector<unsigned char> stream;
-        std::string reason;
-        if (mbdraco::add_primitive(&compressed_model, &gltf_mesh, &stream, positions, mesh.normals.empty() ? nullptr : &normals, indices,
-                                   compression_storage(), 0, &content.compression, &reason)) {
-            compressed_model.meshes.push_back(std::move(gltf_mesh));
-            tinygltf::Buffer buffer;
-            buffer.data = std::move(stream);
-            append_padding(&buffer.data);
-            compressed_model.buffers.push_back(std::move(buffer));
-            apply_asset_extras(&compressed_model, content);
-            tinygltf::Material material;
-            material.doubleSided = true;
-            material.pbrMetallicRoughness.baseColorFactor = {0.35, 0.55, 0.72, 1.0};
-            material.pbrMetallicRoughness.metallicFactor = 0.0;
-            material.pbrMetallicRoughness.roughnessFactor = 0.65;
-            compressed_model.materials.push_back(std::move(material));
-            tinygltf::Node node;
-            node.mesh = 0;
-            compressed_model.nodes.push_back(std::move(node));
-            tinygltf::Scene scene;
-            scene.nodes.push_back(0);
-            compressed_model.scenes.push_back(std::move(scene));
-            compressed_model.defaultScene = 0;
-            tinygltf::TinyGLTF writer;
-            if (!writer.WriteGltfSceneToFile(&compressed_model, path.string(), true, true, true, true)) {
-                set_error(error, "Failed to write mesh GLB file: " + path.string());
-                return false;
+        std::vector<std::uint32_t> indices;
+    };
+    std::vector<std::uint32_t> local(split ? mesh.vertices.size() : 0, std::numeric_limits<std::uint32_t>::max());
+    std::vector<std::uint32_t> touched;
+    const auto make_part = [&](std::uint32_t group, Part *part) {
+        *part = Part();
+        if (!split) {
+            part->positions = flatten_vec3_values(mesh.vertices);
+            if (!mesh.normals.empty()) {
+                part->normals = flatten_vec3_values(mesh.normals);
             }
-            return true;
+            part->indices.assign(mesh.indices.begin(), mesh.indices.end());
+            return;
         }
-        LOG_WARN("Draco compression of " + path.filename().string() + " failed (" + reason + "); written without compression");
-        content.compression = mbdraco::Compression();
-    }
-
-    std::vector<unsigned char> binary_buffer;
-
-    const std::size_t position_offset = append_vector_bytes(&binary_buffer, positions);
-    const std::size_t position_byte_length = positions.size() * sizeof(float);
-
-    std::size_t normal_offset = 0;
-    std::size_t normal_byte_length = 0;
-    if (!mesh.normals.empty()) {
-        const std::vector<float> normals = flatten_vec3_values(mesh.normals);
-        normal_offset = append_vector_bytes(&binary_buffer, normals);
-        normal_byte_length = normals.size() * sizeof(float);
-    }
-
-    const std::size_t index_offset = append_vector_bytes(&binary_buffer, indices);
-    const std::size_t index_byte_length = indices.size() * sizeof(std::uint32_t);
-    append_padding(&binary_buffer);
+        touched.clear();
+        part->indices.reserve((group_start[group + 1] - group_start[group]) * 3);
+        for (std::size_t k = group_start[group]; k < group_start[group + 1]; k++) {
+            const std::size_t t = group_triangles[k];
+            for (int corner = 0; corner < 3; corner++) {
+                const std::uint32_t vertex = mesh.indices[3 * t + corner];
+                if (local[vertex] == std::numeric_limits<std::uint32_t>::max()) {
+                    local[vertex] = static_cast<std::uint32_t>(touched.size());
+                    touched.push_back(vertex);
+                }
+                part->indices.push_back(local[vertex]);
+            }
+        }
+        part->positions.reserve(touched.size() * 3);
+        for (const std::uint32_t vertex : touched) {
+            part->positions.push_back(static_cast<float>(mesh.vertices[vertex].x));
+            part->positions.push_back(static_cast<float>(mesh.vertices[vertex].y));
+            part->positions.push_back(static_cast<float>(mesh.vertices[vertex].z));
+        }
+        if (!mesh.normals.empty()) {
+            part->normals.reserve(touched.size() * 3);
+            for (const std::uint32_t vertex : touched) {
+                part->normals.push_back(static_cast<float>(mesh.normals[vertex].x));
+                part->normals.push_back(static_cast<float>(mesh.normals[vertex].y));
+                part->normals.push_back(static_cast<float>(mesh.normals[vertex].z));
+            }
+        }
+        for (const std::uint32_t vertex : touched) {
+            local[vertex] = std::numeric_limits<std::uint32_t>::max();
+        }
+    };
 
     tinygltf::Model model;
     model.asset.version = "2.0";
     model.asset.generator = "MB-System mbmesh";
+    tinygltf::Mesh gltf_mesh;
+    gltf_mesh.name = "mesh";
+    std::vector<unsigned char> binary_buffer;
+    bool compressed = false;
+
+    // Compressed by Draco if it is on and there is a Draco: one stream for each part, in one buffer. If one fails, the arrays are written.
+    if (compression_storage().enabled && mbdraco::available()) {
+        compressed = true;
+        std::string reason;
+        mbdraco::Compression used;
+        Part part;
+        for (std::uint32_t group = 0; group < group_count && compressed; group++) {
+            make_part(group, &part);
+            compressed = mbdraco::add_primitive(&model, &gltf_mesh, &binary_buffer, part.positions, part.normals.empty() ? nullptr : &part.normals,
+                                                part.indices, compression_storage(), 0, &used, &reason);
+        }
+        if (compressed) {
+            content.compression = used;
+        } else {
+            LOG_WARN("Draco compression of " + path.filename().string() + " failed (" + reason + "); written without compression");
+            content.compression = mbdraco::Compression();
+            model = tinygltf::Model();
+            model.asset.version = "2.0";
+            model.asset.generator = "MB-System mbmesh";
+            gltf_mesh = tinygltf::Mesh();
+            gltf_mesh.name = "mesh";
+            binary_buffer.clear();
+        }
+    }
+
+    if (!compressed) {
+        Part part;
+        for (std::uint32_t group = 0; group < group_count; group++) {
+            make_part(group, &part);
+            const std::size_t position_offset = append_vector_bytes(&binary_buffer, part.positions);
+            const std::size_t normal_offset = part.normals.empty() ? 0 : append_vector_bytes(&binary_buffer, part.normals);
+            const std::size_t index_offset = append_vector_bytes(&binary_buffer, part.indices);
+            append_padding(&binary_buffer);
+
+            std::array<double, 3> minimum = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+            std::array<double, 3> maximum = {std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
+            for (std::size_t k = 0; k < part.positions.size(); k++) {
+                minimum[k % 3] = std::min(minimum[k % 3], static_cast<double>(part.positions[k]));
+                maximum[k % 3] = std::max(maximum[k % 3], static_cast<double>(part.positions[k]));
+            }
+            tinygltf::Primitive primitive;
+            primitive.mode = TINYGLTF_MODE_TRIANGLES;
+            const std::size_t vertex_count = part.positions.size() / 3;
+            primitive.attributes["POSITION"] =
+                add_vec3_accessor(&model, add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, position_offset, part.positions.size() * sizeof(float)),
+                                  vertex_count, minimum, maximum);
+            if (!part.normals.empty()) {
+                std::array<double, 3> normal_minimum = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+                std::array<double, 3> normal_maximum = {std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
+                for (std::size_t k = 0; k < part.normals.size(); k++) {
+                    normal_minimum[k % 3] = std::min(normal_minimum[k % 3], static_cast<double>(part.normals[k]));
+                    normal_maximum[k % 3] = std::max(normal_maximum[k % 3], static_cast<double>(part.normals[k]));
+                }
+                primitive.attributes["NORMAL"] =
+                    add_vec3_accessor(&model, add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, normal_offset, part.normals.size() * sizeof(float)),
+                                      vertex_count, normal_minimum, normal_maximum);
+            }
+            primitive.indices = add_index_accessor(
+                &model, add_buffer_view(&model, TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER, index_offset, part.indices.size() * sizeof(std::uint32_t)),
+                part.indices.size(), index_min_value(part.indices), index_max_value(part.indices));
+            primitive.material = 0;
+            gltf_mesh.primitives.push_back(std::move(primitive));
+        }
+    }
+
+    content.primitives = static_cast<int>(group_count);
     apply_asset_extras(&model, content);
 
+    append_padding(&binary_buffer);
     tinygltf::Buffer buffer;
     buffer.data = std::move(binary_buffer);
     model.buffers.push_back(std::move(buffer));
-
-    const int position_buffer_view = add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, position_offset, position_byte_length);
-    const int position_accessor = add_vec3_accessor(&model, position_buffer_view, mesh.vertices.size(), vec3_min_values(mesh.vertices), vec3_max_values(mesh.vertices));
-
-    int normal_accessor = -1;
-    if (!mesh.normals.empty()) {
-        const int normal_buffer_view = add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, normal_offset, normal_byte_length);
-        normal_accessor = add_vec3_accessor(&model, normal_buffer_view, mesh.normals.size(), vec3_min_values(mesh.normals), vec3_max_values(mesh.normals));
-    }
-
-    const int index_buffer_view = add_buffer_view(&model, TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER, index_offset, index_byte_length);
-    const int index_accessor = add_index_accessor(&model, index_buffer_view, indices.size(), index_min_value(indices), index_max_value(indices));
-
-    tinygltf::Primitive primitive;
-    primitive.mode = TINYGLTF_MODE_TRIANGLES;
-    primitive.attributes["POSITION"] = position_accessor;
-    if (normal_accessor >= 0) {
-        primitive.attributes["NORMAL"] = normal_accessor;
-    }
-    primitive.indices = index_accessor;
-    primitive.material = 0;
-
-    tinygltf::Mesh gltf_mesh;
-    gltf_mesh.name = "mesh";
-    gltf_mesh.primitives.push_back(std::move(primitive));
     model.meshes.push_back(std::move(gltf_mesh));
 
     tinygltf::Material material;
@@ -693,13 +783,11 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
     model.scenes.push_back(std::move(scene));
     model.defaultScene = 0;
 
-    const std::string output_path = path.string();
     tinygltf::TinyGLTF gltf;
-    if (!gltf.WriteGltfSceneToFile(&model, output_path, true, true, true, true)) {
-        set_error(error, "Failed to write mesh GLB file: " + output_path);
+    if (!gltf.WriteGltfSceneToFile(&model, path.string(), true, true, true, true)) {
+        set_error(error, "Failed to write mesh GLB file: " + path.string());
         return false;
     }
-
     return true;
 }
 

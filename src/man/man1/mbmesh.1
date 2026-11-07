@@ -215,6 +215,15 @@ sounding within a support radius, in three dimensions, as the raster of the soun
 them. Small pieces with soundings under them, such as rock that the trimming cut from the rest, stay. Zero
 keeps all of them. \fIraw_mesh.glb\fR is not cleaned.
 .TP
+.B \--primitive-size \fIm\fR
+Write \fImesh.glb\fR and \fIraw_mesh.glb\fR as one mesh of many primitives, one for each
+square of this many meters of the local east-north frame (anchored at its origin), as \fBmbgrd2gltf\fR
+writes blocks of 256 cells. Each primitive has the vertices that its triangles use and, with Draco, its
+own compressed stream, so a viewer decodes and draws the surface in parts and not as one array of tens of
+millions of vertices. The default is 256 Poisson cells. Zero writes one primitive. The vertices
+on the edges of the squares are in both primitives. The chunk files and the tiles of a tileset are one
+primitive each.
+.TP
 .B \--spill-points \fIn\fR
 A survey with more than \fIn\fR accepted soundings (default 50000000) is not held
 in memory. The soundings are written to a file in a directory \fBmbmesh_work\fR

@@ -114,6 +114,9 @@ struct Options {
     // --island-size: pieces of the mesh of a survey reconstructed in chunks that are not joined to the rest and have no
     // soundings near them, up to this many meters across (as a disc), are removed. 0 keeps them.
     double island_size = 2.0;
+    // --primitive-size: mesh.glb and the raw mesh are written as one primitive for each square of this many meters, as mbgrd2gltf writes
+    // blocks of 256 cells. Negative, the default: 256 Poisson cells. Zero: one primitive.
+    double primitive_size = -1.0;
 
     PointDecimationOptions decimation;
     NormalEstimationOptions normals;

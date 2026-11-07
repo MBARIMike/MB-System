@@ -232,6 +232,7 @@ int main() {
         content.chunk_label.center[2] = -900.5;
         content.chunk_label.rise = 1.5;
         content.chunk_label.text_size = 0.3;
+        content.primitives = 1;   // the writer says how many primitives the mesh is in; this one is one
         ok &= check(write_and_read(directory / "a.glb", content, &model), label + "round trip");
 
         const tinygltf::Value &extras = model.asset.extras;

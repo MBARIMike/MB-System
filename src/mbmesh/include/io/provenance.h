@@ -134,6 +134,7 @@ struct GlbContent {
         double rise = 0.0;
         double text_size = 1.0;
     } chunk_label;
+    int primitives = 0;       // how many primitives the triangle mesh of this file is in, when the writer says
     // How the geometry in this file is compressed, if it is (KHR_draco_mesh_compression): filled in by the writer.
     mbdraco::Compression compression;
     // Metadata to write in place of the run metadata that set_glb_run_metadata() set, for a file whose

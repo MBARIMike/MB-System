@@ -331,6 +331,9 @@ MetaValue content_metadata(const GlbContent &content) {
         index.add(MetaValue::from_number(content.index_j));
         block.set(content.role == "tileset_tile" ? "tile" : "chunk", index);
     }
+    if (content.primitives > 0) {
+        block.set("primitives", MetaValue::from_number(content.primitives));
+    }
     if (content.compression.present) {
         MetaValue compression = MetaValue::make_object();
         compression.set("extension", MetaValue::from_string("KHR_draco_mesh_compression"));

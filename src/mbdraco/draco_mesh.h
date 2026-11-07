@@ -73,7 +73,7 @@ struct Encoded {
 // Compresses a mesh into a primitive of a glTF mesh: the quantization is chosen from the range of the positions and the settings,
 // the stream is appended to *buffer (at a multiple of four bytes) and a buffer view of the model is made for it, and the primitive
 // is added to mesh->primitives with its accessors (which have no buffer views) and the extension, and the extension is listed as
-// used and required. A file can hold many meshes, as mbgrd2gltf's tiles are: the caller puts *buffer into model->buffers[0] after
+// used and required. A mesh can have many primitives, as in the files of both programs, each a stream of its own: the caller puts *buffer into model->buffers[0] after
 // the last one, and the model's other parts. *used is made to hold what the file was compressed with. Returns false, with the
 // reason in *reason, if it cannot, and the caller writes the arrays.
 [[nodiscard]] bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<unsigned char> *buffer, const std::vector<float> &positions,
