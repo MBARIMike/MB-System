@@ -23,7 +23,7 @@ mbgrd2gltf \- convert bathymetric grid data to GLTF format with optional setting
 
 .SH DESCRIPTION
 .B mbgrd2gltf
-is a tool designed to convert grid data files (GRD) to Graphics Library Transmission Format (GLTF) files. It writes binary GLTF (GLB) by default, which is more compact, and can write text-based GLTF with \fB\-\-no-binary\fP; it can exaggerate vertex altitude to enhance topographic features. The tool uses tiling to efficiently handle large datasets. Draco compression, which is the default, reduces the output GLTF file size by about a factor of ten while keeping the positions to a stated precision (by default a millimeter).
+is a tool designed to convert grid data files (GRD) to Graphics Library Transmission Format (GLTF) files. It writes binary GLTF (GLB) by default, which is more compact, and can write text-based GLTF with \fB\-\-no-binary\fP; it can exaggerate vertex altitude to enhance topographic features. The grid is written as blocks of 256 by 256 cells, each its own glTF primitive, to handle large datasets efficiently. Draco compression, which is the default, reduces the output GLTF file size by about a factor of ten while keeping the positions to a stated precision (by default a millimeter).
 .PP
 The output mesh vertices are positioned in an Earth-Centered, Earth-Fixed (ECEF) Cartesian coordinate system with units in meters. ECEF is a 3D right-handed coordinate system with its origin at Earth's center of mass, the Z-axis pointing toward the North Pole, the X-axis intersecting the equator at the prime meridian, and the Y-axis completing the right-handed system at 90 degrees east longitude.
 .PP
@@ -111,9 +111,9 @@ share (\fBsrc/mbdraco\fP). \fB\-\-draco\fP, \fB\-D\fP are still accepted and do 
 
 .TP
 .B \-\-draco-precision \fIMETERS\fP
-With Draco, keep the positions to this many meters (default 0.001). Each tile of the model gets the number of bits
-(8 to 30) that makes the step of its quantization no more than this over its extent, so a small tile gets few bits and a large one more.
-This replaces \fB\-\-quantize-position\fP and its fixed 16 bits, which gave a step that depended on the size of the tile. The options
+With Draco, keep the positions to this many meters (default 0.001). Each block of the model gets the number of bits
+(8 to 30) that makes the step of its quantization no more than this over its extent, so a small block gets few bits and a large one more.
+This replaces \fB\-\-quantize-position\fP and its fixed 16 bits, which gave a step that depended on the size of the block. The options
 \fB\-\-quantize-position\fP, \fB\-\-quantize-normal\fP, \fB\-\-quantize-texcoord\fP, \fB\-\-quantize-color\fP and \fB\-Q\fP are refused with a message that names the new options.
 
 .TP

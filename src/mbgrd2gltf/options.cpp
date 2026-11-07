@@ -131,7 +131,7 @@ void print_help() {
   std::cout << "                                preserve sub-meter detail\n";
   std::cout << "  --no-draco                    Write the mesh as arrays. By default the mesh is compressed with Draco\n";
   std::cout << "                                (KHR_draco_mesh_compression), as mbmesh does; --draco, -D are accepted and do nothing\n";
-  std::cout << "  --draco-precision NUM         With Draco, keep positions to this many meters [default: 0.001]: each tile gets the\n";
+  std::cout << "  --draco-precision NUM         With Draco, keep positions to this many meters [default: 0.001]: each block (a primitive of the file) gets the\n";
   std::cout << "                                bits that make the step of its quantization no coarser, between 8 and 30\n";
   std::cout << "  --draco-normal-bits NUM       With Draco, the bits of each normal, 2-30 [default: 10]; the mesh has no normals\n";
   std::cout << "                                today, so this changes nothing\n";
@@ -251,7 +251,7 @@ Options::Options(unsigned argc, const char* argv[]) {
       }
       else if (opt_name.compare(0, 9, "quantize-") == 0) {
         throw std::invalid_argument("--" + opt_name + " is replaced by --draco-precision (the step of the positions in meters, for "
-                                    "each tile) and --draco-normal-bits, which mbmesh takes as well");
+                                    "each block) and --draco-normal-bits, which mbmesh takes as well");
       }
       else if (opt_name == "geoviewpoint") {
         if (!value_ptr) throw std::invalid_argument("--geoviewpoint requires a value, attached: --geoviewpoint=lon,lat,elev,clon,clat,celev");
@@ -354,7 +354,7 @@ Options::Options(unsigned argc, const char* argv[]) {
 
         case 'Q':
         case 'q':
-          throw std::invalid_argument("-Q is replaced by --draco-precision (the step of the positions in meters, for each tile) "
+          throw std::invalid_argument("-Q is replaced by --draco-precision (the step of the positions in meters, for each block) "
                                       "and --draco-normal-bits, which mbmesh takes as well");
 
         case 'V':

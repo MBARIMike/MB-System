@@ -46,12 +46,12 @@ namespace mbgrd2gltf {
 class Geometry {
 
 public:
-  // One triangle vector per tile; use this to emit multiple glTF primitives.
-  struct Tile {
+  // One triangle vector per block; use this to emit multiple glTF primitives.
+  struct Block {
     size_t x0, y0, x1, y1; // inclusive start (x0,y0), exclusive end (x1,y1) in cell space
     std::vector<Triangle> triangles;
   };
-  static std::vector<Tile> get_triangles_tiled(const Matrix<Vertex>& vertices, size_t tileSize);
+  static std::vector<Block> get_triangles_blocked(const Matrix<Vertex>& vertices, size_t blockSize);
 
 public:
   // A position in WGS84 Earth-Centered Earth-Fixed coordinates, in meters, kept
@@ -66,7 +66,7 @@ public:
 
 private: // members
   Matrix<Vertex> _vertices;
-  std::vector<Tile> _tiles;
+  std::vector<Block> _blocks;
   double _geoorigin_x = 0.0;
   double _geoorigin_y = 0.0;
   double _geoorigin_z = 0.0;
@@ -87,7 +87,7 @@ public: // methods
   static EcefPosition get_ecef_position(double longitude, double latitude, double altitude);
   Geometry(const Bathymetry& bathymetry, const Options& options);
   const Matrix<Vertex>& vertices() const { return _vertices; }
-  const std::vector<Tile>& tiles() const { return _tiles; }
+  const std::vector<Block>& blocks() const { return _blocks; }
   double geoorigin_x() const { return _geoorigin_x; }
   double geoorigin_y() const { return _geoorigin_y; }
   double geoorigin_z() const { return _geoorigin_z; }

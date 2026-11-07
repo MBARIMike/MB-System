@@ -81,7 +81,7 @@ static void validate_gltf_file(const std::string& filepath, bool is_binary) {
   }
 }
 
-//New Addition: Generation in tiles
+//New Addition: Generation in blocks
 std::vector<double> get_vertex_mins(const std::vector<float>& vertex_buffer);
 std::vector<double> get_vertex_maxes(const std::vector<float>& vertex_buffer);
 
@@ -97,7 +97,7 @@ static void append_bytes(std::vector<unsigned char>& bin, const std::vector<T>& 
   std::memcpy(bin.data() + old, data.data(), data.size() * sizeof(T));
 }
 
-struct TileBuild {
+struct BlockBuild {
   std::vector<float> verts; // x,y,z ...
   std::vector<uint16_t> idx16;
   std::vector<uint32_t> idx32;
@@ -111,12 +111,12 @@ struct TileBuild {
   std::vector<double> vmin, vmax;
 };
 
-// Remap global vertex IDs in 'tris' to local 0..k-1 and build a tile-local vertex buffer.
+// Remap global vertex IDs in 'tris' to local 0..k-1 and build a block-local vertex buffer.
 // Uses the id_to_offset map to correctly locate vertices in the master buffer.
-static TileBuild build_tile_buffers(const std::vector<float>& masterVerts,
+static BlockBuild build_block_buffers(const std::vector<float>& masterVerts,
                                     const std::vector<Triangle>& tris,
                                     const std::unordered_map<uint32_t, size_t>& id_to_offset) {
-  TileBuild tb;
+  BlockBuild tb;
   if (tris.empty())
     return tb;
 
@@ -292,39 +292,39 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
   // Create vertex buffer and ID-to-offset mapping
   std::unordered_map<uint32_t, size_t> id_to_offset;
   const std::vector<float> master_vertex_buffer = get_vertex_buffer(geometry.vertices(), &id_to_offset);
-  const size_t kTileSizeDefault = 256;
+  const size_t kBlockSizeDefault = 256;
 
-  std::vector<Geometry::Tile> tiles = geometry.tiles();
+  std::vector<Geometry::Block> blocks = geometry.blocks();
 
-  if (tiles.empty()) {
-    tiles = Geometry::get_triangles_tiled(geometry.vertices(), kTileSizeDefault);
+  if (blocks.empty()) {
+    blocks = Geometry::get_triangles_blocked(geometry.vertices(), kBlockSizeDefault);
   }
 
-  // ---- If Draco was requested, try TILED DRACO first ----
+  // ---- If Draco was requested, try BLOCKED DRACO first ----
   if (options.is_draco_compressed()) {
-    if (!tiles.empty()) {
-      LOG_INFO("Building", Logger::format_with_commas(tiles.size()), "tiles for Draco compression");
-      // Build per-tile buffers (localize indices & compute mins/maxes)
-      std::vector<TileBuild> built;
-      built.reserve(tiles.size());
-      size_t tile_count = 0;
-      for (const auto& tile : tiles) {
-        built.emplace_back(build_tile_buffers(master_vertex_buffer, tile.triangles, id_to_offset));
-        tile_count++;
-        if (tile_count % 100 == 0 || tile_count == tiles.size()) {
-          LOG_INFO("  Built tile", tile_count, "of", tiles.size());
+    if (!blocks.empty()) {
+      LOG_INFO("Building", Logger::format_with_commas(blocks.size()), "blocks for Draco compression");
+      // Build per-block buffers (localize indices & compute mins/maxes)
+      std::vector<BlockBuild> built;
+      built.reserve(blocks.size());
+      size_t block_count = 0;
+      for (const auto& block : blocks) {
+        built.emplace_back(build_block_buffers(master_vertex_buffer, block.triangles, id_to_offset));
+        block_count++;
+        if (block_count % 100 == 0 || block_count == blocks.size()) {
+          LOG_INFO("  Built block", block_count, "of", blocks.size());
         }
       }
 
-      // Single combined buffer holding all Draco payloads (one BufferView per tile). The shared code (src/mbdraco) chooses the
-      // quantization of each tile from its range and --draco-precision, and writes the primitive as mbmesh does.
+      // Single combined buffer holding all Draco payloads (one BufferView per block). The shared code (src/mbdraco) chooses the
+      // quantization of each block from its range and --draco-precision, and writes the primitive as mbmesh does.
       std::vector<unsigned char> bin;
       tinygltf::Model model;
       tinygltf::Mesh mesh;
       mbdraco::Compression used;
       bool encode_ok = true;
       size_t encoded_count = 0;
-      LOG_INFO("Encoding", Logger::format_with_commas(built.size()), "tiles with Draco compression");
+      LOG_INFO("Encoding", Logger::format_with_commas(built.size()), "blocks with Draco compression");
 
       for (auto& tb : built) {
         std::vector<uint32_t> idx;
@@ -345,7 +345,7 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
 
         encoded_count++;
         if (encoded_count % 100 == 0 || encoded_count == built.size()) {
-          LOG_INFO("  Encoded tile", encoded_count, "of", built.size());
+          LOG_INFO("  Encoded block", encoded_count, "of", built.size());
         }
       }
 
@@ -384,29 +384,29 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
         } else {
           validate_gltf_file(output_filepath, options.is_binary_output());
         }
-        return; // done (tiled Draco)
+        return; // done (blocked Draco)
       }
 
-      // If any tile failed to encode, fall through to uncompressed tiling.
-      std::cerr << "Draco tile encode failed; writing uncompressed tiles instead.\n";
+      // If any block failed to encode, fall through to uncompressed blocks.
+      std::cerr << "Draco block encode failed; writing uncompressed blocks instead.\n";
     }
   }
 
-  // ---- Tiled, UNCOMPRESSED path (fixes typed-array overflow) ----
-  // Build per-tile buffers (remap global IDs to local)
-  LOG_INFO("Building", Logger::format_with_commas(tiles.size()), "tiles for uncompressed output");
-  std::vector<TileBuild> built;
-  built.reserve(tiles.size());
-  size_t tile_count = 0;
-  for (const auto& tile : tiles) {
-    built.emplace_back(build_tile_buffers(master_vertex_buffer, tile.triangles, id_to_offset));
-    tile_count++;
-    if (tile_count % 100 == 0 || tile_count == tiles.size()) {
-      LOG_INFO("  Built tile", tile_count, "of", tiles.size());
+  // ---- Blocked, UNCOMPRESSED path (fixes typed-array overflow) ----
+  // Build per-block buffers (remap global IDs to local)
+  LOG_INFO("Building", Logger::format_with_commas(blocks.size()), "blocks for uncompressed output");
+  std::vector<BlockBuild> built;
+  built.reserve(blocks.size());
+  size_t block_count = 0;
+  for (const auto& block : blocks) {
+    built.emplace_back(build_block_buffers(master_vertex_buffer, block.triangles, id_to_offset));
+    block_count++;
+    if (block_count % 100 == 0 || block_count == blocks.size()) {
+      LOG_INFO("  Built block", block_count, "of", blocks.size());
     }
   }
 
-  // One combined binary buffer for all tiles, with 4-byte alignment
+  // One combined binary buffer for all blocks, with 4-byte alignment
   std::vector<unsigned char> bin;
   tinygltf::Model model;
 
@@ -420,7 +420,7 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
     return static_cast<int>(model.bufferViews.size()) - 1;
   };
 
-  auto pushAccessorVerts = [&](const TileBuild& tb, int bvIndex) -> int {
+  auto pushAccessorVerts = [&](const BlockBuild& tb, int bvIndex) -> int {
     tinygltf::Accessor acc;
     acc.bufferView = bvIndex;
     acc.byteOffset = 0;
@@ -433,7 +433,7 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
     return static_cast<int>(model.accessors.size()) - 1;
   };
 
-  auto pushAccessorIndex = [&](const TileBuild& tb, int bvIndex) -> int {
+  auto pushAccessorIndex = [&](const BlockBuild& tb, int bvIndex) -> int {
     tinygltf::Accessor acc;
     acc.bufferView = bvIndex;
     acc.byteOffset = 0;
@@ -449,8 +449,8 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
 
   tinygltf::Mesh mesh;
 
-  // Pack: [indices][verts] per tile → repeat
-  LOG_INFO("Packing", Logger::format_with_commas(built.size()), "tiles into buffer");
+  // Pack: [indices][verts] per block → repeat
+  LOG_INFO("Packing", Logger::format_with_commas(built.size()), "blocks into buffer");
   size_t packed_count = 0;
   for (auto& tb : built) {
     // indices
@@ -486,7 +486,7 @@ void write_gltf(const Geometry& geometry, const Options& options, GridRunInfo& r
     
     packed_count++;
     if (packed_count % 100 == 0 || packed_count == built.size()) {
-      LOG_INFO("  Packed tile", packed_count, "of", built.size());
+      LOG_INFO("  Packed block", packed_count, "of", built.size());
     }
   }
 

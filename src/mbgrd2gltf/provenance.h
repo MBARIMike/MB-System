@@ -86,7 +86,7 @@ struct GridRunInfo {
   // How it was made.
   double exaggeration = 1.0;
   bool binary = false;
-  // What the mesh was compressed with (KHR_draco_mesh_compression), filled in by write_gltf(): for the many tiles of the file, the
+  // What the mesh was compressed with (KHR_draco_mesh_compression), filled in by write_gltf(): for the many blocks of the file, the
   // most bits and the coarsest step. Not present when the file is written as arrays.
   mbdraco::Compression draco;
 };

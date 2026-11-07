@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
              "Draco compression:", options.is_draco_compressed() ? "enabled" : "disabled");
 
     if (options.is_draco_compressed()) {
-      LOG_INFO("Draco: positions kept to", options.draco().precision, "m in each tile (--draco-precision), normals in",
+      LOG_INFO("Draco: positions kept to", options.draco().precision, "m in each block (--draco-precision), normals in",
                options.draco().normal_bits, "bits (--draco-normal-bits)");
     }
 
