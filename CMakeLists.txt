@@ -290,6 +290,7 @@ add_subdirectory(src/macros)
 add_subdirectory(src/mbdraco)
 add_subdirectory(src/mbgrd2gltf)
 add_subdirectory(src/mbmesh)
+add_subdirectory(src/mbglb2tiles)
 add_subdirectory(src/otps)
 # src/mbnavadjust always builds the mbnavadjust_core library and the
 # Motif/X11-free mbnavadjustmerge CLI; the mbnavadjust GUI (and

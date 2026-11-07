@@ -205,3 +205,71 @@ bool write_tileset_json(
     }
     return true;
 }
+
+namespace {
+
+void write_node(std::ostream &out, const TilesetNode &node, int depth, bool is_root, const std::vector<double> &transform) {
+    const std::string indent(static_cast<std::size_t>(depth) * 2, ' ');
+    const std::string inner(static_cast<std::size_t>(depth + 1) * 2, ' ');
+    out << indent << "{\n";
+    if (is_root) {
+        out << inner << "\"transform\": [";
+        for (std::size_t i = 0; i < transform.size(); i++) {
+            out << (i == 0 ? "" : ", ") << number_text(transform[i]);
+        }
+        out << "],\n";
+    }
+    out << inner << "\"boundingVolume\": {\"box\": " << box_text(node.minimum, node.maximum) << "},\n"
+        << inner << "\"geometricError\": " << number_text(node.geometric_error);
+    if (is_root) {
+        out << ",\n" << inner << "\"refine\": \"REPLACE\"";
+    }
+    if (!node.uri.empty()) {
+        out << ",\n" << inner << "\"content\": {\"uri\": " << json_string(node.uri) << "}";
+    }
+    if (!node.children.empty()) {
+        out << ",\n" << inner << "\"children\": [\n";
+        for (std::size_t i = 0; i < node.children.size(); i++) {
+            write_node(out, node.children[i], depth + 2, false, transform);
+            out << (i + 1 < node.children.size() ? ",\n" : "\n");
+        }
+        out << inner << "]";
+    }
+    out << "\n" << indent << "}";
+}
+
+} // namespace
+
+bool write_tileset_tree_json(
+    const std::filesystem::path &path,
+    const CoordinateFrame &frame,
+    const TilesetNode &root,
+    const MetaValue &extras,
+    const std::string &generator,
+    std::string *error) {
+    const double dx = root.maximum[0] - root.minimum[0], dy = root.maximum[1] - root.minimum[1], dz = root.maximum[2] - root.minimum[2];
+    const double diagonal = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+    std::ofstream out(path);
+    if (!out) {
+        set_error(error, "Unable to create tileset file: " + path.string());
+        return false;
+    }
+    out << "{\n"
+        << "  \"asset\": {\"version\": \"1.1\", \"generator\": " << json_string(generator) << "},\n"
+        << "  \"geometricError\": " << number_text(std::max(diagonal, root.geometric_error)) << ",\n";
+    if (!extras.members.empty()) {
+        out << "  \"extras\": ";
+        write_meta_value(out, extras, 1);
+        out << ",\n";
+    }
+    out << "  \"root\":\n";
+    write_node(out, root, 1, true, tileset_transform(frame));
+    out << "\n}\n";
+    out.close();
+    if (!out) {
+        set_error(error, "Unable to write tileset file: " + path.string());
+        return false;
+    }
+    return true;
+}

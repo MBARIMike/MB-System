@@ -47,3 +47,23 @@ struct TilesetTile {
     const MetaValue &extras,
     const std::string &generator,
     std::string *error);
+
+// A tileset of levels of detail, as mbglb2tiles writes it: each tile is a coarser version of what its children hold together, and a
+// viewer replaces it with them as the camera comes near.
+struct TilesetNode {
+    std::string uri;                      // relative to tileset.json; empty for a tile without content
+    double minimum[3] = {0.0, 0.0, 0.0};  // the box of the content and of all the children, in the east-north-up frame
+    double maximum[3] = {0.0, 0.0, 0.0};
+    double geometric_error = 0.0;         // meters; 0 for the finest tiles
+    std::vector<TilesetNode> children;
+};
+
+// Writes tileset.json for the tree of tiles under root: the transform is on the root, the refinement is REPLACE for all, and the
+// geometric error of the tileset is the diagonal of the box of the root. If extras is not empty it is written as the tileset's extras.
+[[nodiscard]] bool write_tileset_tree_json(
+    const std::filesystem::path &path,
+    const CoordinateFrame &frame,
+    const TilesetNode &root,
+    const MetaValue &extras,
+    const std::string &generator,
+    std::string *error);
