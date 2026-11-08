@@ -21,5 +21,6 @@ struct GlbMesh {
     std::string description;
 };
 
-// Returns false, with the reason in *error, if the file cannot be read, has no georeference block, or holds anything but triangles.
-[[nodiscard]] bool read_mesh_glb(const std::filesystem::path &path, GlbMesh *result, std::string *error);
+// The Draco primitives are decoded on up to threads threads at once, and the progress is logged. Returns false, with the reason in *error, if the file
+// cannot be read, has no georeference block, or holds anything but triangles.
+[[nodiscard]] bool read_mesh_glb(const std::filesystem::path &path, GlbMesh *result, std::string *error, int threads = 1);

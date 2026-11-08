@@ -5,11 +5,19 @@ reconstructing anything: the mesh is read, coarsened level by level, and cut int
 
 ```
 mbglb2tiles -I mesh.glb [-O outputdir] [--tile-size meters] [--weld-tolerance meters] [--threads n]
-            [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [-V]
+            [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [--html [--x3dom-url url] [--lifted meters]] [-V]
 ```
 
 The output directory (`mbglb2tiles_output` beside the input by default) gets `tileset.json` and one directory `L<level>` of tile GLBs
 (`tile_I_J.glb`) for each level, `L0` being the finest.
+
+With `--html` it also writes a viewer page, `<outputdir>.html` beside the output directory, that shows the tileset with an X3DOM
+`GeoTileset` node (a GeoOrigin at the origin of the frame, an overview viewpoint from above, the processing log in `mbglb2tiles.log` in the
+output directory), and prints the command to serve and view it. `--x3dom-url` names the X3DOM script, which must be a build that has `GeoTileset`;
+`--lifted` raises everything by that many meters, for seafloor data, whose negative heights parts of `GeoTileset` do not handle.
+
+The log says what is happening and which options are in effect, default or not: a `[settings]` line for each, then a message at the start and end of
+each stage (reading and decoding, the frame, welding, each level, the tree, the page).
 
 ## What it does
 
@@ -38,8 +46,9 @@ tile is one primitive.
 
 ## Checked
 
-`3d-tiles-validator` reports no errors or warnings, only that it cannot validate the Draco extension. Loading the tileset in X3DOM's
-`GeoTileset` and CesiumJS has not been tried.
+`3d-tiles-validator` reports no errors or warnings, only that it cannot validate the Draco extension. A mesh of 38 million vertices
+and 154 primitives (lidar of OceanImaging2018) gave 6 levels and 380 tiles, 255 MiB, in 13 minutes with a peak of 12 GB, before the Draco
+primitives were decoded on several threads. Loading the tileset in X3DOM's `GeoTileset` and CesiumJS has not been tried.
 
 ## Limits
 

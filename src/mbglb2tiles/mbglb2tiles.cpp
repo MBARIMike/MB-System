@@ -15,6 +15,7 @@
 #include "io/glb_writer.h"
 #include "io/provenance.h"
 #include "io/tileset_writer.h"
+#include "io/x3dom_writer.h"
 #include "util/logger.h"
 #include "util/memory.h"
 #include "util/parallel.h"
@@ -28,12 +29,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <functional>
 #include <thread>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <map>
 #include <mutex>
 #include <set>
@@ -52,8 +57,14 @@ struct Options {
     double tile_size = 0.0;          // 0: chosen from the spacing of the mesh
     double weld_tolerance = 0.0;     // 0: chosen from the quantization the file says
     int threads = 0;                 // 0: the cores, at most 8
+    bool threads_given = false;
     mbdraco::Settings draco;
+    bool draco_precision_given = false;
+    bool draco_normal_bits_given = false;
     bool verbose = false;
+    bool write_html = false;
+    std::string x3dom_url;           // empty: the default of the page writer
+    double lifted = 0.0;
 };
 
 struct TileRecord {
@@ -72,6 +83,12 @@ void print_usage() {
         "                               above has tiles of twice the side, until one tile holds everything\n"
         "      --weld-tolerance <m>     Vertices of the file this close are one [twice the quantization step the file records, or 0.001]\n"
         "      --threads <n>            Tiles written at once [the cores, at most 8]\n"
+        "      --html                   Also write a viewer page, <outputdir>.html beside the output directory, that shows the tileset with an X3DOM\n"
+        "                               GeoTileset node, and print the command to serve and view it\n"
+        "      --x3dom-url <url>        The X3DOM script of the --html page [https://www.x3dom.org/x3dom/dist/x3dom-full.js]; a GeoTileset needs a\n"
+        "                               build of X3DOM that has it\n"
+        "      --lifted <meters>        With --html, lift the tileset this many meters above the ellipsoid along the local vertical, for seafloor\n"
+        "                               data, whose negative heights parts of X3DOM's GeoTileset do not handle; use more than the greatest depth\n"
         "      --no-draco               Write the tiles as arrays [compressed with Draco]\n"
         "      --draco-precision <m>    With Draco, keep positions to this many meters [0.001]\n"
         "      --draco-normal-bits <n>  With Draco, the bits of each normal, 2-30 [10]\n"
@@ -101,6 +118,9 @@ int main(int argc, char **argv) {
         {"tile-size", required_argument, nullptr, 1000},
         {"weld-tolerance", required_argument, nullptr, 1001},
         {"threads", required_argument, nullptr, 1002},
+        {"html", no_argument, nullptr, 1006},
+        {"x3dom-url", required_argument, nullptr, 1007},
+        {"lifted", required_argument, nullptr, 1008},
         {"no-draco", no_argument, nullptr, 1003},
         {"draco-precision", required_argument, nullptr, 1004},
         {"draco-normal-bits", required_argument, nullptr, 1005},
@@ -131,7 +151,23 @@ int main(int argc, char **argv) {
             break;
         case 1002:
             options.threads = std::max(1, std::atoi(optarg));
+            options.threads_given = true;
             break;
+        case 1006:
+            options.write_html = true;
+            break;
+        case 1007:
+            options.x3dom_url = optarg;
+            break;
+        case 1008: {
+            char *end = nullptr;
+            options.lifted = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(options.lifted)) {
+                LOG_ERROR("invalid --lifted:", std::string("'") + optarg + "' is not a height in meters");
+                return 1;
+            }
+            break;
+        }
         case 1003:
             options.draco.enabled = false;
             break;
@@ -140,12 +176,14 @@ int main(int argc, char **argv) {
                 LOG_ERROR("invalid --draco-precision:", problem);
                 return 1;
             }
+            options.draco_precision_given = true;
             break;
         case 1005:
             if (!mbdraco::parse_normal_bits(optarg, &options.draco.normal_bits, &problem)) {
                 LOG_ERROR("invalid --draco-normal-bits:", problem);
                 return 1;
             }
+            options.draco_normal_bits_given = true;
             break;
         case 'V':
             options.verbose = true;
@@ -164,7 +202,8 @@ int main(int argc, char **argv) {
         print_usage();
         return 1;
     }
-    if (options.output.empty()) {
+    const bool output_given = !options.output.empty();
+    if (!output_given) {
         options.output = options.input.parent_path() / "mbglb2tiles_output";
     }
     if (options.threads <= 0) {
@@ -172,12 +211,39 @@ int main(int argc, char **argv) {
     }
     const mbmesh::Stopwatch run_timer;
 
+    std::string command_line;
+    // The log of the run is kept for the page, whatever the console level.
+    mbmesh::Logger::start_capture();
+    {
+        for (int k = 0; k < argc; k++) {
+            command_line += (k == 0 ? "" : " ") + std::string(argv[k]);
+        }
+        LOG_INFO("[command]", command_line);
+        LOG_INFO("[settings]", "mbglb2tiles " + std::string(MB_VERSION) + ": tiles of levels of detail from " + options.input.string());
+        LOG_INFO("[settings]", "output: " + options.output.string() + (output_given ? " (--output)" : " (default: mbglb2tiles_output beside the input)"));
+        LOG_INFO("[settings]", "threads: " + std::to_string(options.threads) + (options.threads_given ? " (--threads)" : " (default: the cores, at most 8)"));
+        LOG_INFO("[settings]", options.draco.enabled ? "Draco compression of the tiles: on (default; --no-draco turns it off), positions to " +
+                                                           std::to_string(options.draco.precision) + " m" + (options.draco_precision_given ? " (--draco-precision)" : " (default)") + ", normals in " +
+                                                           std::to_string(options.draco.normal_bits) + " bits" + (options.draco_normal_bits_given ? " (--draco-normal-bits)" : " (default)")
+                                                     : std::string("Draco compression of the tiles: off (--no-draco), the tiles are written as arrays"));
+        LOG_INFO("[settings]", std::string("tile size: ") + (options.tile_size > 0.0 ? std::to_string(options.tile_size) + " m at the finest level (--tile-size)"
+                                                                                       : "256 times the spacing of the mesh at the finest level (default; decided once the mesh is read)"));
+        LOG_INFO("[settings]", std::string("weld tolerance: ") + (options.weld_tolerance > 0.0 ? std::to_string(options.weld_tolerance) + " m (--weld-tolerance)"
+                                                                                                : "twice the Draco step that the file records, at least 1 mm (default; decided once the file is read)"));
+        LOG_INFO("[settings]", options.write_html ? "viewer page: yes (--html), X3DOM from " + (options.x3dom_url.empty() ? std::string("https://www.x3dom.org/x3dom/dist/x3dom-full.js (default)") : options.x3dom_url + " (--x3dom-url)") +
+                                                        (options.lifted != 0.0 ? ", lifted " + std::to_string(options.lifted) + " m (--lifted)" : std::string())
+                                                  : std::string("viewer page: no (--html writes one)"));
+    }
+
     // ---- Read the mesh and put it in the local frame ----
     GlbMesh glb;
     std::string error;
     {
         const mbmesh::Stopwatch timer;
-        if (!read_mesh_glb(options.input, &glb, &error)) {
+        std::error_code size_error;
+        const auto input_size = std::filesystem::file_size(options.input, size_error);
+        LOG_INFO("[input]", "reading " + options.input.string() + (size_error ? std::string() : " (" + std::to_string(input_size / (1024 * 1024)) + " MiB)"));
+        if (!read_mesh_glb(options.input, &glb, &error, options.threads)) {
             LOG_ERROR(error);
             return 1;
         }
@@ -204,13 +270,24 @@ int main(int argc, char **argv) {
     for (Vec3 &vertex : mesh.vertices) {
         vertex = ecef_to_local(vertex, frame);
     }
+    {
+        std::ostringstream text;
+        text << std::fixed << std::setprecision(6) << "local east-north-up frame at the middle of the bounds of the mesh: longitude " << frame.origin.longitude << ", latitude "
+             << frame.origin.latitude << ", height " << std::setprecision(2) << frame.origin.elevation << " m; the vertices of the file are "
+             << (glb.has_center ? "relative to a center (the GeoOrigin of the mesh)" : "absolute ECEF");
+        LOG_INFO("[frame]", text.str());
+    }
 
     // ---- Weld the copies of the vertices on the edges of the primitives, and make the normals ----
     {
         const mbmesh::Stopwatch timer;
         const double tolerance = options.weld_tolerance > 0.0 ? options.weld_tolerance : (glb.position_step > 0.0 ? std::max(0.001, 2.0 * glb.position_step) : 0.001);
         const std::size_t before = mesh.vertices.size();
+        LOG_INFO("[weld]", "joining the vertices within " + std::to_string(tolerance) + " m of each other, the copies on the edges of the primitives" +
+                               (options.weld_tolerance > 0.0 ? " (--weld-tolerance)" : (glb.position_step > 0.0 ? " (default: twice the Draco step of " + std::to_string(glb.position_step) + " m that the file records)" : " (default: 1 mm)")) +
+                               (mesh.vertices.size() > 5000000 ? std::string("; this takes minutes for tens of millions of vertices") : std::string()));
         weld_coincident_vertices(&mesh, tolerance);
+        LOG_INFO("[weld]", "making the normals again from the joined surface");
         compute_vertex_normals(&mesh);
         LOG_INFO("[weld]", "vertices within " + std::to_string(tolerance) + " m joined: " + std::to_string(before) + " to " + std::to_string(mesh.vertices.size()) + " in " + timer.text());
     }
@@ -236,14 +313,31 @@ int main(int argc, char **argv) {
         top++;
     }
     const Vec3 anchor(minimum[0], minimum[1], minimum[2]);
-    LOG_INFO("[levels]", "spacing " + std::to_string(spacing) + " m; tiles of " + std::to_string(tile_size) + " m at the finest level, " + std::to_string(top + 1) +
-                             " levels, the last of one tile of " + std::to_string(tile_size * std::pow(2.0, top)) + " m, over " + std::to_string(extent) + " m");
+    LOG_INFO("[levels]", "spacing of the mesh " + std::to_string(spacing) + " m (area seen from above divided by the vertices, square root); tiles of " + std::to_string(tile_size) +
+                             " m at the finest level" + (options.tile_size > 0.0 ? " (--tile-size)" : " (default: 256 times the spacing, to two digits)") + ", doubling at each level until one tile holds the mesh, over " +
+                             std::to_string(extent) + " m: " + std::to_string(top + 1) + " levels, the last of one tile of " + std::to_string(tile_size * std::pow(2.0, top)) + " m");
+    for (int level = 0; level <= top; level++) {
+        LOG_INFO("[levels]", "level " + std::to_string(level) + ": tiles of " + std::to_string(tile_size * std::pow(2.0, level)) + " m, " +
+                                 (level == 0 ? std::string("the mesh itself, geometric error 0") : "vertices clustered in cubes of " + std::to_string(spacing * std::pow(2.0, level)) + " m, geometric error " + std::to_string(spacing * std::pow(2.0, level)) + " m"));
+    }
 
     // The metadata of the tiles: the frame they are in, and where it is.
     RunInfo run;
     run.program = "mbglb2tiles";
     run.version = MB_VERSION;
     run.datalist = std::filesystem::absolute(options.input).string();
+    run.command_line = command_line;
+    run.started_at = iso_utc_time(static_cast<double>(std::time(nullptr)));
+    {
+        const char *user = std::getenv("USER");
+        run.user = user != nullptr ? user : "";
+        char host[256] = "";
+        if (gethostname(host, sizeof(host) - 1) == 0) {
+            run.host = host;
+        }
+        std::error_code ignored;
+        run.working_directory = std::filesystem::current_path(ignored).string();
+    }
     run.geoorigin_mode = "none";
     run.has_center = true;
     run.local_frame = true;
@@ -288,6 +382,7 @@ int main(int argc, char **argv) {
         const mbmesh::Stopwatch level_timer;
         const double size = tile_size * std::pow(2.0, level);
         const Mesh *level_mesh = &mesh;
+        LOG_INFO("[level]", "level " + std::to_string(level) + " of " + std::to_string(top) + ": " + (level == 0 ? "cutting the mesh into tiles" : "clustering the mesh, then cutting it into tiles"));
         if (level > 0) {
             if (!cluster_mesh(mesh, anchor, spacing * std::pow(2.0, level), &coarse, &error)) {
                 LOG_ERROR(error);
@@ -299,6 +394,7 @@ int main(int argc, char **argv) {
         const std::vector<MeshTile> tiles = cut_mesh(*level_mesh, minimum[0], minimum[1], size);
         const std::filesystem::path directory = options.output / ("L" + std::to_string(level));
         std::filesystem::create_directories(directory, directory_error);
+        LOG_INFO("[level]", "level " + std::to_string(level) + ": writing " + std::to_string(tiles.size()) + " tiles to " + directory.string() + " on " + std::to_string(options.threads) + " threads");
         std::vector<TileRecord> made(tiles.size());
         std::atomic<bool> failed(false);
         std::mutex error_mutex;
@@ -337,6 +433,7 @@ int main(int argc, char **argv) {
     }
 
     // ---- The tree: a tile's children are the tiles of the level below that lie in its square ----
+    LOG_INFO("[tileset]", "joining the " + std::to_string(tiles_written) + " tiles into a tree: the children of a tile are the tiles of the level below that lie in its square");
     std::vector<std::set<std::pair<int, int>>> exists(static_cast<std::size_t>(top) + 1);
     for (int level = 0; level <= top; level++) {
         for (const auto &entry : records[static_cast<std::size_t>(level)]) {
@@ -391,5 +488,75 @@ int main(int argc, char **argv) {
     LOG_INFO("[tileset]", "wrote " + tileset_path.string() + " with " + std::to_string(tiles_written) + " tiles in " + std::to_string(top + 1) + " levels, " +
                               std::to_string(bytes_written / (1024 * 1024)) + " MiB");
     LOG_INFO("[complete]", "total " + run_timer.text() + ", " + mbmesh::peak_memory_text());
+
+    // ---- The viewer page ----
+    if (options.write_html) {
+        const std::filesystem::path web_root = viewer_web_root(options.output);
+        const std::filesystem::path html_path = viewer_page_path(options.output);
+        const std::filesystem::path log_path = options.output / "mbglb2tiles.log";
+        const std::string directory_name = options.output.has_filename() ? options.output.filename().string() : options.output.parent_path().filename().string();
+        const auto url_encode = [](const std::string &text) {
+            std::string encoded;
+            for (const unsigned char character : text) {
+                if (std::isalnum(character) || character == '-' || character == '.' || character == '_' || character == '~' || character == '/') {
+                    encoded += static_cast<char>(character);
+                } else {
+                    std::ostringstream hex;
+                    hex << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
+                    encoded += hex.str();
+                }
+            }
+            return encoded;
+        };
+
+        X3DomWriterOptions html_options;
+        html_options.title = viewer_title(web_root);
+        html_options.lift_meters = options.lifted;
+        if (!options.x3dom_url.empty()) {
+            html_options.x3dom_url = options.x3dom_url;
+        }
+        // The page has a GeoOrigin at the origin of the frame, as the tileset of mbmesh with --geoorigin does, and an overview from above.
+        html_options.use_geoorigin = true;
+        X3DomGeoOrigin &view = html_options.geo;
+        view.origin_lat = frame.origin.latitude;
+        view.origin_lon = frame.origin.longitude;
+        view.origin_elevation = frame.origin.elevation;
+        view.center_lat = 0.5 * (run.extent_south + run.extent_north);
+        view.center_lon = 0.5 * (run.extent_west + run.extent_east);
+        view.mean_elevation = run.mean_elevation;
+        constexpr double pi = 3.14159265358979323846;
+        const double lat_extent_m = (run.extent_north - run.extent_south) * 111000.0;
+        const double lon_extent_m = (run.extent_east - run.extent_west) * 111000.0 * std::cos(view.center_lat * pi / 180.0);
+        view.view_altitude = (std::max(lat_extent_m, lon_extent_m) / 2.0) / std::tan(0.785398 / 2.0);
+        {
+            const Vec3 middle_ecef = geodetic_to_ecef(GeodeticPosition{view.center_lon, view.center_lat, view.mean_elevation});
+            const double middle_array[3] = {middle_ecef.x, middle_ecef.y, middle_ecef.z};
+            const double origin_array[3] = {frame.origin_ecef.x, frame.origin_ecef.y, frame.origin_ecef.z};
+            set_local_viewpoint(&view, middle_array, origin_array);
+        }
+        X3DomModel model;
+        model.uri = url_encode(directory_name + "/tileset.json");
+        model.label = "tileset (OGC 3D Tiles, " + std::to_string(top + 1) + " levels)";
+        model.group = directory_name;
+        model.visible = true;
+        model.is_tileset = true;
+        html_options.models.push_back(model);
+        html_options.metadata = metadata;
+        html_options.geo_summary = geo_metadata_summary(run);
+        if (!write_log_file(log_path, mbmesh::Logger::captured_messages(), mbmesh::Logger::captured_omitted(), &error)) {
+            LOG_ERROR(error);
+            return 1;
+        }
+        html_options.log_url = url_encode(directory_name + "/mbglb2tiles.log");
+        if (!write_glb_x3dom_file(html_path, html_options, &error)) {
+            LOG_ERROR(error);
+            return 1;
+        }
+        LOG_INFO("[html]", "wrote " + html_path.string() + ", showing the tileset and the log " + log_path.string());
+        const std::filesystem::path absolute_root = std::filesystem::absolute(web_root);
+        LOG_INFO("[html]", "to view " + html_path.filename().string() + ", run this command in a terminal (Ctrl-C stops it), then open the URL:");
+        LOG_INFO("[html]", "  python3 -m http.server 8000 --bind 127.0.0.1 --directory '" + absolute_root.string() + "'");
+        LOG_INFO("[html]", "  http://127.0.0.1:8000/" + url_encode(html_path.filename().string()));
+    }
     return 0;
 }

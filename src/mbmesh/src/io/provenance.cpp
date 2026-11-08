@@ -300,8 +300,9 @@ std::vector<std::string> geo_metadata_summary(const RunInfo &run) {
     }
     add("description",
         "Seafloor from swath bathymetry, made by MB-System " + run.program + " " + run.version +
-            (run.has_center ? "; vertices are WGS 84 ECEF meters minus the GeoOrigin ECEF position"
-                            : "; vertices are absolute WGS 84 ECEF meters"));
+            (run.local_frame ? "; vertices are meters in the east-north-up frame at the center, written Y-up, as the content of a 3D Tiles tileset"
+                             : (run.has_center ? "; vertices are WGS 84 ECEF meters minus the GeoOrigin ECEF position"
+                                               : "; vertices are absolute WGS 84 ECEF meters")));
     add("coordinateSystem", "GC");      // geocentric
     add("horizontalDatum", "W84");
     add("ellipsoid", "WE");
@@ -316,7 +317,7 @@ std::vector<std::string> geo_metadata_summary(const RunInfo &run) {
     for (const int format : run.formats) {
         formats += (formats.empty() ? "" : ", ") + std::to_string(format);
     }
-    add("dataFormat", "MB-System datalist of swath files in MBIO format " + formats);
+    add("dataFormat", formats.empty() ? std::string("GLB triangle mesh of MB-System mbmesh or mbgrd2gltf") : "MB-System datalist of swath files in MBIO format " + formats);
     return summary;
 }
 
