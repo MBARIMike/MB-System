@@ -82,7 +82,7 @@ void print_usage() {
         "mbglb2tiles: an OGC 3D Tiles tileset of levels of detail from a GLB mesh made by mbmesh or mbgrd2gltf\n\n"
         "usage: mbglb2tiles -I mesh.glb [-O outputdir] [options]\n\n"
         "  -I, --input <file.glb>       The mesh: a GLB of mbmesh or mbgrd2gltf (with the georeference in its extras)\n"
-        "  -O, --output <outputdir>     Where tileset.json and the tiles go [mbglb2tiles_output beside the input]\n"
+        "  -O, --output <outputdir>     Where tileset.json and the tiles go [tileset beside the input, where mbmesh --tileset writes its tileset]\n"
         "      --tile-size <meters>     The side of the tiles of the finest level [256 times the spacing of the mesh, to two digits]; each level\n"
         "                               above has tiles of twice the side, until one tile holds everything\n"
         "      --weld-tolerance <m>     Vertices of the file this close are one [twice the quantization step the file records, or 0.001]\n"
@@ -229,7 +229,7 @@ int main(int argc, char **argv) {
     }
     const bool output_given = !options.output.empty();
     if (!output_given) {
-        options.output = options.input.parent_path() / "mbglb2tiles_output";
+        options.output = options.input.parent_path() / "tileset";
     }
     if (options.threads <= 0) {
         options.threads = static_cast<int>(std::min(8u, std::max(1u, std::thread::hardware_concurrency())));
@@ -245,7 +245,7 @@ int main(int argc, char **argv) {
         }
         LOG_INFO("[command]", command_line);
         LOG_INFO("[settings]", "mbglb2tiles " + std::string(MB_VERSION) + ": tiles of levels of detail from " + options.input.string());
-        LOG_INFO("[settings]", "output: " + options.output.string() + (output_given ? " (--output)" : " (default: mbglb2tiles_output beside the input)"));
+        LOG_INFO("[settings]", "output: " + options.output.string() + (output_given ? " (--output)" : " (default: tileset beside the input, where mbmesh --tileset writes its tileset)"));
         LOG_INFO("[settings]", "threads: " + std::to_string(options.threads) + (options.threads_given ? " (--threads)" : " (default: the cores, at most 8)"));
         LOG_INFO("[settings]", options.draco.enabled ? "Draco compression of the tiles: on (default; --no-draco turns it off), positions to " +
                                                            std::to_string(options.draco.precision) + " m" + (options.draco_precision_given ? " (--draco-precision)" : " (default)") + ", normals in " +
@@ -413,6 +413,12 @@ int main(int argc, char **argv) {
     set_glb_compression(options.draco);
 
     std::error_code directory_error;
+    {
+        const std::size_t removed = remove_previous_tileset(options.output);
+        if (removed > 0) {
+            LOG_INFO("[output]", "replacing the tileset already in " + options.output.string() + " (" + std::to_string(removed) + " files and directories removed)");
+        }
+    }
     std::filesystem::create_directories(options.output, directory_error);
     if (directory_error) {
         LOG_ERROR("cannot create " + options.output.string() + ": " + directory_error.message());

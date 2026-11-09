@@ -99,7 +99,7 @@ When `-I` names a **directory**, `mbmesh` reconstructs nothing. It writes `mbmes
 mbmesh -I .                                   # in the survey directory; serve this directory and open /mbmesh_survey.html
 ```
 
-The check boxes are in accordions that mirror the directory layout, one inside another for each level, with the directory named by `-I` open and the ones inside it closed. In each directory `mesh.glb` is listed first, then `track.glb`, then the others by name, and a `tileset/tileset.json` is offered, as a tileset, in place of the chunk files (the `chunks` and `tileset` directories are otherwise skipped, as are directories whose names begin with a dot). The `track.glb` files are switched on when the page opens, so the page shows where the surveys ran; the other GLBs are off and are loaded when first switched on. At most 1000 models are listed. The paths are relative to the current directory, so run `mbmesh` in the survey directory or above it, and serve that directory.
+The check boxes are in accordions that mirror the directory layout, one inside another for each level, with the directory named by `-I` open and the ones inside it closed. In each directory `mesh.glb` is listed first, then `track.glb`, then the others by name, and a directory with a `tileset.json` in it, such as `tileset` from `mbmesh --tileset` or `mbglb2tiles_output` from `mbglb2tiles`, is offered as one tileset, labeled with its name unless it is `tileset`, in place of its tiles (the `chunks` directories are otherwise skipped, as are directories whose names begin with a dot). The `track.glb` files are switched on when the page opens, so the page shows where the surveys ran; the other GLBs are off and are loaded when first switched on. At most 1000 models are listed. The paths are relative to the current directory, so run `mbmesh` in the survey directory or above it, and serve that directory.
 
 The page gets an initial view as a run's page does, from the georeference (`asset.extras`) of every GLB that has one: the overview (`Viewpoint` in model coordinates, and the `GeoViewpoint`) looks straight down on the middle of the union of their extents, from the height that fits it in a 45 degree view, so it takes in the whole survey. The GeoOrigin is that of the first GLB whose vertices are relative to one. GLBs from runs with another GeoOrigin do not line up with it, so every GLB with a georeference is compared with the GeoOrigin of the page, and each that has another (its center more than 1 cm away), or has absolute vertices, is logged as an `ERROR` that names it and says how far apart the GeoOrigins are; the page is still written. GLBs written before the georeference was recorded give no view, and a page with none opens on the equator.
 
@@ -144,7 +144,7 @@ Run with no arguments, or with `-H`, `-h` or `--help`, `mbmesh` prints its usage
 | `--normal-glb`, `-normal-glb` | none | Write `normals.glb`. |
 | `--origin-glb`, `-origin-glb` | none | Write `origins.glb`. |
 | `--track-glb`, `-track-glb` | none | Write `track.glb`, the sensor track as a 3D line. |
-| `--tileset`, `-tileset` | none | Write `tileset/tileset.json` and `tileset/tile_I_J.glb`, the surface as an OGC 3D Tiles tileset (see "OGC 3D Tiles"). |
+| `--tileset`, `-tileset` | none | Write `tileset/tileset.json` and `tileset/L0/tile_I_J.glb`, the surface as an OGC 3D Tiles tileset (see "OGC 3D Tiles"). |
 | `--pointcloud-colormap` | `name` | How `pointcloud.glb` is colored by height: `linear` (the default), 11 equal steps between rounded heights chosen from the range, as `mbm_grdplot -G5` does; `equalized`, steps with equal numbers of points, as `mbm_grdplot -G5 -S` does (histogram equalization, using the quanchunks of the heights; GMT's `grdhisteq` weights a geographic grid by cell area, which can move the upper steps by a fraction of the range); `none`, one orange. All use the Haxby colors, from dark blue to white. |
 | `--lift` | `[=meters]` | With `--tileset`, lift the tileset above the ellipsoid along the local vertical, in the `transform` of `tileset.json`. As `--geoorigin` works: without it the tileset has the true heights, with a warning if any are below the ellipsoid; alone it takes the default; with `--lift=900` it is that many meters, the value attached. X3DOM's `GeoTileset` takes the height of the camera as at least 1 m, so tiles below the ellipsoid, as seafloor is, never get near enough to refine. The default lift puts the lowest point of the mesh 10 m above the ellipsoid, to a meter, if it is lower; it is logged and written as `liftMeters` in the extras of `tileset.json`. The `--html` page lifts its other models, with `GeoTransform` nodes, and the viewpoints the same, and sets the `maximumScreenSpaceError` of the `GeoTileset` to 1 pixel. The Copy GeoViewpoint button takes the lift off, so the option it gives is for the true heights. |
 | `--x3dom-url` | `url` | The X3DOM script of the `--html` page, and the stylesheet beside it. Defaults to the build on `www.x3dom.org`, which has no `GeoTileset`; use a build of X3DOM master (October 2026 or later) to see a tileset. |
@@ -183,7 +183,7 @@ The viewer page (`--html`) carries the same tree in a `GeoMetadata` node (the `s
 
 ### OGC 3D Tiles
 
-`--tileset` writes the reconstruction as an OGC 3D Tiles 1.1 tileset in `<outputdir>/tileset/`: one `tile_I_J.glb` for each reconstruction chunk (one tile, `tile_0_0.glb`, for a single-pass run) and `tileset.json`. The tileset does not depend on `--geoorigin`.
+`--tileset` writes the reconstruction as an OGC 3D Tiles 1.1 tileset in `<outputdir>/tileset/`: one `L0/tile_I_J.glb` for each reconstruction chunk (one tile, `L0/tile_0_0.glb`, for a single-pass run) and `tileset.json`. The tileset does not depend on `--geoorigin`. `mbglb2tiles` writes the same layout into the same directory by default, with coarser levels `L1`, `L2` and so on as well, made from `mesh.glb`: running it replaces this one-level tileset with the one of levels of detail, and either is found by the survey page.
 
 - **Content.** Each tile's vertices are in the local east-north-up frame of the reconstruction, written Y-up as glTF requires and as 3D Tiles expects: X is east, Y is up and Z is south. Loaders turn Y-up into Z-up with a quarter turn about X.
 - **Placement.** The `transform` of the root tile is that east-north-up frame at the frame origin in WGS 84 ECEF (a 4x4 matrix in column-major order whose columns are east, north, up and the origin).
@@ -201,7 +201,7 @@ The triangle meshes are written with Draco compression (the `KHR_draco_mesh_comp
 
 ### Optional Outputs
 
-2. **`tileset/tileset.json`** and **`tileset/tile_I_J.glb`** - OGC 3D Tiles tileset
+2. **`tileset/tileset.json`** and **`tileset/L0/tile_I_J.glb`** - OGC 3D Tiles tileset
    - Written with `--tileset` or `--all-outputs`; see "OGC 3D Tiles" below
    - A part of the surface is loaded at a time, so a survey too large for one GLB can be viewed (a browser will not load a GLB of more than 2 GiB)
 

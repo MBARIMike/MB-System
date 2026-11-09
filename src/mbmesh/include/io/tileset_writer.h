@@ -48,6 +48,13 @@ struct TilesetTile {
 // Records the lift in the run metadata that is the tileset's extras, as georeference.liftMeters.
 void set_metadata_lift(MetaValue *metadata, double lift);
 
+// mbmesh --tileset and mbglb2tiles write the same layout into the same directory, tileset/ beside mesh.glb: tileset.json and a directory
+// L<level> of tiles tile_I_J.glb for each level, L0 the finest. A directory that has a tileset.json already holds a tileset of an earlier
+// run, of either program. This removes what such a tileset has that the next one may not overwrite: the tileset.json, the L<level> directories
+// and the tile_I_J.glb files left directly in it by older versions. It returns how many files it removed, and removes nothing from a
+// directory without a tileset.json, whatever else is in it.
+std::size_t remove_previous_tileset(const std::filesystem::path &directory);
+
 // Writes tileset.json: a root tile with the transform and no content, whose children are the tiles, each a
 // leaf. The geometric error of the root is the diagonal of its bounding box, so a viewer always refines to
 // the tiles, and that of each tile is 0. If extras is not empty it is written as the tileset's extras.

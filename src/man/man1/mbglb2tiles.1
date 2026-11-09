@@ -58,7 +58,9 @@ The GLB mesh. Required.
 .B \-O\fI outputdir\fR, \fB--output\fR \fIoutputdir\fR
 Where \fItileset.json\fR and the tiles go. The directory is created if needed. The tiles are in a directory \fIL0\fR,
 \fIL1\fR and so on for each level, \fIL0\fR being the finest, named \fItile_I_J.glb\fR after the position of the tile in the lattice of its level.
-The default is \fImbglb2tiles_output\fR in the directory of the input.
+The default is \fItileset\fR in the directory of the input, which is where \fBmbmesh --tileset\fR writes its tileset, in the same layout. A tileset
+already in the directory, from either program, is replaced: its \fItileset.json\fR, \fIL\fRlevel directories and flat \fItile_I_J.glb\fR files are
+removed first, and the log says so.
 .TP
 .B \--tile-size\fI meters\fR
 The side of the tiles of the finest level. The default is 256 times the spacing of the mesh, to two significant digits, as

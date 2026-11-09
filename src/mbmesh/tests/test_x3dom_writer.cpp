@@ -559,8 +559,12 @@ int main() {
         touch(survey / "multibeam" / "mbmesh_output" / "mesh.glb");
         touch(survey / "multibeam" / "mbmesh_output" / "track.glb");
         touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "tileset.json");
-        touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "tile_0_0.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "tileset" / "L0" / "tile_0_0.glb");
         touch(survey / "multibeam" / "mbmesh_output" / "chunks" / "t.glb");
+        // A tileset directory can have any name, as the default of mbglb2tiles used to be mbglb2tiles_output; its tiles are in directories of levels
+        touch(survey / "multibeam" / "mbmesh_output" / "mbglb2tiles_output" / "tileset.json");
+        touch(survey / "multibeam" / "mbmesh_output" / "mbglb2tiles_output" / "L0" / "tile_0_0.glb");
+        touch(survey / "multibeam" / "mbmesh_output" / "mbglb2tiles_output" / "L1" / "tile_0_0.glb");
         touch(survey / "lidar" / "points.glb");
         touch(survey / "lidar" / "a-x" / "q.glb");
         touch(survey / "lidar" / "a" / "p.glb");
@@ -589,13 +593,16 @@ int main() {
             "20260101A/lidar/a/p.glb",
             "20260101A/lidar/a-x/q.glb",
             "20260101A/multibeam/ZTopo.glb",
+            "20260101A/multibeam/mbmesh_output/mbglb2tiles_output/tileset.json",
             "20260101A/multibeam/mbmesh_output/tileset/tileset.json",
             "20260101A/multibeam/mbmesh_output/mesh.glb",
             "20260101A/multibeam/mbmesh_output/track.glb"};
         ok &= check(uris == expected, "the survey lists every GLB beneath it, a directory's files before its subdirectories, without chunks or hidden directories");
-        ok &= check(models.size() == 7 && models[4].is_tileset && models[4].group == "20260101A/multibeam/mbmesh_output" &&
+        ok &= check(models.size() == 8 && models[4].is_tileset && models[4].group == "20260101A/multibeam/mbmesh_output" &&
                         models[0].group == "20260101A/lidar" && models[2].group == "20260101A/lidar/a-x",
                     "the groups are the directory paths, from the survey directory");
+        ok &= check(models[4].label == "tileset (OGC 3D Tiles): mbglb2tiles_output" && models[5].is_tileset && models[5].label == "tileset (OGC 3D Tiles)",
+                    "a tileset directory of any name is one tileset, labeled by the name unless it is tileset, and its tiles are not listed");
         ok &= check(!use_geoorigin, "GLBs without a georeference give no GeoOrigin");
 
         // A GLB with the georeference gives the GeoOrigin and the viewpoint
@@ -726,10 +733,10 @@ int main() {
             closed++;
         }
         ok &= check(opened == 6 && closed == 6, "every accordion is closed again");
-        ok &= check(contains(page, "id='model-checkbox-6' type='checkbox' checked onclick='toggleModel(6, this.checked);'") &&
-                        contains(page, "id='model-checkbox-5' type='checkbox' onclick='toggleModel(5, this.checked);'") &&
+        ok &= check(contains(page, "id='model-checkbox-7' type='checkbox' checked onclick='toggleModel(7, this.checked);'") &&
+                        contains(page, "id='model-checkbox-6' type='checkbox' onclick='toggleModel(6, this.checked);'") &&
                         contains(page, "{ uri: '20260101A/multibeam/mbmesh_output/track.glb', loaded: true }") &&
-                        contains(page, "<Inline id='inline_6' url='20260101A/multibeam/mbmesh_output/track.glb'"),
+                        contains(page, "<Inline id='inline_7' url='20260101A/multibeam/mbmesh_output/track.glb'"),
                     "each model has its check box and its place in the model list");
 
         // User GeoViewpoints given for the survey page are in its menu even without a georeference

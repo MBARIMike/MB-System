@@ -1,7 +1,10 @@
 #include "io/tileset_writer.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <system_error>
+#include <vector>
 #include <cstdio>
 #include <fstream>
 #include <limits>
@@ -155,6 +158,31 @@ void set_metadata_lift(MetaValue *metadata, double lift) {
             member.second.set("liftMeters", MetaValue::from_number(lift));
         }
     }
+}
+
+std::size_t remove_previous_tileset(const std::filesystem::path &directory) {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(directory / "tileset.json", error)) {
+        return 0;
+    }
+    std::size_t removed = 0;
+    std::vector<std::filesystem::path> targets;
+    for (const auto &entry : std::filesystem::directory_iterator(directory, error)) {
+        const std::string name = entry.path().filename().string();
+        bool level_directory = name.size() > 1 && name[0] == 'L' && entry.is_directory(error);
+        for (std::size_t i = 1; level_directory && i < name.size(); i++) {
+            level_directory = std::isdigit(static_cast<unsigned char>(name[i])) != 0;
+        }
+        const bool old_tile = entry.is_regular_file(error) && name.rfind("tile_", 0) == 0 && name.size() > 4 && name.compare(name.size() - 4, 4, ".glb") == 0;
+        if (level_directory || old_tile) {
+            targets.push_back(entry.path());
+        }
+    }
+    for (const std::filesystem::path &target : targets) {
+        removed += static_cast<std::size_t>(std::filesystem::remove_all(target, error));
+    }
+    removed += std::filesystem::remove(directory / "tileset.json", error) ? 1 : 0;
+    return removed;
 }
 
 bool write_tileset_json(

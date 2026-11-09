@@ -336,7 +336,7 @@ ping. The positions are in the same coordinates as \fBmesh.glb\fR, including any
 .TP
 .B \--tileset
 Also write the surface as an OGC 3D Tiles 1.1 tileset, \fBtileset/tileset.json\fR and
-one \fBtileset/tile_I_J.glb\fR for each reconstruction chunk (one tile, \fBtile_0_0.glb\fR, if
+one \fBtileset/L0/tile_I_J.glb\fR for each reconstruction chunk (one tile, \fBtile_0_0.glb\fR, if
 reconstruction is not chunked), so that a viewer can load a part of a survey at a
 time; a browser will not load a GLB of more than 2 GiB. The vertices of a tile are in the
 local east-north-up frame of the reconstruction, written Y-up as glTF requires (X east,
@@ -412,8 +412,9 @@ as a height above the WGS 84 ellipsoid.
 Written only when reconstruction is chunked: one file per chunk, with vertices
 placed exactly as in \fBmesh.glb\fR.
 .TP
-.B tileset/tileset.json, tileset/tile_I_J.glb
-Optional OGC 3D Tiles tileset of the surface; see \fB--tileset\fR.
+.B tileset/tileset.json, tileset/L0/tile_I_J.glb
+Optional OGC 3D Tiles tileset of the surface; see \fB--tileset\fR. \fBmbglb2tiles\fR writes the same layout into the same directory by
+default, with coarser levels as well, and replaces this tileset.
 .TP
 .B raw_mesh.glb
 Optional untrimmed triangle mesh before support trimming.

@@ -679,7 +679,7 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
 
     struct Found {
         std::vector<std::string> directories;   // the directory names beneath the survey directory
-        std::string name;                       // the file name
+        std::string name;                       // the file name; for a tileset, the name of its directory
         std::filesystem::path path;
         bool is_tileset = false;
     };
@@ -694,22 +694,32 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
             // called "chunks", so that old output is still left out).
             if (name == "chunks" || name == "tiles" || (!name.empty() && name[0] == '.')) {
                 it.disable_recursion_pending();
+                continue;
+            }
+            // A directory with a tileset.json is a tileset, whatever it is called (tileset, from mbmesh --tileset, or mbglb2tiles_output):
+            // it is offered as one tileset, and its tiles, which can be thousands of GLBs, are left out.
+            if (std::filesystem::exists(path / "tileset.json", filesystem_error)) {
+                it.disable_recursion_pending();
+                Found entry;
+                entry.is_tileset = true;
+                entry.name = name;
+                entry.path = path / "tileset.json";
+                const std::filesystem::path relative = path.lexically_relative(root);
+                for (const std::filesystem::path &part : relative.parent_path()) {
+                    if (!part.empty() && part != ".") {
+                        entry.directories.push_back(part.string());
+                    }
+                }
+                found.push_back(entry);
             }
             continue;
         }
-        // In a tileset directory only tileset.json is offered, as a tileset of the directory that holds it.
-        const bool in_tileset = path.parent_path().filename() == "tileset";
-        Found entry;
-        entry.is_tileset = in_tileset && name == "tileset.json";
-        if (!entry.is_tileset && (in_tileset || !is_glb(*it))) {
+        if (!is_glb(*it)) {
             continue;
         }
+        Found entry;
         const std::filesystem::path relative = path.lexically_relative(root);
-        std::filesystem::path directory = relative.parent_path();
-        if (in_tileset) {
-            directory = directory.parent_path();
-        }
-        for (const std::filesystem::path &part : directory) {
+        for (const std::filesystem::path &part : relative.parent_path()) {
             if (!part.empty() && part != ".") {
                 entry.directories.push_back(part.string());
             }
@@ -747,7 +757,8 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
             relative_to_page = entry.path;
         }
         model.uri = url_encode(relative_to_page.generic_string());
-        model.label = entry.is_tileset ? "tileset (OGC 3D Tiles)" : entry.name;
+        // The tileset of mbmesh is in a directory called tileset; any other is named by its directory, as mbglb2tiles_output is.
+        model.label = entry.is_tileset ? (entry.name == "tileset" ? std::string("tileset (OGC 3D Tiles)") : "tileset (OGC 3D Tiles): " + entry.name) : entry.name;
         model.group = group;
         model.is_tileset = entry.is_tileset;
         if (entry.is_tileset) {

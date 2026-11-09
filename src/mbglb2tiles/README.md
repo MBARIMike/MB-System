@@ -8,8 +8,10 @@ mbglb2tiles -I mesh.glb [-O outputdir] [--tile-size meters] [--weld-tolerance me
             [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [--html [--x3dom-url url] [--sse pixels]] [--lift[=meters]] [-V]
 ```
 
-The output directory (`mbglb2tiles_output` beside the input by default) gets `tileset.json` and one directory `L<level>` of tile GLBs
-(`tile_I_J.glb`) for each level, `L0` being the finest.
+The output directory (`tileset` beside the input by default, where `mbmesh --tileset` writes its tileset) gets `tileset.json` and one directory `L<level>` of tile GLBs
+(`tile_I_J.glb`) for each level, `L0` being the finest, the layout of `mbmesh --tileset`. A tileset already in the directory, from either program, is replaced: its
+`tileset.json`, `L<level>` directories and flat `tile_I_J.glb` files are removed first, and the log says so. The survey page of `mbmesh` finds a tileset in a directory
+of any name.
 
 With `--html` it also writes a viewer page, `<outputdir>.html` beside the output directory, that shows the tileset with an X3DOM
 `GeoTileset` node (a GeoOrigin at the origin of the frame, an overview viewpoint from above, the processing log in `mbglb2tiles.log` in the

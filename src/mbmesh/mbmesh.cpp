@@ -626,7 +626,11 @@ int main(int argc, char **argv) {
         tileset_metadata = run_metadata(tileset_run);
 
         std::error_code tileset_error;
-        std::filesystem::create_directories(tileset_directory, tileset_error);
+        const std::size_t removed = remove_previous_tileset(tileset_directory);
+        if (removed > 0) {
+            LOG_INFO("[tileset]", "replacing the tileset already in " + tileset_directory.string() + " (" + std::to_string(removed) + " files and directories removed)");
+        }
+        std::filesystem::create_directories(tileset_directory / "L0", tileset_error);
         if (tileset_error) {
             LOG_ERROR("error creating tileset directory '" + tileset_directory.string() + "': " + tileset_error.message());
             return 1;
@@ -637,7 +641,7 @@ int main(int argc, char **argv) {
         if (!mesh_bounds(local_mesh, tile.minimum, tile.maximum)) {
             return;
         }
-        tile.uri = "tile_" + std::to_string(i) + "_" + std::to_string(j) + ".glb";
+        tile.uri = "L0/tile_" + std::to_string(i) + "_" + std::to_string(j) + ".glb";
         std::string tile_error;
         GlbContent content{"tileset_tile", "Surface of one tile of the 3D Tiles tileset, in the east-north-up frame at the center, Y-up", true, i, j};
         content.metadata = &tileset_metadata;
@@ -1644,7 +1648,7 @@ void print_usage() {
     std::cout << "      --normal-glb             Also write normals.glb\n";
     std::cout << "      --origin-glb             Also write origins.glb\n";
     std::cout << "      --track-glb              Also write track.glb, the sensor track as a black 3D line\n";
-    std::cout << "      --tileset                Also write tileset/tileset.json and tileset/tile_I_J.glb, the surface as an OGC 3D\n";
+    std::cout << "      --tileset                Also write tileset/tileset.json and tileset/L0/tile_I_J.glb, the surface as an OGC 3D\n";
     std::cout << "                               Tiles tileset (a part of it is loaded as needed, so large surveys fit in a browser).\n";
     std::cout << "                               With --html the page shows it with a GeoTileset node, which needs a build of X3DOM\n";
     std::cout << "                               that has one: see --x3dom-url\n";
