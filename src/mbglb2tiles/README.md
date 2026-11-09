@@ -5,7 +5,7 @@ reconstructing anything: the mesh is read, coarsened level by level, and cut int
 
 ```
 mbglb2tiles -I mesh.glb [-O outputdir] [--tile-size meters] [--weld-tolerance meters] [--threads n]
-            [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [--html [--x3dom-url url] [--lifted meters]] [-V]
+            [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [--html [--x3dom-url url] [--sse pixels]] [--lift[=meters]] [-V]
 ```
 
 The output directory (`mbglb2tiles_output` beside the input by default) gets `tileset.json` and one directory `L<level>` of tile GLBs
@@ -14,7 +14,11 @@ The output directory (`mbglb2tiles_output` beside the input by default) gets `ti
 With `--html` it also writes a viewer page, `<outputdir>.html` beside the output directory, that shows the tileset with an X3DOM
 `GeoTileset` node (a GeoOrigin at the origin of the frame, an overview viewpoint from above, the processing log in `mbglb2tiles.log` in the
 output directory), and prints the command to serve and view it. `--x3dom-url` names the X3DOM script, which must be a build that has `GeoTileset`;
-`--lifted` raises everything by that many meters, for seafloor data, whose negative heights parts of `GeoTileset` do not handle.
+`--sse` is the `maximumScreenSpaceError` of that node, 1 pixel by default (X3DOM's own 8 refines tiles of centimeter errors only within a few meters).
+
+`--lift` puts the tileset above the ellipsoid, in the transform of `tileset.json`, and works as `mbmesh --geoorigin` does: without it the tileset has the true heights (and a warning says so if any are below the ellipsoid); with `--lift` alone the lift is the default below; with `--lift=900` it is that many meters. `GeoTileset` takes the height of the camera as at least 1 m,
+so a camera below the ellipsoid, as over the seafloor, never gets close enough to refine a tile and only the root tile loads. The default lift is enough to
+put the lowest point of the mesh 10 m above the ellipsoid, to a meter, if it is lower; it is logged and written in the tileset's `extras` as `liftMeters`. The page's viewpoints have the lift added.
 
 The log says what is happening and which options are in effect, default or not: a `[settings]` line for each, then a message at the start and end of
 each stage (reading and decoding, the frame, welding, each level, the tree, the page).

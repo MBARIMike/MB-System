@@ -64,7 +64,11 @@ struct Options {
     bool verbose = false;
     bool write_html = false;
     std::string x3dom_url;           // empty: the default of the page writer
-    double lifted = 0.0;
+    double lift = 0.0;               // meters up along the local vertical, in the transform of tileset.json
+    bool lift_requested = false;     // --lift as --geoorigin of mbmesh works: without it no lift; with no value, decided from the depth of the mesh
+    bool lift_given = false;         // with a value
+    double sse = 1.0;                // the maximumScreenSpaceError of the page's GeoTileset, in pixels
+    bool sse_given = false;
 };
 
 struct TileRecord {
@@ -87,8 +91,13 @@ void print_usage() {
         "                               GeoTileset node, and print the command to serve and view it\n"
         "      --x3dom-url <url>        The X3DOM script of the --html page [https://www.x3dom.org/x3dom/dist/x3dom-full.js]; a GeoTileset needs a\n"
         "                               build of X3DOM that has it\n"
-        "      --lifted <meters>        With --html, lift the tileset this many meters above the ellipsoid along the local vertical, for seafloor\n"
-        "                               data, whose negative heights parts of X3DOM's GeoTileset do not handle; use more than the greatest depth\n"
+        "      --lift[=<meters>]        Lift the tileset above the ellipsoid along the local vertical, in the transform of tileset.json:\n"
+        "                               X3DOM's GeoTileset does not refine tiles for a camera below the ellipsoid, as for seafloor data. With no value,\n"
+        "                               enough to put the lowest point of the mesh 10 m above the ellipsoid, to a meter, if it is lower; a value must be\n"
+        "                               attached: --lift=900. Without --lift the tileset has the true heights\n"
+        "      --sse <pixels>           With --html, the maximumScreenSpaceError of the page's GeoTileset: a tile is replaced by its children when\n"
+        "                               its geometric error would show larger than this [1; X3DOM's own default is 8, too coarse for tiles of\n"
+        "                               centimeter errors]\n"
         "      --no-draco               Write the tiles as arrays [compressed with Draco]\n"
         "      --draco-precision <m>    With Draco, keep positions to this many meters [0.001]\n"
         "      --draco-normal-bits <n>  With Draco, the bits of each normal, 2-30 [10]\n"
@@ -120,7 +129,8 @@ int main(int argc, char **argv) {
         {"threads", required_argument, nullptr, 1002},
         {"html", no_argument, nullptr, 1006},
         {"x3dom-url", required_argument, nullptr, 1007},
-        {"lifted", required_argument, nullptr, 1008},
+        {"lift", optional_argument, nullptr, 1008},
+        {"sse", required_argument, nullptr, 1009},
         {"no-draco", no_argument, nullptr, 1003},
         {"draco-precision", required_argument, nullptr, 1004},
         {"draco-normal-bits", required_argument, nullptr, 1005},
@@ -160,12 +170,27 @@ int main(int argc, char **argv) {
             options.x3dom_url = optarg;
             break;
         case 1008: {
+            options.lift_requested = true;
+            if (optarg == nullptr) {
+                break;   // the default lift
+            }
             char *end = nullptr;
-            options.lifted = std::strtod(optarg, &end);
-            if (end == optarg || *end != '\0' || !std::isfinite(options.lifted)) {
-                LOG_ERROR("invalid --lifted:", std::string("'") + optarg + "' is not a height in meters");
+            options.lift = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(options.lift)) {
+                LOG_ERROR("invalid --lift:", std::string("'") + optarg + "' is not a height in meters");
                 return 1;
             }
+            options.lift_given = true;
+            break;
+        }
+        case 1009: {
+            char *end = nullptr;
+            options.sse = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !(options.sse >= 1.0e-3)) {
+                LOG_ERROR("invalid --sse:", std::string("'") + optarg + "' is not a number of pixels, at least 0.001");
+                return 1;
+            }
+            options.sse_given = true;
             break;
         }
         case 1003:
@@ -231,8 +256,11 @@ int main(int argc, char **argv) {
         LOG_INFO("[settings]", std::string("weld tolerance: ") + (options.weld_tolerance > 0.0 ? std::to_string(options.weld_tolerance) + " m (--weld-tolerance)"
                                                                                                 : "twice the Draco step that the file records, at least 1 mm (default; decided once the file is read)"));
         LOG_INFO("[settings]", options.write_html ? "viewer page: yes (--html), X3DOM from " + (options.x3dom_url.empty() ? std::string("https://www.x3dom.org/x3dom/dist/x3dom-full.js (default)") : options.x3dom_url + " (--x3dom-url)") +
-                                                        (options.lifted != 0.0 ? ", lifted " + std::to_string(options.lifted) + " m (--lifted)" : std::string())
+                                                        ", maximumScreenSpaceError " + std::to_string(options.sse) + " px" + (options.sse_given ? " (--sse)" : " (default)")
                                                   : std::string("viewer page: no (--html writes one)"));
+        LOG_INFO("[settings]", !options.lift_requested ? std::string("lift: none, the true heights (default; --lift lifts the tileset above the ellipsoid)")
+                                  : options.lift_given    ? "lift: " + std::to_string(options.lift) + " m (--lift)"
+                                                          : std::string("lift: decided from the depth of the mesh once it is read (--lift)"));
     }
 
     // ---- Read the mesh and put it in the local frame ----
@@ -364,7 +392,24 @@ int main(int argc, char **argv) {
         run.extent_north = north;
         run.mean_elevation = frame.origin.elevation + 0.5 * (minimum[2] + maximum[2]);
     }
-    const MetaValue metadata = run_metadata(run);
+    // The lift: X3DOM's GeoTileset takes the height of the camera as at least 1 m above the ellipsoid, so tiles of data below it
+    // are never close enough to refine. The transform of the tileset puts the frame this much higher.
+    const double lowest_height = frame.origin.elevation + minimum[2];
+    if (!options.lift_requested) {
+        options.lift = 0.0;
+        if (lowest_height < 0.0) {
+            LOG_WARN("[lift]", "the lowest point of the mesh is at " + std::to_string(lowest_height) + " m, below the ellipsoid: X3DOM's GeoTileset takes the height of the camera as at least 1 m, so its tiles will not refine; use --lift to lift the tileset");
+        }
+    } else if (!options.lift_given) {
+        options.lift = default_tileset_lift(lowest_height);
+    }
+    const CoordinateFrame placed_frame = lifted_frame(frame, options.lift);
+    LOG_INFO("[lift]", "the lowest point of the mesh is at height " + std::to_string(lowest_height) + " m above the ellipsoid; the tileset is " +
+                           (options.lift != 0.0 ? "lifted " + std::to_string(options.lift) + " m" : std::string("not lifted")) +
+                           (!options.lift_requested ? " (no --lift)" : options.lift_given ? " (--lift)" : " (--lift: enough to put the lowest point 10 m above the ellipsoid, to a meter)") +
+                           (options.lift != 0.0 ? ", so every height in the tileset is that much more than the true one" : ""));
+    MetaValue metadata = run_metadata(run);
+    set_metadata_lift(&metadata, options.lift);
     set_glb_compression(options.draco);
 
     std::error_code directory_error;
@@ -481,7 +526,7 @@ int main(int argc, char **argv) {
     const std::pair<int, int> root_index = *exists[static_cast<std::size_t>(top)].begin();
     const TilesetNode root = build(top, root_index.first, root_index.second);
     const std::filesystem::path tileset_path = options.output / "tileset.json";
-    if (!write_tileset_tree_json(tileset_path, frame, root, metadata, "MB-System mbglb2tiles " + std::string(MB_VERSION), &error)) {
+    if (!write_tileset_tree_json(tileset_path, placed_frame, root, metadata, "MB-System mbglb2tiles " + std::string(MB_VERSION), &error)) {
         LOG_ERROR(error);
         return 1;
     }
@@ -511,7 +556,6 @@ int main(int argc, char **argv) {
 
         X3DomWriterOptions html_options;
         html_options.title = viewer_title(web_root);
-        html_options.lift_meters = options.lifted;
         if (!options.x3dom_url.empty()) {
             html_options.x3dom_url = options.x3dom_url;
         }
@@ -536,6 +580,8 @@ int main(int argc, char **argv) {
         }
         X3DomModel model;
         model.uri = url_encode(directory_name + "/tileset.json");
+        model.max_screen_space_error = options.sse;
+        model.lift_meters = options.lift;
         model.label = "tileset (OGC 3D Tiles, " + std::to_string(top + 1) + " levels)";
         model.group = directory_name;
         model.visible = true;

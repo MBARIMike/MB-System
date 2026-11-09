@@ -138,6 +138,25 @@ std::vector<double> tileset_transform(const CoordinateFrame &frame) {
             frame.origin_ecef.x, frame.origin_ecef.y, frame.origin_ecef.z, 1.0};
 }
 
+double default_tileset_lift(double lowest_height) {
+    constexpr double minimum_height = 10.0;
+    return lowest_height < minimum_height ? std::ceil(minimum_height - lowest_height) : 0.0;
+}
+
+CoordinateFrame lifted_frame(const CoordinateFrame &frame, double lift) {
+    CoordinateFrame placed = frame;
+    placed.origin_ecef = Vec3(frame.origin_ecef.x + lift * frame.up.x, frame.origin_ecef.y + lift * frame.up.y, frame.origin_ecef.z + lift * frame.up.z);
+    return placed;
+}
+
+void set_metadata_lift(MetaValue *metadata, double lift) {
+    for (auto &member : metadata->members) {
+        if (member.first == "georeference" && member.second.type == MetaValue::Type::Object) {
+            member.second.set("liftMeters", MetaValue::from_number(lift));
+        }
+    }
+}
+
 bool write_tileset_json(
     const std::filesystem::path &path,
     const CoordinateFrame &frame,

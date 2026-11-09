@@ -46,8 +46,11 @@ struct Options {
     // --geoviewpoint, repeatable: GeoViewpoints for the --html page, as given (see parse_user_viewpoint()).
     std::vector<std::string> geoviewpoints;
 
-    // --lifted: meters to lift everything in the --html page, or the survey page, above the ellipsoid; zero is off.
-    double lift_meters = 0.0;
+    // --lift, as --geoorigin works: not given, no lift; given without a value, the lift is decided from the lowest point of the mesh
+    // (default_tileset_lift()); given with --lift=<meters>, that many meters, along the local vertical, in the transform of tileset.json.
+    bool tileset_lift_requested = false;
+    bool tileset_lift_given = false;   // with a value
+    double tileset_lift = 0.0;
     bool write_local_xyz = false;
     bool write_ecef_xyz = false;
     bool write_oriented_ply = false;

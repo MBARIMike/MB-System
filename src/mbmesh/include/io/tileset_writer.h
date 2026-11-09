@@ -37,6 +37,17 @@ struct TilesetTile {
 // transform: a 4x4 matrix in column-major order, whose columns are east, north, up and the origin.
 [[nodiscard]] std::vector<double> tileset_transform(const CoordinateFrame &frame);
 
+// X3DOM's GeoTileset takes the height of the camera as at least 1 m above the ellipsoid, so tiles of data below the ellipsoid, as seafloor
+// is, never get near enough to refine. A tileset is therefore lifted: the frame is put higher along its vertical, in the transform of
+// tileset.json. The default lift puts the lowest point 10 m above the ellipsoid, to a meter, if it is lower (zero if not).
+[[nodiscard]] double default_tileset_lift(double lowest_height);
+
+// The frame with its origin lift meters higher along its up axis, for the transform of a lifted tileset.
+[[nodiscard]] CoordinateFrame lifted_frame(const CoordinateFrame &frame, double lift);
+
+// Records the lift in the run metadata that is the tileset's extras, as georeference.liftMeters.
+void set_metadata_lift(MetaValue *metadata, double lift);
+
 // Writes tileset.json: a root tile with the transform and no content, whose children are the tiles, each a
 // leaf. The geometric error of the root is the diagonal of its bounding box, so a viewer always refines to
 // the tiles, and that of each tile is 0. If extras is not empty it is written as the tileset's extras.

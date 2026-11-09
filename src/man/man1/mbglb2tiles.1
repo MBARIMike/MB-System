@@ -5,7 +5,7 @@ mbglb2tiles \- make an OGC 3D Tiles tileset of levels of detail from a GLB mesh 
 \fBmbglb2tiles\fR \fB-I\fI mesh.glb\fR [\fB-O\fI outputdir\fR]
 [\fB--tile-size\fI meters\fR] [\fB--weld-tolerance\fI meters\fR] [\fB--threads\fI n\fR]
 [\fB--no-draco\fR] [\fB--draco-precision\fI meters\fR] [\fB--draco-normal-bits\fI n\fR]
-[\fB--html\fR [\fB--x3dom-url\fI url\fR] [\fB--lifted\fI meters\fR]] [\fB-V\fR] [\fB-h\fR]
+[\fB--html\fR [\fB--x3dom-url\fI url\fR] [\fB--sse\fI pixels\fR]] [\fB--lift\fR[=\fImeters\fR]] [\fB-V\fR] [\fB-h\fR]
 .SH DESCRIPTION
 .LP
 \fBmbglb2tiles\fR turns a triangle mesh in a binary glTF (GLB) file written by \fBmbmesh\fR or
@@ -91,9 +91,15 @@ the command that serves it (\fBpython3 -m http.server\fR), and does not start it
 The X3DOM script that the \fB--html\fR page loads (default https://www.x3dom.org/x3dom/dist/x3dom-full.js). A GeoTileset needs a build of X3DOM
 that has it, which that one may not.
 .TP
-.B \--lifted\fI meters\fR
-With \fB--html\fR, lift the tileset this many meters above the ellipsoid along the local vertical. For seafloor data, whose negative
-heights parts of X3DOM's GeoTileset do not handle; use more than the greatest depth.
+.B \--lift\fR[=\fImeters\fR]
+Put the tileset above the ellipsoid, along the local vertical, in the transform of \fBtileset.json\fR. As \fB--geoorigin\fR of \fBmbmesh\fR does, without the option there is no lift and the tileset has the true heights (a warning says so if any are below the ellipsoid), the option alone takes the default below, and a value must be attached, as in \fB--lift=900\fR. X3DOM's GeoTileset takes the
+height of the camera as at least 1 m, so a camera below the ellipsoid, as over the seafloor, never gets close enough to refine a tile and only the root tile
+loads. The default lift is enough to put the lowest point of the mesh 10 m above the ellipsoid, to a meter, if it is lower. The lift is logged
+and written as \fBliftMeters\fR in the extras of the tileset, and the viewpoints of the \fB--html\fR page have it added.
+.TP
+.B \--sse\fI pixels\fR
+With \fB--html\fR, the maximumScreenSpaceError of the page's GeoTileset: a tile is replaced by its children when its geometric error would show larger than
+this (default 1; X3DOM's own default of 8 refines tiles of centimeter errors only within a few meters).
 .TP
 .B \-V\fR, \fB--verbose\fR
 Log the debug messages as well as the information messages. The log always says what each stage does and which options are in effect, default or not.
@@ -106,7 +112,7 @@ Make the tiles of a mesh from \fBmbmesh\fR, and a page to look at them with:
 .br
 mbmesh -I datalist.mb-1 -L 0.1 --geoorigin
 .br
-mbglb2tiles -I mbmesh_output/mesh.glb --html --lifted 2000
+mbglb2tiles -I mbmesh_output/mesh.glb --html
 .br
 python3 -m http.server 8000 --directory .
 .LP

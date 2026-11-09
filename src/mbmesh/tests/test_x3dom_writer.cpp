@@ -288,14 +288,21 @@ int main() {
         without.user_viewpoints.clear();
         ok &= check(!contains(write_page(without), "USER_GEOVIEW"), "no user GeoViewpoints, none in the page");
 
-        // --lifted: the models are in GeoTransforms that translate up (Y in X3DOM's frame), and the heights of the
-        // viewpoints, the user's too, have the lift added.
+        // A lifted tileset (liftMeters in its tileset.json): the other models are in GeoTransforms that translate up (Y in X3DOM's
+        // frame), the tileset is not, as it is lifted by its own file, and the heights of the viewpoints, the user's too, have the lift added.
         X3DomWriterOptions lifted = options;
-        lifted.lift_meters = 1000.0;
+        X3DomModel lifted_tileset = model("mbmesh_output/tileset/tileset.json", "tileset", "mbmesh_output", true);
+        lifted_tileset.is_tileset = true;
+        lifted_tileset.lift_meters = 1000.0;
+        lifted_tileset.max_screen_space_error = 1.0;
+        lifted.models.push_back(lifted_tileset);
         const std::string lifted_page = write_page(lifted);
         ok &= check(contains(lifted_page, "<GeoTransform id='transform_0'") && contains(lifted_page, "translation='0 1000.000 0'") &&
                         contains(lifted_page, "</GeoTransform>") && !contains(lifted_page, "<transform id='transform_0'>"),
-                    "a lifted page puts each model in a GeoTransform with a translation up");
+                    "a page with a lifted tileset puts each other model in a GeoTransform with a translation up");
+        ok &= check(contains(lifted_page, "<transform id='transform_1'>") && !contains(lifted_page, "<GeoTransform id='transform_1'") &&
+                        contains(lifted_page, "<GeoTileset id='tileset_1' maximumScreenSpaceError='1' url="),
+                    "the tileset is not in a GeoTransform, and has its maximumScreenSpaceError");
         ok &= check(contains(lifted_page, "position='36.6000000 -122.4000000 1050.000'") &&
                         contains(lifted_page, "centerOfRotation='36.6000000 -122.4000000 1000.000'"),
                     "the user GeoViewpoint heights have the lift added");
@@ -339,9 +346,9 @@ int main() {
                     "a label with no rise has no GeoTransform of its own");
         ok &= check(!contains(write_page(options), "switch_chunks") && !contains(write_page(options), "Outlines and names"),
                     "without chunk labels the page has neither");
-        labeled.lift_meters = 1000.0;
+        labeled.models.push_back(lifted_tileset);
         ok &= check(contains(write_page(labeled), "<GeoTransform id='transform_chunks'") && !contains(write_page(labeled), "<transform id='transform_chunks'>"),
-                    "the chunk outlines are lifted with the models");
+                    "the chunk outlines are lifted with the tileset");
     }
 
     // ---- a tileset: a GeoTileset in the page, with the GeoOrigin, and the script that has it

@@ -115,13 +115,15 @@ heights chosen from the range, as \fBmbm_grdplot -G5\fR does; \fBequalized\fR, s
 numbers of points, as \fBmbm_grdplot -G5 -S\fR does; or \fBnone\fR, one orange. The heights the color
 changes between are in the description of the file's MB-System.content metadata.
 .TP
-.B \-\-lifted=\fIMETERS\fR
-With \fB\-\-html\fR, or with a directory input, lift everything this many meters above the
-ellipsoid along the local vertical. Each model is written inside a GeoTransform whose translation
-goes up, and the heights of the viewpoints, those of \fB\-\-geoviewpoint\fR too, are raised by the same
-amount. It is for seafloor data, whose negative heights parts of the X3DOM GeoTileset node do not
-handle; use more than the greatest depth. The \fBCopy GeoViewpoint\fR button takes the lift off
-again, so the option it gives is for the true heights.
+.B \-\-lift\fR[=\fIMETERS\fR]
+With \fB\-\-tileset\fR, lift the tileset above the ellipsoid along the local vertical, in the
+transform of \fBtileset.json\fR. As \fB\-\-geoorigin\fR works, without the option the tileset has the true heights (a warning says so
+if any are below the ellipsoid), the option alone takes the default, and a value must be attached, as in \fB\-\-lift=900\fR. X3DOM's GeoTileset takes the height of the camera as at least 1 m, so tiles
+below the ellipsoid, as seafloor is, never get near enough to refine. The default lift puts the lowest point of the
+mesh 10 m above the ellipsoid, to a meter, if it is lower. The lift is logged and written as \fBliftMeters\fR in
+the extras of \fBtileset.json\fR. The page of \fB\-\-html\fR puts its other models in GeoTransform nodes that lift
+them the same, raises the viewpoints, and sets the maximumScreenSpaceError of the GeoTileset to 1 pixel. The
+\fBCopy GeoViewpoint\fR button takes the lift off again, so the option it gives is for the true heights.
 .TP
 .B \--chunk-size \fImeters\fR
 Reconstruct in square horizontal chunks of about this size (rounded up to a whole

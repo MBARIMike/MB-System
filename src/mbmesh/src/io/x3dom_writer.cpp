@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -332,7 +333,7 @@ constexpr const char *page_script = R"JS(
         }
         var position = ecefToGeodetic(camera.x + modelOrigin[0], camera.y + modelOrigin[1], camera.z + modelOrigin[2]);
         var target = ecefToGeodetic(center.x + modelOrigin[0], center.y + modelOrigin[1], center.z + modelOrigin[2]);
-        // A page written with --lifted shows everything liftMeters higher than it is: the option is for the true heights.
+        // A page with a lifted tileset shows everything liftMeters higher than it is: the option is for the true heights.
         position[2] -= liftMeters;
         target[2] -= liftMeters;
 
@@ -492,6 +493,24 @@ std::filesystem::path survey_page_path() {
     return current / "mbmesh_survey.html";
 }
 
+static // The liftMeters that a tileset.json written by mbmesh or mbglb2tiles has in its extras; zero if it has none or the file cannot be read.
+double read_tileset_lift(const std::filesystem::path &path) {
+    std::ifstream in(path);
+    if (!in) {
+        return 0.0;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string key = "\"liftMeters\"";
+    const std::size_t at = text.find(key);
+    const std::size_t colon = at == std::string::npos ? std::string::npos : text.find(':', at + key.size());
+    if (colon == std::string::npos) {
+        return 0.0;
+    }
+    char *end = nullptr;
+    const double value = std::strtod(text.c_str() + colon + 1, &end);
+    return end != text.c_str() + colon + 1 && std::isfinite(value) ? value : 0.0;
+}
+
 std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory, bool tileset,
                                            bool page_in_output_directory) {
     std::vector<X3DomModel> models;
@@ -508,6 +527,8 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
         model.group = directory_name;
         model.visible = true;
         model.is_tileset = true;
+        model.max_screen_space_error = 1.0;
+        model.lift_meters = read_tileset_lift(output_directory / "tileset" / "tileset.json");
         models.push_back(model);
     }
 
@@ -729,6 +750,10 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
         model.label = entry.is_tileset ? "tileset (OGC 3D Tiles)" : entry.name;
         model.group = group;
         model.is_tileset = entry.is_tileset;
+        if (entry.is_tileset) {
+            model.max_screen_space_error = 1.0;
+            model.lift_meters = read_tileset_lift(entry.path);
+        }
         model.visible = !entry.is_tileset && entry.name == "track.glb";
         models.push_back(model);
 
@@ -1212,9 +1237,14 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     if (options.use_geoorigin) {
         geodetic_to_ecef_array(geo.origin_lon, geo.origin_lat, geo.origin_elevation, origin_ecef);
     }
-    // --lifted raises everything by this many meters along the ellipsoid normal: the models with a GeoTransform, and
-    // the viewpoints by adding it to their heights, so that the view stays where the models are.
-    const double lift = options.lift_meters;
+    // The page lifts what is not a tileset by the lift of the tileset, along the ellipsoid normal: the models with a GeoTransform, and
+    // the viewpoints by adding it to their heights, so that the view stays where the tileset is.
+    double lift = 0.0;
+    for (const X3DomModel &model : options.models) {
+        if (model.is_tileset) {
+            lift = std::max(lift, model.lift_meters);
+        }
+    }
     std::ostringstream position, center, origin_coordinates;
     position << std::fixed << std::setprecision(6) << geo.center_lat << " " << geo.center_lon << " " << std::setprecision(1)
              << (geo.mean_elevation + geo.view_altitude + lift);
@@ -1460,18 +1490,23 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     lift_text << std::fixed << std::setprecision(3) << lift;
     const std::string lift_translation = lift_text.str();
     if (lift != 0.0) {
-        output << "        <!-- Lifted " << lift_translation << " m above the ellipsoid (mbmesh --lifted): every model is in a GeoTransform that\n"
-               << "             translates it up, and the viewpoints are that much higher. -->\n";
+        output << "        <!-- The tileset is lifted " << lift_translation << " m above the ellipsoid in its tileset.json: every other model is in a GeoTransform\n"
+               << "             that translates it up the same, and the viewpoints are that much higher. -->\n";
     }
     for (std::size_t i = 0; i < options.models.size(); i++) {
         const X3DomModel &model = options.models[i];
+        const bool wrap_model = lift != 0.0 && !model.is_tileset;   // a tileset is lifted by its own file
         output << "        <switch id='switch_" << i << "' whichChoice='" << (model.visible ? 0 : -1) << "'>\n"
-               << (lift != 0.0 ? "          <GeoTransform id='transform_" + std::to_string(i) + "' geoSystem='\"GD\" \"WE\"' geoCenter='" +
+               << (wrap_model ? "          <GeoTransform id='transform_" + std::to_string(i) + "' geoSystem='\"GD\" \"WE\"' geoCenter='" +
                                           lift_center.str() + "' translation='0 " + lift_translation + " 0'>\n"
                                 : "          <transform id='transform_" + std::to_string(i) + "'>\n");
         if (model.is_tileset) {
             // Written whether or not it is shown: chunks are only loaded while the switch shows it.
-            output << "            <GeoTileset id='tileset_" << i << "' url='&quot;" << escape_html(model.uri) << "&quot;'>";
+            output << "            <GeoTileset id='tileset_" << i << "'";
+            if (model.max_screen_space_error > 0.0) {
+                output << " maximumScreenSpaceError='" << metadata_number_text(model.max_screen_space_error) << "'";
+            }
+            output << " url='&quot;" << escape_html(model.uri) << "&quot;'>";
             if (options.use_geoorigin) {
                 output << "\n              <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n            ";
             }
@@ -1480,7 +1515,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
             output << "            <Inline id='inline_" << i << "' url='" << escape_html(model.uri) << "' nameSpaceName='model_" << i
                    << "' mapDEFToID='true'></Inline>\n";
         }
-        output << (lift != 0.0 ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
+        output << (wrap_model ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
     }
 
     // The outline and the file name of each chunk (--label-chunks), in the coordinates of the models and lifted with them.
@@ -1563,8 +1598,8 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     output << "      ];\n"
            << std::fixed << std::setprecision(3)
            << "      // The WGS 84 ECEF position of the GeoOrigin that the models are relative to (zeros if they are absolute).\n"
-           << "      // How far above the ellipsoid the page lifts everything (--lifted), in meters; zero if it does not.\n"
-           << "      var liftMeters = " << std::fixed << std::setprecision(3) << options.lift_meters << ";\n"
+           << "      // How far above the ellipsoid the page lifts the tileset and the rest with it, in meters; zero if it does not.\n"
+           << "      var liftMeters = " << std::fixed << std::setprecision(3) << lift << ";\n"
            << "      var modelOrigin = [" << origin_ecef[0] << ", " << origin_ecef[1] << ", " << origin_ecef[2] << "];\n"
            << page_script << "    </script>\n"
            << "  </body>\n"

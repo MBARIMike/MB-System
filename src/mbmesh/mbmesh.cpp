@@ -163,12 +163,11 @@ namespace {
 
 // The page of a directory input: every GLB beneath it. Returns false after logging an error.
 bool write_survey_page(const std::filesystem::path &survey_directory, const std::string &x3dom_url, const std::vector<std::string> &geoviewpoints,
-                       double lift_meters, bool label_chunks) {
+                       bool label_chunks) {
     const std::filesystem::path html_path = survey_page_path();
     X3DomWriterOptions html_options;
     html_options.title = viewer_title(survey_directory);
     html_options.nested_groups = true;
-    html_options.lift_meters = lift_meters;
     if (!x3dom_url.empty()) {
         html_options.x3dom_url = x3dom_url;
     }
@@ -267,7 +266,7 @@ int main(int argc, char **argv) {
     {
         std::error_code directory_error;
         if (std::filesystem::is_directory(options.input_datalist, directory_error)) {
-            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints, options.lift_meters, options.label_chunks) ? 0 : 1;
+            return write_survey_page(options.input_datalist, options.x3dom_url, options.geoviewpoints, options.label_chunks) ? 0 : 1;
         }
     }
 
@@ -483,8 +482,10 @@ int main(int argc, char **argv) {
                 text << "vertices are offsets from the GeoOrigin lon " << placement.geoorigin.longitude << " lat " << placement.geoorigin.latitude
                      << " elevation " << placement.geoorigin.elevation << " m (--geoorigin" << (options.geoorigin_mode == GeoOriginMode::Auto ? ", chosen from the data" : "") << ")";
             }
-            if (options.lift_meters != 0.0) {
-                text << "; viewer page lifted " << options.lift_meters << " m above the ellipsoid (--lifted)";
+            if (options.write_tileset) {
+                text << "; tileset " << (!options.tileset_lift_requested ? std::string("not lifted (no --lift)")
+                                         : options.tileset_lift_given  ? "lifted " + std::to_string(options.tileset_lift) + " m (--lift)"
+                                                                       : std::string("lifted enough to put its lowest point 10 m above the ellipsoid (--lift)"));
             }
             LOG_INFO("[settings]", text.str());
         }
@@ -964,7 +965,25 @@ int main(int argc, char **argv) {
             add_tileset_tile(clean_mesh, 0, 0);   // one tile
         }
         std::string tileset_error;
-        if (!write_tileset_json(tileset_directory / "tileset.json", preprocessed.read_result.frame, tileset_tiles, tileset_metadata,
+        // The lift: GeoTileset takes the height of its camera as at least 1 m, so tiles below the ellipsoid never refine.
+        const CoordinateFrame &tileset_frame = preprocessed.read_result.frame;
+        double lowest_height = std::numeric_limits<double>::max();
+        for (const TilesetTile &tile : tileset_tiles) {
+            lowest_height = std::min(lowest_height, tileset_frame.origin.elevation + tile.minimum[2]);
+        }
+        const double lift = !options.tileset_lift_requested ? 0.0
+                            : options.tileset_lift_given    ? options.tileset_lift
+                                                            : (tileset_tiles.empty() ? 0.0 : default_tileset_lift(lowest_height));
+        MetaValue tileset_extras = tileset_metadata;
+        set_metadata_lift(&tileset_extras, lift);
+        if (!options.tileset_lift_requested && !tileset_tiles.empty() && lowest_height < 0.0) {
+            LOG_WARN("[tileset]", "the lowest point of the tileset is at " + std::to_string(lowest_height) + " m, below the ellipsoid: X3DOM's GeoTileset takes the height of the camera as at least 1 m, so its tiles will not refine; use --lift to lift the tileset");
+        }
+        if (lift != 0.0) {
+            LOG_INFO("[tileset]", "lifted " + std::to_string(lift) + " m above the ellipsoid" + (options.tileset_lift_given ? " (--lift=" + std::to_string(lift) + ")" : " (--lift: enough to put the lowest point, at " + std::to_string(lowest_height) + " m, 10 m above it)") +
+                                      ", so every height in the tileset is that much more than the true one");
+        }
+        if (!write_tileset_json(tileset_directory / "tileset.json", lifted_frame(tileset_frame, lift), tileset_tiles, tileset_extras,
                                 "MB-System mbmesh " + mbsystem_version(), &tileset_error)) {
             LOG_ERROR(tileset_error);
             return 1;
@@ -999,7 +1018,6 @@ int main(int argc, char **argv) {
         html_options.title = viewer_title(web_root);
         html_options.use_geoorigin = placement.use_geoorigin;
         html_options.geo = placement.view;
-        html_options.lift_meters = options.lift_meters;
         for (const std::string &text : options.geoviewpoints) {
             X3DomUserViewpoint viewpoint;
             std::string viewpoint_error;
@@ -1142,7 +1160,7 @@ Options parse_options(int argc, char **argv) {
         {"poisson-solver", required_argument, nullptr, 1021},
         {"poisson-iterations", required_argument, nullptr, 1022},
         {"geoviewpoint", required_argument, nullptr, 1018},
-        {"lifted", required_argument, nullptr, 1023},
+        {"lift", optional_argument, nullptr, 1023},
         {"pointcloud-colormap", required_argument, nullptr, 1024},
         {"spill-points", required_argument, nullptr, 1025},
         {"void-size", required_argument, nullptr, 1026},
@@ -1413,12 +1431,17 @@ Options parse_options(int argc, char **argv) {
         }
 
         case 1023: {
+            options.tileset_lift_requested = true;
+            if (optarg == nullptr) {
+                break;   // the default lift
+            }
             char *end = nullptr;
-            options.lift_meters = std::strtod(optarg, &end);
-            if (end == optarg || *end != '\0' || !std::isfinite(options.lift_meters) || options.lift_meters <= 0.0) {
-                LOG_ERROR("invalid --lifted:", std::string("'") + optarg + "' is not a number of meters above zero");
+            options.tileset_lift = std::strtod(optarg, &end);
+            if (end == optarg || *end != '\0' || !std::isfinite(options.tileset_lift) || options.tileset_lift < 0.0) {
+                LOG_ERROR("invalid --lift:", std::string("'") + optarg + "' is not a number of meters, zero or more");
                 std::exit(1);
             }
+            options.tileset_lift_given = true;
             break;
         }
 
@@ -1491,8 +1514,8 @@ Options parse_options(int argc, char **argv) {
         LOG_ERROR("--label-chunks draws the chunks in the page that --html writes; use --html too");
         std::exit(1);
     }
-    if (options.lift_meters != 0.0 && !options.write_html && !directory_input) {
-        LOG_ERROR("--lifted lifts what the page that --html writes shows; use --html too");
+    if (options.tileset_lift_requested && !options.write_tileset) {
+        LOG_ERROR("--lift lifts the tileset that --tileset writes; use --tileset too");
         std::exit(1);
     }
 
@@ -1551,11 +1574,13 @@ void print_usage() {
     std::cout << "                               with the orientation as an axis and an angle, as a GeoViewpoint takes it. Heights are\n";
     std::cout << "                               above the ellipsoid. The Copy GeoViewpoint button of the page gives the ten-number form.\n";
     std::cout << "                               The value must be attached: --geoviewpoint=-122.4,36.6,-900,...\n";
-    std::cout << "      --lifted <meters>        With --html, or with a directory input, lift everything this many meters above the\n";
-    std::cout << "                               ellipsoid along the local vertical: each model goes in a GeoTransform, and the\n";
-    std::cout << "                               heights of the viewpoints, --geoviewpoint ones too, are raised by the same amount.\n";
-    std::cout << "                               For seafloor data, whose negative heights parts of X3DOM's GeoTileset do not handle;\n";
-    std::cout << "                               use more than the greatest depth. Copy GeoViewpoint takes the lift off again\n";
+    std::cout << "      --lift[=<meters>]        With --tileset, lift the tileset above the ellipsoid along the local\n";
+    std::cout << "                               vertical, in the transform of tileset.json: X3DOM's GeoTileset does not refine tiles\n";
+    std::cout << "                               for a camera below the ellipsoid, as over seafloor. The page lifts its other models\n";
+    std::cout << "                               and the viewpoints the same. With no value, enough to put the lowest point of the mesh\n";
+    std::cout << "                               10 m above the ellipsoid, to a meter, if it is lower; a value must be attached:\n";
+    std::cout << "                               --lift=900. Without --lift the tileset has the true heights. Copy GeoViewpoint takes\n";
+    std::cout << "                               the lift off again\n";
     std::cout << "      --chunk-size <meters>    Reconstruct in square chunks of about this size, writing chunks/chunk_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";

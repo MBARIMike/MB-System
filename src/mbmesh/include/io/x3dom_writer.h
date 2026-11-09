@@ -78,6 +78,13 @@ struct X3DomModel {
     // have it), which is written into the page whether or not it is shown, with the GeoOrigin that the page
     // has, if any, as its child node.
     bool is_tileset = false;
+    // For a tileset: the maximumScreenSpaceError of its GeoTileset, in pixels; zero leaves X3DOM's default of 8.
+    double max_screen_space_error = 0.0;
+    // For a tileset: how far its own tileset.json lifts it above the ellipsoid (liftMeters in its extras). The page lifts the
+    // models that are not tilesets, the chunk outlines and the viewpoints by the same amount (the greatest of the tilesets'), so that
+    // all of them are where the tileset is. A tileset itself is not put in a GeoTransform: GeoTileset takes the height of its
+    // camera in its own coordinates, which the transform would take the lift off again.
+    double lift_meters = 0.0;
 };
 
 // A chunk of the reconstruction, to be drawn in the page: its outline as a closed line of four corners, and its file
@@ -110,12 +117,6 @@ struct X3DomWriterOptions {
     // viewpoints, as USER_GEOVIEW_1, USER_GEOVIEW_2 and so on, each with the GeoOrigin if there is one.
     std::vector<X3DomUserViewpoint> user_viewpoints;
 
-    // If not zero, the page lifts everything this many meters above the ellipsoid, along the local vertical: each
-    // model is in a GeoTransform with a translation up, and the heights of the viewpoints, the user's too, have it
-    // added. It is for seafloor data at negative heights, which parts of X3DOM's GeoTileset do not handle. The Copy
-    // GeoViewpoint button takes the lift off again, so its option is for the true heights.
-    double lift_meters = 0.0;
-
     // The X3DOM script the page loads. A GeoTileset needs a build of X3DOM that has it (merged in October 2026),
     // which the build on www.x3dom.org, the default, does not.
     std::string x3dom_url = "https://www.x3dom.org/x3dom/dist/x3dom-full.js";
@@ -124,7 +125,7 @@ struct X3DomWriterOptions {
     std::vector<X3DomModel> models;
 
     // If not empty, the page draws the outline of each chunk and its file name (--label-chunks), with a check box
-    // to switch them off. They are lifted with the models by lift_meters.
+    // to switch them off. They are lifted with the tileset.
     std::vector<X3DomChunkLabel> chunk_labels;
 
     // The georeferencing and provenance metadata, written into the page as X3D
