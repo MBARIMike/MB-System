@@ -573,7 +573,7 @@ Current limitations:
 
 ## Legacy Implementation
 
-The previous implementation in `src/mbmesh/legacy/` was created by the Spring 2026 CSUMB Capstone project team. It read MB-System datalists and generated point-cloud outputs:
+The previous implementation in `src/mbmesh/legacy/` was created by the Spring 2026 CSUMB Capstone project team. (The mesh reconstruction pipeline that replaced it, and the layout of the source in `include/`, `src/algorithms/`, `src/io/` and `tests/`, were constructed by the Summer 2026 CSUMB Capstone team of Daniel Karnofel and Benjamin Shimek.) It read MB-System datalists and generated point-cloud outputs:
 
 - `adjustedPointcloud.xyz`
 - `ecefPointcloud.xyz`
@@ -591,30 +591,42 @@ The current implementation keeps the same broad input domain and web-viewer dire
 
 ## Current Status and Limitations
 
-**mbmesh** is a functioning mesh-generation prototype. It is useful for reconstructing and inspecting bathymetry meshes, but several parts are still research/prototype quality.
+**mbmesh** reconstructs bathymetry meshes from swath datalists, in one pass or in chunks, writes them as GLB (Draco-compressed by default) and as an OGC 3D Tiles tileset, and writes X3DOM pages to view them. **mbglb2tiles** builds levels of detail from a mesh GLB. Both are in use on multibeam and lidar surveys. Some parts are still research or prototype quality.
 
-Important limitations:
+What works:
 
+- An exact ECEF-derived east-north-up frame, and `--geoorigin` as `mbgrd2gltf` has it; products of the two overlay.
+- Chunked, threaded reconstruction with fields matched on shared chunk edges (`--seam-blend`), so merged meshes meet; surveys larger than `--spill-points` soundings are kept on disk, so memory follows the size of a chunk.
+- A single-pass and a chunked run of one swath file agree to a median vertex distance of 4.9 cm; OceanImaging2018 20180923d1 (51.8 million soundings) went from 2 h 55 min in one pass to 40 min chunked on 4 threads, and the `sor` solver is faster still.
+- `--tileset` writes a tileset of the chunks with a root ENU-to-ECEF `transform`; `mbglb2tiles` adds the coarser levels with `REPLACE` refinement. Both write the same `tileset/` layout, find each other's output in `mbmesh_survey.html`, and refine in X3DOM's `GeoTileset` (`--lift` is needed over seafloor, where the camera is below the ellipsoid).
+- The tiles are colored by height (`COLOR_0`, the Haxby table over the heights of the whole survey) unless `--no-colors`, and the pages have a "color by height" checkbox.
+
+Known limitations:
+
+- The tilesets have been checked in X3DOM only; they have not been validated with `3d-tiles-validator` or loaded in CesiumJS.
+- The coarser levels of a tileset come from clustering the finished mesh (`mbglb2tiles`), not from reconstructing again from decimated points; `mbmesh --tileset` writes only the finest level. `mbglb2tiles` holds the whole mesh in memory (about 12 GB at its peak for a mesh of 38 million vertices, with the weld taking about 5 minutes and the first clustering about 2.4), so there is no out-of-core path from the chunk files.
+- A tileset has one frame, at its center, for all its tiles; a survey large enough that the Earth's curvature matters across it would need a frame for each tile.
+- The height colors are one table with the heights of the survey; there is no other colormap for a tileset, and no color from the data (backscatter, for example). The page's checkbox reaches the tiles through X3DOM's internal nodes, so a new X3DOM could break it.
+- The build is tested with CMake only; the autotools build has not been tried, and builds without Draco write uncompressed meshes.
 - Reconstruction is a single end-to-end run; there is no reusable preprocessing artifact yet.
 - Decimation is available through `--decimate`, but remains off by default because it trades reconstruction detail for lower downstream cost.
-- Screened Poisson uses a regular grid, so memory per run grows with grid size. Chunked reconstruction bounds this per chunk, and a survey with more than `--spill-points` soundings is kept on disk, so memory follows the size of a chunk; a survey of fewer soundings is held in memory.
+- Screened Poisson uses a regular grid, so memory per chunk grows with grid size; a survey of fewer soundings than `--spill-points` is held in memory.
 - Normal estimation is sensitive to sparse data, sharp edges, and inconsistent spacing.
-- Support trimming can over-trim when normals or thresholds are poor.
-- Boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
-- Viewing the page needs `python3` (or any local web server) and a browser; mbmesh only prints the command.
+- Support trimming can over-trim when normals or thresholds are poor, and boundary triangles are discarded rather than clipped when only part of a triangle is unsupported.
+- Tiles with fewer than 32 owned points are skipped, which drops a few points at the edge of a survey.
+- Viewing a page needs `python3` (or any local web server) and a browser; mbmesh only prints the command.
 
-High-value future work:
+Future work:
 
-- Write a 3D Tiles `tileset.json` with an ENU-to-ECEF `transform`, so tiles do not depend on the glb vertex offsets.
-- Expose selected reconstruction parameters as documented CLI options.
+- Validate the tilesets with `3d-tiles-validator` and CesiumJS.
+- Make the coarser levels from decimated points, and build them from the chunk files without holding the whole mesh.
 - Decimate while reading, and write the point outputs of a survey on disk in full, which are limited to 5 million points now.
-- Weld or clip chunk edges, and make the iso-value shift consistent across chunks.
+- Expose selected reconstruction parameters as documented CLI options.
 - Investigate octree/adaptive Poisson reconstruction.
 - Improve normal estimation near boundaries and sharp orientation changes.
 - Clip support-trimmed boundary triangles instead of dropping them.
 - Add full CLI regression tests using small real or synthetic datalists.
-- Improve the generated HTML viewer with metadata and controls.
-- Evaluate 3D Tiles and compression outputs for large web visualization workflows.
+- Build and test the autotools build.
 
 ## Source Layout
 
@@ -775,6 +787,12 @@ By default `INFO`, `WARN` and `ERROR` lines are shown. `-V` adds `DEBUG` lines, 
 - The CMake target is `mbmesh`.
 - Only the final mesh output is enabled by default. Optional diagnostic outputs must be requested explicitly.
 - Metadata mode still reads the datalist and computes spacing, but it exits before normal estimation, screened Poisson, marching cubes, trimming, and output writing.
+
+## Credits
+
+- Initial implementation (PR #1584: reading swath datalists, projected and ECEF XYZ and GLB point clouds, the X3DOM viewer page, build, documentation and the `mbm_tmap` tiling macro): CSUMB Capstone, Spring 2026: Jorge Barrera-Simental, Kevin Crapo, Joceline Cortez-Arellano, Noah Mckegney, Lyn Larson, Metztli Herrera, Andre Gutierrez and David Martinez.
+- Construction and architectural layout of the mesh reconstruction pipeline (datalist reader, normal estimation, screened Poisson reconstruction, marching cubes, support trimming and the output writers): CSUMB Capstone, Summer 2026, Daniel Karnofel and Benjamin Shimek.
+- Continued refinement, Mike McCann, MBARI (issues #1559 and #1629): the ECEF frame and `--geoorigin`, chunked threaded reconstruction, Draco compression, OGC 3D Tiles tilesets with levels of detail for X3DOM (`mbglb2tiles`), the viewer and survey pages, and height colors.
 
 ## Copyright and License
 

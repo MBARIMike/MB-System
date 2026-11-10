@@ -528,7 +528,17 @@ David W. Caress and Dale N. Chayes
 .br
 Monterey Bay Aquarium Research Institute
 .br
-Initial mbmesh implementation: CSUMB Capstone - Spring 2026
+Initial mbmesh implementation (PR #1584: reading swath datalists, projected and ECEF XYZ and GLB point clouds, the X3DOM
+viewer page, build, documentation and the mbm_tmap tiling macro): CSUMB Capstone - Spring 2026:
+Jorge Barrera-Simental, Kevin Crapo, Joceline Cortez-Arellano, Noah Mckegney, Lyn Larson, Metztli Herrera, Andre Gutierrez and David Martinez
+.br
+Construction and architectural layout of the mesh reconstruction pipeline (datalist reader, normal estimation, screened
+Poisson reconstruction, marching cubes, support trimming and the output writers): CSUMB Capstone - Summer 2026, Daniel
+Karnofel and Benjamin Shimek
+.br
+Continued refinement: Mike McCann, MBARI (issues #1559 and #1629): ECEF frame and \fB\-\-geoorigin\fR, chunked threaded
+reconstruction, Draco compression, OGC 3D Tiles tilesets with levels of detail for X3DOM (\fBmbglb2tiles\fR), viewer
+and survey pages, height colors
 .SH SEE ALSO
 .BR mb-system (1),
 .BR mbglb2tiles (1),
