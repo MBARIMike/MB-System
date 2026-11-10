@@ -279,11 +279,11 @@ constexpr const char *page_script = R"JS(
         document.getElementById('switch_' + index).setAttribute('whichChoice', on ? 0 : -1);
       }
 
-      // The colors of the tilesets' tiles, which have one for each vertex (COLOR_0) and a white base color. X3DOM's GeoTileset loads the
-      // tiles itself, as nodes that are not in the page, so they are reached through the GeoTiles node: with the colors off, the vertex
-      // colors are not used and the base color is the gray that MeshLab shows a mesh in. Tiles that are loaded later, as the view
-      // gets closer, are done as they appear.
-      var tilesetColors = true;
+      // The colors of a tileset's tiles, which have one for each vertex (COLOR_0) and a white base color. X3DOM's GeoTileset loads the
+      // tiles itself, as nodes that are not in the page, so they are reached through the GeoTileset's own nodes: with the colors off, the
+      // vertex colors are not used and the base color is the gray that MeshLab shows a mesh in. Each tileset has its own setting
+      // (tilesetColors[index], on unless it says false). Tiles that are loaded later, as the view gets closer, are done as they appear.
+      var tilesetColors = {};
       var tilesetGray = 0.75;   // 192 of 255, the gray that MeshLab shows a mesh in
 
       function collectShapes(node, shapes, seen) {
@@ -307,30 +307,38 @@ constexpr const char *page_script = R"JS(
         }
       }
 
-      function applyTilesetColors() {
-        var shapes = [], changed = false;
-        var roots = document.querySelectorAll('GeoTiles');
+      function applyTilesetColors(index) {
+        var on = tilesetColors[index] !== false, shapes = [], changed = false;
+        var tileset = document.getElementById('tileset_' + index);
+        if (!tileset) {
+          return;
+        }
+        var seen = [];
+        var roots = tileset.querySelectorAll('GeoTiles');
         for (var r = 0; r < roots.length; r++) {
-          collectShapes(roots[r]._x3domNode, shapes, []);
+          collectShapes(roots[r]._x3domNode, shapes, seen);
+        }
+        if (roots.length === 0) {
+          collectShapes(tileset._x3domNode, shapes, seen);
         }
         for (var s = 0; s < shapes.length; s++) {
           var shape = shapes[s], material = shape._cf && shape._cf.appearance && shape._cf.appearance.node &&
                                             shape._cf.appearance.node._cf.material && shape._cf.appearance.node._cf.material.node;
           var geometry = shape._cf && shape._cf.geometry && shape._cf.geometry.node;
-          if (!material || !geometry || !material._vf || shape._colorsOn === tilesetColors) {
+          if (!material || !geometry || !material._vf || shape._colorsOn === on) {
             continue;
           }
           if (shape._colorsOn === undefined && geometry._hasColor !== true) {
             continue;   // a tile without vertex colors
           }
-          var gray = tilesetColors ? 1 : tilesetGray;
+          var gray = on ? 1 : tilesetGray;
           material._vf.baseColorFactor = new x3dom.fields.SFColorRGBA(gray, gray, gray, 1);
           material.fieldChanged('baseColorFactor');
-          geometry._hasColor = tilesetColors;
+          geometry._hasColor = on;
           shape._dirty.shader = true;
           shape._dirty.colors = true;
           geometry.invalidateVolume();
-          shape._colorsOn = tilesetColors;
+          shape._colorsOn = on;
           changed = true;
         }
         if (changed) {
@@ -341,20 +349,17 @@ constexpr const char *page_script = R"JS(
         }
       }
 
-      function setTilesetColors(on) {
-        tilesetColors = on;
-        // One setting for every tileset, so the checkboxes of a page with several agree.
-        var boxes = document.querySelectorAll('[id^=color-checkbox-]');
-        for (var b = 0; b < boxes.length; b++) {
-          boxes[b].checked = on;
-        }
-        applyTilesetColors();
+      function setTilesetColors(index, on) {
+        tilesetColors[index] = on;
+        applyTilesetColors(index);
       }
 
-      // Tiles come in as the view changes: the ones that arrive while the colors are off are made gray.
+      // Tiles come in as the view changes: the ones that arrive while a tileset's colors are off are made gray.
       setInterval(function () {
-        if (!tilesetColors) {
-          try { applyTilesetColors(); } catch (e) { }
+        for (var index in tilesetColors) {
+          if (tilesetColors[index] === false) {
+            try { applyTilesetColors(index); } catch (e) { }
+          }
         }
       }, 500);
 
@@ -1470,7 +1475,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                    << escape_html(model.label) << "</div>\n";
             if (model.height_colors) {
                 output << std::string(open_groups.size() * 2 + 12, ' ') << "<div style='margin-left:1.5em;'><input id='color-checkbox-" << i
-                       << "' type='checkbox' checked onclick='setTilesetColors(this.checked);'></input> color by height</div>\n";
+                       << "' type='checkbox' checked onclick='setTilesetColors(" << i << ", this.checked);'></input> color by height</div>\n";
             }
         }
         while (!open_groups.empty()) {
@@ -1506,7 +1511,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         if (model.height_colors) {
             output << "          <tr>\n"
                    << "            <td colspan='2' style='padding-left:1.5em;'>\n"
-                   << "              <input id='color-checkbox-" << i << "' type='checkbox' checked onclick='setTilesetColors(this.checked);'>\n"
+                   << "              <input id='color-checkbox-" << i << "' type='checkbox' checked onclick='setTilesetColors(" << i << ", this.checked);'>\n"
                    << "              </input> color by height\n"
                    << "            </td>\n"
                    << "          </tr>\n";

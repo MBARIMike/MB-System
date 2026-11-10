@@ -314,7 +314,7 @@ int main() {
         lifted_tileset.height_colors = true;
         X3DomWriterOptions colored = lifted;
         colored.models.back() = lifted_tileset;
-        ok &= check(contains(write_page(colored), "id='color-checkbox-1' type='checkbox' checked onclick='setTilesetColors(this.checked);'"), "a tileset with vertex colors has a checkbox that turns them off");
+        ok &= check(contains(write_page(colored), "id='color-checkbox-1' type='checkbox' checked onclick='setTilesetColors(1, this.checked);'"), "a tileset with vertex colors has a checkbox that turns them off");
 
         // --label-chunks: the outline of each chunk and its name, with a check box, lifted with the models.
         X3DomWriterOptions labeled = options;
