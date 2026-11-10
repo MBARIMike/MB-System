@@ -56,7 +56,7 @@ tile is one primitive.
 
 `3d-tiles-validator` reports no errors or warnings, only that it cannot validate the Draco extension. A mesh of 38 million vertices
 and 154 primitives (lidar of OceanImaging2018) gave 6 levels and 380 tiles, 255 MiB, in 13 minutes with a peak of 12 GB, before the Draco
-primitives were decoded on several threads. Loading the tileset in X3DOM's `GeoTileset` and CesiumJS has not been tried.
+primitives were decoded on several threads. The tilesets of the lidar and multibeam of that survey load in X3DOM's `GeoTileset` and refine as the camera approaches (with `--lift`); loading them in CesiumJS has not been tried.
 
 ## Limits
 
@@ -65,4 +65,4 @@ primitives were decoded on several threads. Loading the tileset in X3DOM's `GeoT
 - The tiles are in one frame for the whole tileset; a survey tens of kilometers across would need a frame (a `transform`) for each tile to
   keep the float32 coordinates fine.
 - The coarse levels are simplified by clustering vertices, not by edge collapse with an error measure, so thin features and sharp edges round off.
-- Only the CMake build.
+- The CMake and autotools builds have been tried (the autotools build in a scratch copy, with a regenerated `configure`).
