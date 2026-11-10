@@ -198,7 +198,7 @@ When reconstruction is chunked (see "Chunked Reconstruction"), `mesh.glb` is sti
 
 ### Draco compression
 
-The triangle meshes are written with Draco compression (the `KHR_draco_mesh_compression` extension of glTF, `extensionsRequired` in the file), with the code that `mbmesh` and `mbgrd2gltf` share, in `src/mbdraco` (the Draco encoder and the quantization, the options `--no-draco`, `--draco-precision` and `--draco-normal-bits`, the defaults, and the glTF primitive that is written, which `mbgrd2gltf` takes from here, so the two programs compress alike); CMake builds it as the library `mbdraco`, and a build without it (the autotools build) writes the arrays and says so in the log. The quantization of the positions is over the largest range of the three axes of a file, so the bits are chosen for each file from its range to give the step that `--draco-precision` asks for, which is the thing that the fixed 16 bits that `mbgrd2gltf` used to have could not do for a survey of kilometers: a chunk of 3 m takes 12 bits for a millimeter, a block of 120 m takes 17, and 16 bits over 1.5 km would be 2 cm. The normals go in an octahedral encoding with `--draco-normal-bits` bits. A file says what it was compressed with in `MB-System.content.compression` (`positionBits`, `positionStep` in meters and `normalBits`). Each mesh is decoded again right after it is encoded, to check it and to count what it holds, since Draco can make a vertex that touches the surface twice into two. On one chunk of 143,477 vertices at `-L 0.1` with a GeoOrigin, `mesh.glb` went from 6.8 MB to 0.66 MB (13 bits over 6.7 m, a step of 0.8 mm). A viewer needs a Draco decoder: the X3DOM builds that the viewer page loads have one (`x3dom-full.js` has `KHR_draco_mesh_compression` support and a WASM decoder), and CesiumJS, three.js and Babylon.js do. The extension is for triangles, so the point cloud (`pointcloud.glb`), the normal lines, the sensor positions and the track are written as arrays.
+The triangle meshes are written with Draco compression (the `KHR_draco_mesh_compression` extension of glTF, `extensionsRequired` in the file), with the code that `mbmesh` and `mbgrd2gltf` share, in `src/mbdraco` (the Draco encoder and the quantization, the options `--no-draco`, `--draco-precision` and `--draco-normal-bits`, the defaults, and the glTF primitive that is written, which `mbgrd2gltf` takes from here, so the two programs compress alike); CMake and autotools build it as the library `mbdraco` (`libmbdraco.la`), and a build without it writes the arrays and says so in the log. The quantization of the positions is over the largest range of the three axes of a file, so the bits are chosen for each file from its range to give the step that `--draco-precision` asks for, which is the thing that the fixed 16 bits that `mbgrd2gltf` used to have could not do for a survey of kilometers: a chunk of 3 m takes 12 bits for a millimeter, a block of 120 m takes 17, and 16 bits over 1.5 km would be 2 cm. The normals go in an octahedral encoding with `--draco-normal-bits` bits. A file says what it was compressed with in `MB-System.content.compression` (`positionBits`, `positionStep` in meters and `normalBits`). Each mesh is decoded again right after it is encoded, to check it and to count what it holds, since Draco can make a vertex that touches the surface twice into two. On one chunk of 143,477 vertices at `-L 0.1` with a GeoOrigin, `mesh.glb` went from 6.8 MB to 0.66 MB (13 bits over 6.7 m, a step of 0.8 mm). A viewer needs a Draco decoder: the X3DOM builds that the viewer page loads have one (`x3dom-full.js` has `KHR_draco_mesh_compression` support and a WASM decoder), and CesiumJS, three.js and Babylon.js do. The extension is for triangles, so the point cloud (`pointcloud.glb`), the normal lines, the sensor positions and the track are written as arrays.
 
 ### Optional Outputs
 
@@ -607,7 +607,7 @@ Known limitations:
 - The coarser levels of a tileset come from clustering the finished mesh (`mbglb2tiles`), not from reconstructing again from decimated points; `mbmesh --tileset` writes only the finest level. `mbglb2tiles` holds the whole mesh in memory (about 12 GB at its peak for a mesh of 38 million vertices, with the weld taking about 5 minutes and the first clustering about 2.4), so there is no out-of-core path from the chunk files.
 - A tileset has one frame, at its center, for all its tiles; a survey large enough that the Earth's curvature matters across it would need a frame for each tile.
 - The height colors are one table with the heights of the survey; there is no other colormap for a tileset, and no color from the data (backscatter, for example). The page's checkbox reaches the tiles through X3DOM's internal nodes, so a new X3DOM could break it.
-- The build is tested with CMake only; the autotools build has not been tried, and builds without Draco write uncompressed meshes.
+- The CMake and autotools builds have been tried, the autotools build from a regenerated `configure` in a scratch copy of the tree; the committed `Makefile.in` and `configure` have to be regenerated with automake 1.18.1. A build without Draco writes uncompressed meshes, and `mbglb2tiles` cannot read a Draco-compressed input then.
 - Reconstruction is a single end-to-end run; there is no reusable preprocessing artifact yet.
 - Decimation is available through `--decimate`, but remains off by default because it trades reconstruction detail for lower downstream cost.
 - Screened Poisson uses a regular grid, so memory per chunk grows with grid size; a survey of fewer soundings than `--spill-points` is held in memory.
@@ -626,7 +626,7 @@ Future work:
 - Improve normal estimation near boundaries and sharp orientation changes.
 - Clip support-trimmed boundary triangles instead of dropping them.
 - Add full CLI regression tests using small real or synthetic datalists.
-- Build and test the autotools build.
+- Regenerate the committed `Makefile.in` and `configure` for the autotools build.
 
 ## Source Layout
 
@@ -729,8 +729,10 @@ From the MB-System repository root:
 
 ```bash
 ./configure
-make mbmesh
+make -C src/mbdraco && make -C src/mbmesh && make -C src/mbglb2tiles
 ```
+
+`mbmesh` and `mbglb2tiles` link the Draco library of `src/mbdraco`, which is built first (a plain `make` does it in order). `make check` in each directory runs the unit tests.
 
 ## Poisson solvers
 

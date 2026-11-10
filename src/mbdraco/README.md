@@ -16,4 +16,4 @@ The positions of a mesh are quantized over the largest of the ranges of its thre
 - `draco/` - the Draco source (encoder and decoder), moved here from `src/mbgrd2gltf/draco`.
 - `test_mbdraco.cpp` - the test, built by CMake as `mbdraco_test_draco_mesh`.
 
-CMake builds the static library `mbdraco`; `mbmesh` and `mbgrd2gltf` link it, and the tinygltf headers are those that `mbgrd2gltf` holds. A build without the library (the autotools build of `mbmesh` compiles `draco_mesh.cpp` without `MBDRACO_WITH_DRACO`) has `available()` false and writes the arrays.
+CMake builds the static library `mbdraco`, and the autotools build (`Makefile.am` here) the convenience library `libmbdraco.la`, from the same sources; `mbmesh`, `mbglb2tiles` and `mbgrd2gltf` link it, and the tinygltf headers are those that `mbgrd2gltf` holds. A program that is built without the library (`draco_mesh.cpp` compiled without `MBDRACO_WITH_DRACO`) has `available()` false and writes the arrays.

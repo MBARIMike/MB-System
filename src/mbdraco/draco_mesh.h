@@ -20,8 +20,8 @@ struct Mesh;
 // The positions are quantized over the largest of the ranges of the three axes of each mesh, with the number of bits that makes
 // the step no coarser than the precision, so a small mesh gets few bits and a large one more, not a fixed number.
 //
-// The code is the Draco source in src/mbdraco/draco. A build that does not include it (MBDRACO_WITH_DRACO not defined, as the
-// autotools build of mbmesh is) has available() false, and the programs write meshes without compression.
+// The code is the Draco source in src/mbdraco/draco, which both the CMake and the autotools builds compile. A build that does not
+// include it (MBDRACO_WITH_DRACO not defined) has available() false, and the programs write meshes without compression.
 namespace mbdraco {
 
 constexpr double kDefaultPrecision = 0.001; // meters

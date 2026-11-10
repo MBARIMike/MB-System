@@ -140,15 +140,16 @@ int main() {
     check(write_mesh_glb_file(directory / "in.glb", ecef_offsets, &error, GlbContent{"mesh", "test"}, &groups), "writes a test GLB");
     GlbMesh read;
     check(read_mesh_glb(directory / "in.glb", &read, &error), "reads it");
-    check(read.has_center && std::fabs(read.center.x - frame.origin_ecef.x) < 1e-6 && read.primitives == 16 && read.draco_primitives == 16, "a center, and 16 Draco primitives");
+    check(read.has_center && std::fabs(read.center.x - frame.origin_ecef.x) < 1e-6 && read.primitives == 16 && read.draco_primitives == (mbdraco::available() ? 16 : 0),
+          "a center, and 16 primitives, Draco ones if this build has Draco");
     check(read.mesh.indices.size() == mesh.indices.size() && read.mesh.vertices.size() > mesh.vertices.size(), "all the triangles, with the vertices on the edges twice");
-    check(read.position_step > 0.0 && read.position_step < 0.002, "and the quantization step of the file");
+    check(mbdraco::available() ? (read.position_step > 0.0 && read.position_step < 0.002) : read.position_step == 0.0, "and the quantization step of the file, none without Draco");
     // The vertices come back to within the step of the originals once put in the local frame again, and welding makes the surface one again.
     for (Vec3 &vertex : read.mesh.vertices) {
         vertex = ecef_to_local(vertex + read.center, frame);
     }
     const std::size_t before = read.mesh.vertices.size();
-    const std::size_t welded = weld_coincident_vertices(&read.mesh, 2.0 * read.position_step);
+    const std::size_t welded = weld_coincident_vertices(&read.mesh, read.position_step > 0.0 ? 2.0 * read.position_step : 0.001);
     check(welded > 0 && read.mesh.vertices.size() < before && read.mesh.vertices.size() == mesh.vertices.size(), "welding gives back the vertices of the surface");
 
     // A GLB that is not from the programs is refused, and so is a missing one.

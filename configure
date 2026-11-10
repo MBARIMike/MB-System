@@ -3410,7 +3410,7 @@ printf "%s\n" "        --enable-rovtrn       - enable building terrain relative 
 printf "%s\n" "        --enable-deprecated   - enable building deprecated programs (optional)"
 printf "%s\n" "        --disable-mbtools     - disable building graphical tools (use with --enable-mbtrn and --enable-mbtnav)"
 printf "%s\n" "        --enable-hardening    - Enable compiler and linker options to frustrate memory corruption exploits  (e.g. -fPIE and -pie) (optional)"
-printf "%s\n" "        --enable-test         - Enable building unit tests in test/ and third-party/"
+printf "%s\n" "        --enable-test         - Enable building the Python CLI smoke tests in test/ (the GoogleTest-based test/mbio suite is CMake-only)"
 printf "%s\n" "        --enable-qt           - Enable building graphical tools using the Qt5 framework (Not functional yet)"
 printf "%s\n" "        --with-debug          - Set compiler flags to allow full debugging"
 printf "%s\n" " "
@@ -27437,7 +27437,7 @@ printf "%s\n" "#define MBSYSTEM_OTPS_LOCATION \"$OTPS_DIR\"" >>confdefs.h
 printf "%s\n" " "
 printf "%s\n" "About to create Makefiles..."
 
-ac_config_files="$ac_config_files Makefile src/Makefile src/mbio/Makefile src/surf/Makefile src/bsio/Makefile src/mbbitpack/Makefile src/mbaux/Makefile src/utilities/Makefile src/gmt/Makefile src/macros/Makefile src/otps/Makefile src/mbgrd2gltf/Makefile src/man/Makefile src/man/man1/Makefile src/man/man3/Makefile src/html/Makefile src/share/Makefile"
+ac_config_files="$ac_config_files Makefile src/Makefile src/mbio/Makefile src/surf/Makefile src/bsio/Makefile src/mbbitpack/Makefile src/mbaux/Makefile src/utilities/Makefile src/gmt/Makefile src/macros/Makefile src/otps/Makefile src/mbdraco/Makefile src/mbgrd2gltf/Makefile src/mbmesh/Makefile src/mbglb2tiles/Makefile src/man/Makefile src/man/man1/Makefile src/man/man3/Makefile src/html/Makefile src/share/Makefile"
 
 if test "$enable_deprecated" = "yes" ; then
     ac_config_files="$ac_config_files src/deprecated/Makefile"
@@ -27482,7 +27482,7 @@ if test "$build_qttools" = "yes" ; then
 
 fi
 if test "$build_test" = "yes" ; then
-    ac_config_files="$ac_config_files third_party/Makefile third_party/googletest/Makefile third_party/googlemock/Makefile test/Makefile test/mbio/Makefile test/utilities/Makefile"
+                ac_config_files="$ac_config_files test/Makefile test/utilities/Makefile"
 
     if test "$enable_deprecated" = "yes" ; then
         ac_config_files="$ac_config_files test/deprecated/Makefile"
@@ -28639,7 +28639,10 @@ do
     "src/gmt/Makefile") CONFIG_FILES="$CONFIG_FILES src/gmt/Makefile" ;;
     "src/macros/Makefile") CONFIG_FILES="$CONFIG_FILES src/macros/Makefile" ;;
     "src/otps/Makefile") CONFIG_FILES="$CONFIG_FILES src/otps/Makefile" ;;
+    "src/mbdraco/Makefile") CONFIG_FILES="$CONFIG_FILES src/mbdraco/Makefile" ;;
     "src/mbgrd2gltf/Makefile") CONFIG_FILES="$CONFIG_FILES src/mbgrd2gltf/Makefile" ;;
+    "src/mbmesh/Makefile") CONFIG_FILES="$CONFIG_FILES src/mbmesh/Makefile" ;;
+    "src/mbglb2tiles/Makefile") CONFIG_FILES="$CONFIG_FILES src/mbglb2tiles/Makefile" ;;
     "src/man/Makefile") CONFIG_FILES="$CONFIG_FILES src/man/Makefile" ;;
     "src/man/man1/Makefile") CONFIG_FILES="$CONFIG_FILES src/man/man1/Makefile" ;;
     "src/man/man3/Makefile") CONFIG_FILES="$CONFIG_FILES src/man/man3/Makefile" ;;
@@ -28663,11 +28666,7 @@ do
     "src/qt-mbgrdviz/Makefile") CONFIG_FILES="$CONFIG_FILES src/qt-mbgrdviz/Makefile" ;;
     "src/qt-mbgrdviz-2/Makefile") CONFIG_FILES="$CONFIG_FILES src/qt-mbgrdviz-2/Makefile" ;;
     "src/qt-mbgrdviz-3/Makefile") CONFIG_FILES="$CONFIG_FILES src/qt-mbgrdviz-3/Makefile" ;;
-    "third_party/Makefile") CONFIG_FILES="$CONFIG_FILES third_party/Makefile" ;;
-    "third_party/googletest/Makefile") CONFIG_FILES="$CONFIG_FILES third_party/googletest/Makefile" ;;
-    "third_party/googlemock/Makefile") CONFIG_FILES="$CONFIG_FILES third_party/googlemock/Makefile" ;;
     "test/Makefile") CONFIG_FILES="$CONFIG_FILES test/Makefile" ;;
-    "test/mbio/Makefile") CONFIG_FILES="$CONFIG_FILES test/mbio/Makefile" ;;
     "test/utilities/Makefile") CONFIG_FILES="$CONFIG_FILES test/utilities/Makefile" ;;
     "test/deprecated/Makefile") CONFIG_FILES="$CONFIG_FILES test/deprecated/Makefile" ;;
 
