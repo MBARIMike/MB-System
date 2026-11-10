@@ -85,6 +85,9 @@ struct X3DomModel {
     // all of them are where the tileset is. A tileset itself is not put in a GeoTransform: GeoTileset takes the height of its
     // camera in its own coordinates, which the transform would take the lift off again.
     double lift_meters = 0.0;
+    // For a tileset: its tiles have a color for each vertex (heightColors in its extras), and the page offers a checkbox that turns
+    // the colors off, which shows the tiles in one gray.
+    bool height_colors = false;
 };
 
 // A chunk of the reconstruction, to be drawn in the page: its outline as a closed line of four corners, and its file

@@ -310,6 +310,11 @@ int main() {
                     "Copy GeoViewpoint takes the lift off");
         ok &= check(contains(write_page(options), "var liftMeters = 0.000;") && !contains(write_page(options), "<GeoTransform"),
                     "without a lift the page has plain transforms");
+        ok &= check(!contains(lifted_page, "id='color-checkbox-") && contains(lifted_page, "function setTilesetColors"), "a tileset without vertex colors has no color checkbox");
+        lifted_tileset.height_colors = true;
+        X3DomWriterOptions colored = lifted;
+        colored.models.back() = lifted_tileset;
+        ok &= check(contains(write_page(colored), "id='color-checkbox-1' type='checkbox' checked onclick='setTilesetColors(this.checked);'"), "a tileset with vertex colors has a checkbox that turns them off");
 
         // --label-chunks: the outline of each chunk and its name, with a check box, lifted with the models.
         X3DomWriterOptions labeled = options;

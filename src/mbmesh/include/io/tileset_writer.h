@@ -46,6 +46,10 @@ struct TilesetTile {
 [[nodiscard]] CoordinateFrame lifted_frame(const CoordinateFrame &frame, double lift);
 
 // Records the lift in the run metadata that is the tileset's extras, as georeference.liftMeters.
+// Records in the metadata that the tiles are colored by height, with the heights (ellipsoid height = bounds + height_offset) that the
+// color changes between, for the page to say so and to offer the color off.
+void set_metadata_height_colors(MetaValue *metadata, double height_offset, const std::vector<double> &bounds);
+
 void set_metadata_lift(MetaValue *metadata, double lift);
 
 // mbmesh --tileset and mbglb2tiles write the same layout into the same directory, tileset/ beside mesh.glb: tileset.json and a directory

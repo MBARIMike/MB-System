@@ -5,7 +5,7 @@ reconstructing anything: the mesh is read, coarsened level by level, and cut int
 
 ```
 mbglb2tiles -I mesh.glb [-O outputdir] [--tile-size meters] [--weld-tolerance meters] [--threads n]
-            [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [--html [--x3dom-url url] [--sse pixels]] [--lift[=meters]] [-V]
+            [--no-draco] [--draco-precision meters] [--draco-normal-bits n] [--html [--x3dom-url url] [--sse pixels]] [--lift[=meters]] [--no-colors] [-V]
 ```
 
 The output directory (`tileset` beside the input by default, where `mbmesh --tileset` writes its tileset) gets `tileset.json` and one directory `L<level>` of tile GLBs
@@ -17,6 +17,8 @@ With `--html` it also writes a viewer page, `<outputdir>.html` beside the output
 `GeoTileset` node (a GeoOrigin at the origin of the frame, an overview viewpoint from above, the processing log in `mbglb2tiles.log` in the
 output directory), and prints the command to serve and view it. `--x3dom-url` names the X3DOM script, which must be a build that has `GeoTileset`;
 `--sse` is the `maximumScreenSpaceError` of that node, 1 pixel by default (X3DOM's own 8 refines tiles of centimeter errors only within a few meters).
+
+Tiles are colored by height unless `--no-colors`: every vertex has a `COLOR_0` (bytes, Draco-compressed with the rest) from the Haxby table over the heights of the whole mesh, so every tile and level agrees, with a white base color so the colors show unchanged. `tileset.json` records the bounds as `heightColors` in its extras, and the `--html` page has a "color by height" checkbox that turns the vertex colors off, which shows the tiles in gray.
 
 `--lift` puts the tileset above the ellipsoid, in the transform of `tileset.json`, and works as `mbmesh --geoorigin` does: without it the tileset has the true heights (and a warning says so if any are below the ellipsoid); with `--lift` alone the lift is the default below; with `--lift=900` it is that many meters. `GeoTileset` takes the height of the camera as at least 1 m,
 so a camera below the ellipsoid, as over the seafloor, never gets close enough to refine a tile and only the root tile loads. The default lift is enough to

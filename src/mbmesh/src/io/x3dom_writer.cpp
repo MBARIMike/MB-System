@@ -279,6 +279,85 @@ constexpr const char *page_script = R"JS(
         document.getElementById('switch_' + index).setAttribute('whichChoice', on ? 0 : -1);
       }
 
+      // The colors of the tilesets' tiles, which have one for each vertex (COLOR_0) and a white base color. X3DOM's GeoTileset loads the
+      // tiles itself, as nodes that are not in the page, so they are reached through the GeoTiles node: with the colors off, the vertex
+      // colors are not used and the base color is the gray that MeshLab shows a mesh in. Tiles that are loaded later, as the view
+      // gets closer, are done as they appear.
+      var tilesetColors = true;
+      var tilesetGray = 0.75;   // 192 of 255, the gray that MeshLab shows a mesh in
+
+      function collectShapes(node, shapes, seen) {
+        if (!node || seen.indexOf(node) >= 0) {
+          return;
+        }
+        seen.push(node);
+        if (node.typeName && node.typeName() === 'Shape') {
+          shapes.push(node);
+          return;
+        }
+        var children = node._childNodes || [];
+        for (var i = 0; i < children.length; i++) {
+          collectShapes(children[i], shapes, seen);
+        }
+        var fields = node._cf || {};
+        for (var name in fields) {
+          if (fields[name] && fields[name].node) {
+            collectShapes(fields[name].node, shapes, seen);
+          }
+        }
+      }
+
+      function applyTilesetColors() {
+        var shapes = [], changed = false;
+        var roots = document.querySelectorAll('GeoTiles');
+        for (var r = 0; r < roots.length; r++) {
+          collectShapes(roots[r]._x3domNode, shapes, []);
+        }
+        for (var s = 0; s < shapes.length; s++) {
+          var shape = shapes[s], material = shape._cf && shape._cf.appearance && shape._cf.appearance.node &&
+                                            shape._cf.appearance.node._cf.material && shape._cf.appearance.node._cf.material.node;
+          var geometry = shape._cf && shape._cf.geometry && shape._cf.geometry.node;
+          if (!material || !geometry || !material._vf || shape._colorsOn === tilesetColors) {
+            continue;
+          }
+          if (shape._colorsOn === undefined && geometry._hasColor !== true) {
+            continue;   // a tile without vertex colors
+          }
+          var gray = tilesetColors ? 1 : tilesetGray;
+          material._vf.baseColorFactor = new x3dom.fields.SFColorRGBA(gray, gray, gray, 1);
+          material.fieldChanged('baseColorFactor');
+          geometry._hasColor = tilesetColors;
+          shape._dirty.shader = true;
+          shape._dirty.colors = true;
+          geometry.invalidateVolume();
+          shape._colorsOn = tilesetColors;
+          changed = true;
+        }
+        if (changed) {
+          var runtime = document.getElementById('x3dElement').runtime;
+          if (runtime && runtime.canvas && runtime.canvas.doc) {
+            runtime.canvas.doc.needRender = true;
+          }
+        }
+      }
+
+      function setTilesetColors(on) {
+        tilesetColors = on;
+        // One setting for every tileset, so the checkboxes of a page with several agree.
+        var boxes = document.querySelectorAll('[id^=color-checkbox-]');
+        for (var b = 0; b < boxes.length; b++) {
+          boxes[b].checked = on;
+        }
+        applyTilesetColors();
+      }
+
+      // Tiles come in as the view changes: the ones that arrive while the colors are off are made gray.
+      setInterval(function () {
+        if (!tilesetColors) {
+          try { applyTilesetColors(); } catch (e) { }
+        }
+      }, 500);
+
       // Makes one of the page's viewpoints the one in use.
       function bindViewpoint(id) {
         var viewpoint = document.getElementById(id);
@@ -511,6 +590,13 @@ double read_tileset_lift(const std::filesystem::path &path) {
     return end != text.c_str() + colon + 1 && std::isfinite(value) ? value : 0.0;
 }
 
+static // Whether a tileset.json written by mbmesh or mbglb2tiles says in its extras that its tiles are colored by height.
+bool read_tileset_height_colors(const std::filesystem::path &path) {
+    std::ifstream in(path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return text.find("\"heightColors\"") != std::string::npos;
+}
+
 std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory, bool tileset,
                                            bool page_in_output_directory) {
     std::vector<X3DomModel> models;
@@ -529,6 +615,7 @@ std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root
         model.is_tileset = true;
         model.max_screen_space_error = 1.0;
         model.lift_meters = read_tileset_lift(output_directory / "tileset" / "tileset.json");
+        model.height_colors = read_tileset_height_colors(output_directory / "tileset" / "tileset.json");
         models.push_back(model);
     }
 
@@ -764,6 +851,7 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
         if (entry.is_tileset) {
             model.max_screen_space_error = 1.0;
             model.lift_meters = read_tileset_lift(entry.path);
+            model.height_colors = read_tileset_height_colors(entry.path);
         }
         model.visible = !entry.is_tileset && entry.name == "track.glb";
         models.push_back(model);
@@ -1380,6 +1468,10 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
             output << std::string(open_groups.size() * 2 + 12, ' ') << "<div><input id='model-checkbox-" << i << "' type='checkbox'"
                    << (model.visible ? " checked" : "") << " onclick='toggleModel(" << i << ", this.checked);'></input> "
                    << escape_html(model.label) << "</div>\n";
+            if (model.height_colors) {
+                output << std::string(open_groups.size() * 2 + 12, ' ') << "<div style='margin-left:1.5em;'><input id='color-checkbox-" << i
+                       << "' type='checkbox' checked onclick='setTilesetColors(this.checked);'></input> color by height</div>\n";
+            }
         }
         while (!open_groups.empty()) {
             output << std::string(open_groups.size() * 2 + 12, ' ') << "</div></details>\n";
@@ -1411,6 +1503,14 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                << "              </input> " << escape_html(model.label) << "\n"
                << "            </td>\n"
                << "          </tr>\n";
+        if (model.height_colors) {
+            output << "          <tr>\n"
+                   << "            <td colspan='2' style='padding-left:1.5em;'>\n"
+                   << "              <input id='color-checkbox-" << i << "' type='checkbox' checked onclick='setTilesetColors(this.checked);'>\n"
+                   << "              </input> color by height\n"
+                   << "            </td>\n"
+                   << "          </tr>\n";
+        }
     }
 
     // The three buttons are in one row, in one cell so that the table keeps its two columns. The status message is

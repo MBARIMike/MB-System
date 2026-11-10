@@ -610,6 +610,7 @@ int main(int argc, char **argv) {
     // and tileset.json, whose root transform is that frame in ECEF. It does not depend on the GeoOrigin.
     std::vector<TilesetTile> tileset_tiles;
     MetaValue tileset_metadata;
+    std::vector<double> tileset_color_bounds;   // the heights the colors of the tiles change between, empty without colors
     const std::filesystem::path tileset_directory = options.output_directory / "tileset";
     if (options.write_tileset) {
         const CoordinateFrame &frame = preprocessed.read_result.frame;
@@ -624,6 +625,11 @@ int main(int argc, char **argv) {
         tileset_run.center_latitude = frame.origin.latitude;
         tileset_run.center_height = frame.origin.elevation;
         tileset_metadata = run_metadata(tileset_run);
+        if (options.tileset_colors) {
+            const Bounds3D &survey = preprocessed.metadata.bounds;
+            tileset_color_bounds = haxby_height_bounds(frame.origin.elevation + survey.min.z, frame.origin.elevation + survey.max.z);
+            set_metadata_height_colors(&tileset_metadata, 0.0, tileset_color_bounds);
+        }
 
         std::error_code tileset_error;
         const std::size_t removed = remove_previous_tileset(tileset_directory);
@@ -645,7 +651,14 @@ int main(int argc, char **argv) {
         std::string tile_error;
         GlbContent content{"tileset_tile", "Surface of one tile of the 3D Tiles tileset, in the east-north-up frame at the center, Y-up", true, i, j};
         content.metadata = &tileset_metadata;
-        if (!write_mesh_glb_file(tileset_directory / tile.uri, tileset_content_mesh(local_mesh), &tile_error, content)) {
+        Mesh colored = tileset_content_mesh(local_mesh);
+        if (!tileset_color_bounds.empty()) {
+            // Colored by the height of each vertex, which is the local up of the tile (its z, before the Y-up of the file) over the frame's height.
+            Mesh by_height = local_mesh;
+            color_mesh_by_height(&by_height, preprocessed.read_result.frame.origin.elevation, tileset_color_bounds);
+            colored.colors = std::move(by_height.colors);
+        }
+        if (!write_mesh_glb_file(tileset_directory / tile.uri, colored, &tile_error, content)) {
             LOG_WARN(tile_error);
             return;
         }
@@ -1165,6 +1178,7 @@ Options parse_options(int argc, char **argv) {
         {"poisson-iterations", required_argument, nullptr, 1022},
         {"geoviewpoint", required_argument, nullptr, 1018},
         {"lift", optional_argument, nullptr, 1023},
+        {"no-colors", no_argument, nullptr, 1040},
         {"pointcloud-colormap", required_argument, nullptr, 1024},
         {"spill-points", required_argument, nullptr, 1025},
         {"void-size", required_argument, nullptr, 1026},
@@ -1434,6 +1448,10 @@ Options parse_options(int argc, char **argv) {
             break;
         }
 
+        case 1040:
+            options.tileset_colors = false;
+            break;
+
         case 1023: {
             options.tileset_lift_requested = true;
             if (optarg == nullptr) {
@@ -1585,6 +1603,9 @@ void print_usage() {
     std::cout << "                               10 m above the ellipsoid, to a meter, if it is lower; a value must be attached:\n";
     std::cout << "                               --lift=900. Without --lift the tileset has the true heights. Copy GeoViewpoint takes\n";
     std::cout << "                               the lift off again\n";
+    std::cout << "      --no-colors              With --tileset, do not color the tiles by height. By default every vertex has a color\n";
+    std::cout << "                               (COLOR_0) from the Haxby table over the heights of the whole survey, so all tiles agree;\n";
+    std::cout << "                               the page can turn the colors off\n";
     std::cout << "      --chunk-size <meters>    Reconstruct in square chunks of about this size, writing chunks/chunk_I_J.glb\n";
     std::cout << "                               plus the merged mesh.glb; chunking turns on automatically for\n";
     std::cout << "                               surveys too large for one Poisson grid\n";

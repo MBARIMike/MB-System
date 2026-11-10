@@ -100,6 +100,43 @@ int main() {
         check(local && vertex_count > mesh.vertices.size() && vertex_count < 2 * mesh.vertices.size(), "each with its own vertices, those on the edges in two");
     }
 
+    // Colored by height: the Haxby table over the heights of the surface, COLOR_0 on every primitive and a white base color.
+    {
+        const std::vector<double> bounds = haxby_height_bounds(-0.3, 0.3);
+        check(bounds.size() == 11, "the Haxby bounds are 11 heights");
+        Mesh colored = mesh;
+        color_mesh_by_height(&colored, 0.0, bounds);
+        check(colored.colors.size() == 3 * mesh.vertices.size(), "color_mesh_by_height gives three bytes to a vertex");
+        check(write_mesh_glb_file(directory / "colored_plain.glb", colored, &error, GlbContent(), &groups), "writes colored blocks without compression");
+        tinygltf::Model model;
+        tinygltf::TinyGLTF loader;
+        std::string load_error, warning;
+        check(loader.LoadBinaryFromFile(&model, &load_error, &warning, (directory / "colored_plain.glb").string()), "the colored file loads");
+        bool all = !model.meshes.empty();
+        for (const tinygltf::Primitive &primitive : model.meshes[0].primitives) {
+            const auto found = primitive.attributes.find("COLOR_0");
+            all = all && found != primitive.attributes.end() && model.accessors[found->second].count == model.accessors[primitive.attributes.at("POSITION")].count &&
+                  model.accessors[found->second].componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE && model.accessors[found->second].normalized;
+        }
+        check(all, "every primitive has COLOR_0 for each vertex, as normalized bytes");
+        check(model.materials[0].pbrMetallicRoughness.baseColorFactor == std::vector<double>({1.0, 1.0, 1.0, 1.0}), "the base color is white");
+        if (mbdraco::available()) {
+            set_glb_compression(mbdraco::Settings());
+            check(write_mesh_glb_file(directory / "colored_draco.glb", colored, &error, GlbContent(), &groups), "writes colored blocks with compression");
+            mbdraco::Settings off;
+            off.enabled = false;
+            set_glb_compression(off);
+            tinygltf::Model packed_model;
+            check(loader.LoadBinaryFromFile(&packed_model, &load_error, &warning, (directory / "colored_draco.glb").string()), "the colored Draco file loads");
+            bool draco_all = !packed_model.meshes.empty();
+            for (const tinygltf::Primitive &primitive : packed_model.meshes[0].primitives) {
+                const auto extension = primitive.extensions.find("KHR_draco_mesh_compression");
+                draco_all = draco_all && extension != primitive.extensions.end() && extension->second.Get("attributes").Has("COLOR_0") && primitive.attributes.count("COLOR_0") == 1;
+            }
+            check(draco_all, "every compressed primitive has COLOR_0 in its Draco stream");
+        }
+    }
+
     if (!mbdraco::available()) {
         std::printf("this build has no Draco: the compressed case is not tested\n");
         return failures == 0 ? 0 : 1;

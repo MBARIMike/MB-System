@@ -5,7 +5,7 @@ mbglb2tiles \- make an OGC 3D Tiles tileset of levels of detail from a GLB mesh 
 \fBmbglb2tiles\fR \fB-I\fI mesh.glb\fR [\fB-O\fI outputdir\fR]
 [\fB--tile-size\fI meters\fR] [\fB--weld-tolerance\fI meters\fR] [\fB--threads\fI n\fR]
 [\fB--no-draco\fR] [\fB--draco-precision\fI meters\fR] [\fB--draco-normal-bits\fI n\fR]
-[\fB--html\fR [\fB--x3dom-url\fI url\fR] [\fB--sse\fI pixels\fR]] [\fB--lift\fR[=\fImeters\fR]] [\fB-V\fR] [\fB-h\fR]
+[\fB--html\fR [\fB--x3dom-url\fI url\fR] [\fB--sse\fI pixels\fR]] [\fB--lift\fR[=\fImeters\fR]] [\fB--no-colors\fR] [\fB-V\fR] [\fB-h\fR]
 .SH DESCRIPTION
 .LP
 \fBmbglb2tiles\fR turns a triangle mesh in a binary glTF (GLB) file written by \fBmbmesh\fR or
@@ -92,6 +92,9 @@ the command that serves it (\fBpython3 -m http.server\fR), and does not start it
 .B \--x3dom-url\fI url\fR
 The X3DOM script that the \fB--html\fR page loads (default https://www.x3dom.org/x3dom/dist/x3dom-full.js). A GeoTileset needs a build of X3DOM
 that has it, which that one may not.
+.TP
+.B \--no-colors
+Do not color the tiles by height. By default every vertex has a color (\fBCOLOR_0\fR) from the Haxby table over the heights of the whole mesh, so that all tiles and levels agree, with a white base color; \fBtileset.json\fR records the bounds as \fBheightColors\fR, and the \fB--html\fR page has a "color by height" checkbox that turns the colors off, which shows the tiles in gray.
 .TP
 .B \--lift\fR[=\fImeters\fR]
 Put the tileset above the ellipsoid, along the local vertical, in the transform of \fBtileset.json\fR. As \fB--geoorigin\fR of \fBmbmesh\fR does, without the option there is no lift and the tileset has the true heights (a warning says so if any are below the ellipsoid), the option alone takes the default below, and a value must be attached, as in \fB--lift=900\fR. X3DOM's GeoTileset takes the

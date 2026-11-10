@@ -41,6 +41,13 @@ void set_glb_compression(const mbdraco::Settings &settings);
     const GlbContent &content = GlbContent(),
     const std::vector<std::uint32_t> *triangle_groups = nullptr);
 
+// Colors the vertices of a mesh by height, for tiles: with the Haxby table, the color changing linearly between the bounds (11
+// heights, from haxby_height_bounds), at a height of the vertex's z plus height_offset. The bounds come from the heights of the whole
+// survey, so that every tile and every level has the same colors. write_mesh_glb_file then writes them as COLOR_0 (red, green, blue
+// bytes, and Draco-compressed with the rest), with a white base color so that they show as they are.
+[[nodiscard]] std::vector<double> haxby_height_bounds(double minimum, double maximum);
+void color_mesh_by_height(Mesh *mesh, double height_offset, const std::vector<double> &bounds);
+
 // How the points of a point cloud are colored by height: with the Haxby color table that mbm_grdplot uses by default, 11
 // colors from dark blue to white, changing linearly between 11 heights. HaxbyLinear is "mbm_grdplot -G5": the heights
 // are equally spaced, at rounded values chosen from the range. HaxbyEqualized is "mbm_grdplot -G5 -S": the heights

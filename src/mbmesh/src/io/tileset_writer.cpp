@@ -112,6 +112,7 @@ Mesh tileset_content_mesh(const Mesh &local_mesh) {
     for (const Vec3 &normal : local_mesh.normals) {
         result.normals.push_back(Vec3(normal.x, normal.z, -normal.y));
     }
+    result.colors = local_mesh.colors;
     result.indices = local_mesh.indices;
     return result;
 }
@@ -158,6 +159,18 @@ void set_metadata_lift(MetaValue *metadata, double lift) {
             member.second.set("liftMeters", MetaValue::from_number(lift));
         }
     }
+}
+
+void set_metadata_height_colors(MetaValue *metadata, double height_offset, const std::vector<double> &bounds) {
+    MetaValue colors = MetaValue::make_object();
+    colors.set("colormap", MetaValue::from_string("Haxby"));
+    colors.set("by", MetaValue::from_string("ellipsoid height"));
+    MetaValue heights = MetaValue::make_array();
+    for (const double bound : bounds) {
+        heights.add(MetaValue::from_number(bound + height_offset));
+    }
+    colors.set("boundsMeters", std::move(heights));
+    metadata->set("heightColors", std::move(colors));
 }
 
 std::size_t remove_previous_tileset(const std::filesystem::path &directory) {

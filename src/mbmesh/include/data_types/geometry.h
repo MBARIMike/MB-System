@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "../math/vec3.h"
@@ -183,5 +184,6 @@ struct VectorGrid3D {
 struct Mesh {
     std::vector<Vec3> vertices;
     std::vector<Vec3> normals;
+    std::vector<std::uint8_t> colors;   // red, green, blue bytes for each vertex, or none
     std::vector<unsigned int> indices;
 };

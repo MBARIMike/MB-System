@@ -115,6 +115,9 @@ heights chosen from the range, as \fBmbm_grdplot -G5\fR does; \fBequalized\fR, s
 numbers of points, as \fBmbm_grdplot -G5 -S\fR does; or \fBnone\fR, one orange. The heights the color
 changes between are in the description of the file's MB-System.content metadata.
 .TP
+.B \-\-no\-colors
+With \fB\-\-tileset\fR, do not color the tiles by height. By default every vertex has a color (\fBCOLOR_0\fR) from the Haxby table over the heights of the whole survey, so that all tiles agree, with a white base color; \fBtileset.json\fR records the bounds as \fBheightColors\fR, and the page of \fB\-\-html\fR has a "color by height" checkbox that turns the colors off, which shows the tiles in gray.
+.TP
 .B \-\-lift\fR[=\fIMETERS\fR]
 With \fB\-\-tileset\fR, lift the tileset above the ellipsoid along the local vertical, in the
 transform of \fBtileset.json\fR. As \fB\-\-geoorigin\fR works, without the option the tileset has the true heights (a warning says so

@@ -45,6 +45,7 @@ struct Encoded {
     std::vector<unsigned char> data;   // the compressed mesh, to be the content of a buffer view
     int position_id = 0;               // the unique ids of the attributes in the compressed mesh, as the extension names them
     int normal_id = -1;                // -1 for a mesh without normals
+    int color_id = -1;                 // -1 for a mesh without colors
     std::size_t point_count = 0;       // what the compressed mesh decodes to, which can differ from what was encoded
     std::size_t face_count = 0;        // (a vertex that touches the surface twice is made two, and a degenerate triangle goes)
 };
@@ -64,8 +65,10 @@ struct Encoded {
 // the positions in position_bits bits (2 to 30) over the largest of the ranges of the three axes, and the normals in
 // normal_bits bits each. The result is decoded again to check it, and to count what it holds. Returns false and says why in
 // *error if it cannot.
+// colors, if not null, are three bytes (red, green, blue) for each vertex, written without quantization.
 [[nodiscard]] bool encode(const std::vector<float> &positions, const std::vector<float> *normals, const std::vector<std::uint32_t> &indices,
-                          int position_bits, int normal_bits, Encoded *result, std::string *error);
+                          int position_bits, int normal_bits, Encoded *result, std::string *error,
+                          const std::vector<std::uint8_t> *colors = nullptr);
 
 // The positions and faces of a compressed mesh, for tests: three floats for each point, three indices for each face.
 [[nodiscard]] bool decode(const std::vector<unsigned char> &data, std::vector<float> *positions, std::vector<std::uint32_t> *indices, std::string *error);
@@ -78,6 +81,6 @@ struct Encoded {
 // reason in *reason, if it cannot, and the caller writes the arrays.
 [[nodiscard]] bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<unsigned char> *buffer, const std::vector<float> &positions,
                                  const std::vector<float> *normals, const std::vector<std::uint32_t> &indices, const Settings &settings, int material,
-                                 Compression *used, std::string *reason);
+                                 Compression *used, std::string *reason, const std::vector<std::uint8_t> *colors = nullptr);
 
 } // namespace mbdraco

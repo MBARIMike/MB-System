@@ -69,6 +69,7 @@ struct Options {
     bool lift_given = false;         // with a value
     double sse = 1.0;                // the maximumScreenSpaceError of the page's GeoTileset, in pixels
     bool sse_given = false;
+    bool colors = true;              // the tiles are colored by height, unless --no-colors
 };
 
 struct TileRecord {
@@ -98,6 +99,8 @@ void print_usage() {
         "      --sse <pixels>           With --html, the maximumScreenSpaceError of the page's GeoTileset: a tile is replaced by its children when\n"
         "                               its geometric error would show larger than this [1; X3DOM's own default is 8, too coarse for tiles of\n"
         "                               centimeter errors]\n"
+        "      --no-colors              Do not color the tiles by height. By default every vertex has a color (COLOR_0) from the Haxby table\n"
+        "                               over the heights of the whole mesh, so that all tiles and levels agree; the page can turn the colors off\n"
         "      --no-draco               Write the tiles as arrays [compressed with Draco]\n"
         "      --draco-precision <m>    With Draco, keep positions to this many meters [0.001]\n"
         "      --draco-normal-bits <n>  With Draco, the bits of each normal, 2-30 [10]\n"
@@ -131,6 +134,7 @@ int main(int argc, char **argv) {
         {"x3dom-url", required_argument, nullptr, 1007},
         {"lift", optional_argument, nullptr, 1008},
         {"sse", required_argument, nullptr, 1009},
+        {"no-colors", no_argument, nullptr, 1010},
         {"no-draco", no_argument, nullptr, 1003},
         {"draco-precision", required_argument, nullptr, 1004},
         {"draco-normal-bits", required_argument, nullptr, 1005},
@@ -168,6 +172,9 @@ int main(int argc, char **argv) {
             break;
         case 1007:
             options.x3dom_url = optarg;
+            break;
+        case 1010:
+            options.colors = false;
             break;
         case 1008: {
             options.lift_requested = true;
@@ -410,6 +417,12 @@ int main(int argc, char **argv) {
                            (options.lift != 0.0 ? ", so every height in the tileset is that much more than the true one" : ""));
     MetaValue metadata = run_metadata(run);
     set_metadata_lift(&metadata, options.lift);
+    std::vector<double> color_bounds;   // the heights the colors change between, empty without colors
+    if (options.colors) {
+        color_bounds = haxby_height_bounds(frame.origin.elevation + minimum[2], frame.origin.elevation + maximum[2]);
+        set_metadata_height_colors(&metadata, 0.0, color_bounds);
+        LOG_INFO("[colors]", "tiles colored by height with the Haxby table over " + std::to_string(color_bounds.front()) + " to " + std::to_string(color_bounds.back()) + " m (--no-colors turns it off)");
+    }
     set_glb_compression(options.draco);
 
     std::error_code directory_error;
@@ -460,7 +473,13 @@ int main(int argc, char **argv) {
                 GlbContent content{"tileset_tile", "Level " + std::to_string(level) + " of " + std::to_string(top) + " of the tileset, in the east-north-up frame at the center, Y-up", true, tile.i, tile.j};
                 content.metadata = &metadata;
                 std::string tile_error;
-                if (!write_mesh_glb_file(options.output / record.uri, tileset_content_mesh(tile.mesh), &tile_error, content)) {
+                Mesh content_mesh = tileset_content_mesh(tile.mesh);
+                if (!color_bounds.empty()) {
+                    Mesh by_height = tile.mesh;
+                    color_mesh_by_height(&by_height, frame.origin.elevation, color_bounds);
+                    content_mesh.colors = std::move(by_height.colors);
+                }
+                if (!write_mesh_glb_file(options.output / record.uri, content_mesh, &tile_error, content)) {
                     std::lock_guard<std::mutex> lock(error_mutex);
                     LOG_ERROR(tile_error);
                     failed = true;
@@ -587,6 +606,7 @@ int main(int argc, char **argv) {
         X3DomModel model;
         model.uri = url_encode(directory_name + "/tileset.json");
         model.max_screen_space_error = options.sse;
+        model.height_colors = options.colors;
         model.lift_meters = options.lift;
         model.label = "tileset (OGC 3D Tiles, " + std::to_string(top + 1) + " levels)";
         model.group = directory_name;

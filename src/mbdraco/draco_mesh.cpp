@@ -58,7 +58,7 @@ bool available() {
 }
 
 bool encode(const std::vector<float> &positions, const std::vector<float> *normals, const std::vector<std::uint32_t> &indices,
-                       int position_bits, int normal_bits, Encoded *result, std::string *error) {
+                       int position_bits, int normal_bits, Encoded *result, std::string *error, const std::vector<std::uint8_t> *colors) {
     const auto fail = [&](const std::string &message) {
         if (error != nullptr) {
             *error = message;
@@ -74,6 +74,10 @@ bool encode(const std::vector<float> &positions, const std::vector<float> *norma
     const std::size_t point_count = positions.size() / 3;
     if (normals != nullptr && normals->size() != positions.size()) {
         return fail("Draco: the normals and the positions differ in number");
+    }
+
+    if (colors != nullptr && colors->size() != positions.size()) {
+        return fail("Draco: the colors and the positions differ in number");
     }
 
     draco::Mesh mesh;
@@ -93,7 +97,19 @@ bool encode(const std::vector<float> &positions, const std::vector<float> *norma
             return fail("Draco: the normal attribute could not be added");
         }
     }
+    int color_attribute_id = -1;
+    if (colors != nullptr) {
+        draco::GeometryAttribute color_attribute;
+        color_attribute.Init(draco::GeometryAttribute::COLOR, nullptr, 3, draco::DT_UINT8, true, 3, 0);
+        color_attribute_id = mesh.AddAttribute(color_attribute, true, static_cast<std::uint32_t>(point_count));
+        if (color_attribute_id < 0) {
+            return fail("Draco: the color attribute could not be added");
+        }
+    }
     for (std::size_t n = 0; n < point_count; n++) {
+        if (color_attribute_id >= 0) {
+            mesh.attribute(color_attribute_id)->SetAttributeValue(draco::AttributeValueIndex(static_cast<std::uint32_t>(n)), &(*colors)[3 * n]);
+        }
         mesh.attribute(position_attribute_id)->SetAttributeValue(draco::AttributeValueIndex(static_cast<std::uint32_t>(n)), &positions[3 * n]);
         if (normal_attribute_id >= 0) {
             mesh.attribute(normal_attribute_id)->SetAttributeValue(draco::AttributeValueIndex(static_cast<std::uint32_t>(n)), &(*normals)[3 * n]);
@@ -130,6 +146,8 @@ bool encode(const std::vector<float> &positions, const std::vector<float> *norma
     result->position_id = decoded_position->unique_id();
     const draco::PointAttribute *decoded_normal = check->GetNamedAttribute(draco::GeometryAttribute::NORMAL);
     result->normal_id = decoded_normal != nullptr ? static_cast<int>(decoded_normal->unique_id()) : -1;
+    const draco::PointAttribute *decoded_color = check->GetNamedAttribute(draco::GeometryAttribute::COLOR);
+    result->color_id = decoded_color != nullptr ? static_cast<int>(decoded_color->unique_id()) : -1;
     result->point_count = check->num_points();
     result->face_count = check->num_faces();
     return true;
@@ -168,7 +186,7 @@ bool decode(const std::vector<unsigned char> &data, std::vector<float> *position
 
 bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<unsigned char> *buffer, const std::vector<float> &positions,
                    const std::vector<float> *normals, const std::vector<std::uint32_t> &indices, const Settings &settings, int material,
-                   Compression *used, std::string *reason) {
+                   Compression *used, std::string *reason, const std::vector<std::uint8_t> *colors) {
     if (model == nullptr || mesh == nullptr || buffer == nullptr || positions.empty() || positions.size() % 3 != 0) {
         if (reason != nullptr) {
             *reason = "Draco: no mesh to add";
@@ -186,7 +204,7 @@ bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<uns
     const double range = std::max({maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]});
     const int bits = position_bits(range, settings.precision);
     Encoded encoded;
-    if (!encode(positions, normals, indices, bits, settings.normal_bits, &encoded, reason)) {
+    if (!encode(positions, normals, indices, bits, settings.normal_bits, &encoded, reason, colors)) {
         return false;
     }
 
@@ -224,6 +242,17 @@ bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<uns
         normal_index = static_cast<int>(model->accessors.size()) - 1;
     }
 
+    int color_index = -1;
+    if (encoded.color_id >= 0) {
+        tinygltf::Accessor color_accessor;
+        color_accessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
+        color_accessor.normalized = true;
+        color_accessor.count = encoded.point_count;
+        color_accessor.type = TINYGLTF_TYPE_VEC3;
+        model->accessors.push_back(std::move(color_accessor));
+        color_index = static_cast<int>(model->accessors.size()) - 1;
+    }
+
     tinygltf::Accessor index_accessor;
     index_accessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
     index_accessor.count = 3 * encoded.face_count;
@@ -237,6 +266,9 @@ bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<uns
     if (normal_index >= 0) {
         primitive.attributes["NORMAL"] = normal_index;
     }
+    if (color_index >= 0) {
+        primitive.attributes["COLOR_0"] = color_index;
+    }
     primitive.indices = index_index;
     primitive.material = material;
 
@@ -244,6 +276,9 @@ bool add_primitive(tinygltf::Model *model, tinygltf::Mesh *mesh, std::vector<uns
     attributes["POSITION"] = tinygltf::Value(encoded.position_id);
     if (encoded.normal_id >= 0) {
         attributes["NORMAL"] = tinygltf::Value(encoded.normal_id);
+    }
+    if (encoded.color_id >= 0) {
+        attributes["COLOR_0"] = tinygltf::Value(encoded.color_id);
     }
     std::map<std::string, tinygltf::Value> extension;
     extension["bufferView"] = tinygltf::Value(view_index);
@@ -277,7 +312,8 @@ bool available() {
     return false;
 }
 
-bool encode(const std::vector<float> &, const std::vector<float> *, const std::vector<std::uint32_t> &, int, int, Encoded *, std::string *error) {
+bool encode(const std::vector<float> &, const std::vector<float> *, const std::vector<std::uint32_t> &, int, int, Encoded *, std::string *error,
+            const std::vector<std::uint8_t> *) {
     if (error != nullptr) {
         *error = "this build does not include Draco";
     }
@@ -292,7 +328,7 @@ bool decode(const std::vector<unsigned char> &, std::vector<float> *, std::vecto
 }
 
 bool add_primitive(tinygltf::Model *, tinygltf::Mesh *, std::vector<unsigned char> *, const std::vector<float> &, const std::vector<float> *,
-                   const std::vector<std::uint32_t> &, const Settings &, int, Compression *, std::string *reason) {
+                   const std::vector<std::uint32_t> &, const Settings &, int, Compression *, std::string *reason, const std::vector<std::uint8_t> *) {
     if (reason != nullptr) {
         *reason = "this build does not include Draco";
     }

@@ -329,6 +329,31 @@ void linear_color_bounds(double minimum, double maximum, std::vector<double> *bo
     }
 }
 
+// The color, 0 to 255, of a value on a table of bounds with a color at each: linear between the two bounds around it, the last color
+// above the last bound.
+[[nodiscard]] std::array<double, 3> color_for_value(double value, const std::vector<double> &bounds, const std::vector<std::array<double, 3>> &bound_colors) {
+    const int bound_count = static_cast<int>(bounds.size());
+    std::array<double, 3> color = bound_colors.back();
+    if (bound_count > 1 && value < bounds.back()) {
+        const int upper = static_cast<int>(std::upper_bound(bounds.begin(), bounds.end(), value) - bounds.begin());
+        const int lower = std::max(0, upper - 1);
+        const int next = std::min(bound_count - 1, upper);
+        const double fraction = next > lower ? (value - bounds[lower]) / (bounds[next] - bounds[lower]) : 0.0;
+        for (int c = 0; c < 3; c++) {
+            color[c] = bound_colors[lower][c] + (bound_colors[next][c] - bound_colors[lower][c]) * fraction;
+        }
+    }
+    return color;
+}
+
+[[nodiscard]] std::vector<std::array<double, 3>> palette_colors_for_bounds(int bound_count) {
+    std::vector<std::array<double, 3>> bound_colors;
+    for (int i = 0; i < bound_count; i++) {
+        bound_colors.push_back(haxby_palette_color(bound_count > 1 ? (haxby_color_count - 1.0) * i / (bound_count - 1.0) : haxby_color_count / 2.0));
+    }
+    return bound_colors;
+}
+
 // The colors for the heights, as the color table that mbm_grdplot -G5 makes for a grid with the Haxby colors, with a color at each of
 // 11 bounds and the color changing linearly from one to the next; the bounds are returned in bounds. For HaxbyLinear they
 // are those of linear_color_bounds. For HaxbyEqualized (-S) the data are divided into 11 cells of equal numbers of values
@@ -357,24 +382,12 @@ void linear_color_bounds(double minimum, double maximum, std::vector<double> *bo
     }
 
     const int bound_count = static_cast<int>(bounds->size());
-    std::vector<std::array<double, 3>> bound_colors;
-    for (int i = 0; i < bound_count; i++) {
-        bound_colors.push_back(haxby_palette_color(bound_count > 1 ? (haxby_color_count - 1.0) * i / (bound_count - 1.0) : haxby_color_count / 2.0));
-    }
+    const std::vector<std::array<double, 3>> bound_colors = palette_colors_for_bounds(bound_count);
 
     std::vector<float> colors;
     colors.reserve(count * 3);
     for (const double value : values) {
-        std::array<double, 3> color = bound_colors.back();
-        if (bound_count > 1 && value < bounds->back()) {
-            const int upper = static_cast<int>(std::upper_bound(bounds->begin(), bounds->end(), value) - bounds->begin());
-            const int lower = std::max(0, upper - 1);
-            const int next = std::min(bound_count - 1, upper);
-            const double fraction = next > lower ? (value - (*bounds)[lower]) / ((*bounds)[next] - (*bounds)[lower]) : 0.0;
-            for (int c = 0; c < 3; c++) {
-                color[c] = bound_colors[lower][c] + (bound_colors[next][c] - bound_colors[lower][c]) * fraction;
-            }
-        }
+        const std::array<double, 3> color = color_for_value(value, *bounds, bound_colors);
         for (int c = 0; c < 3; c++) {
             colors.push_back(static_cast<float>(color[c] / 255.0));
         }
@@ -545,6 +558,27 @@ void apply_asset_extras(tinygltf::Model *model, const GlbContent &content) {
 
 } // namespace
 
+std::vector<double> haxby_height_bounds(double minimum, double maximum) {
+    std::vector<double> bounds;
+    linear_color_bounds(minimum, maximum, &bounds);
+    return bounds;
+}
+
+void color_mesh_by_height(Mesh *mesh, double height_offset, const std::vector<double> &bounds) {
+    mesh->colors.clear();
+    if (bounds.empty()) {
+        return;
+    }
+    const std::vector<std::array<double, 3>> bound_colors = palette_colors_for_bounds(static_cast<int>(bounds.size()));
+    mesh->colors.reserve(mesh->vertices.size() * 3);
+    for (const Vec3 &vertex : mesh->vertices) {
+        const std::array<double, 3> color = color_for_value(vertex.z + height_offset, bounds, bound_colors);
+        for (int c = 0; c < 3; c++) {
+            mesh->colors.push_back(static_cast<std::uint8_t>(std::lround(std::min(255.0, std::max(0.0, color[c])))));
+        }
+    }
+}
+
 void set_glb_run_metadata(const MetaValue &run_metadata) {
     run_metadata_storage() = run_metadata;
     has_run_metadata() = true;
@@ -639,6 +673,7 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
     struct Part {
         std::vector<float> positions;
         std::vector<float> normals;
+        std::vector<std::uint8_t> colors;
         std::vector<std::uint32_t> indices;
     };
     std::vector<std::uint32_t> local(split ? mesh.vertices.size() : 0, std::numeric_limits<std::uint32_t>::max());
@@ -650,6 +685,7 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
             if (!mesh.normals.empty()) {
                 part->normals = flatten_vec3_values(mesh.normals);
             }
+            part->colors = mesh.colors;
             part->indices.assign(mesh.indices.begin(), mesh.indices.end());
             return;
         }
@@ -680,6 +716,12 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
                 part->normals.push_back(static_cast<float>(mesh.normals[vertex].z));
             }
         }
+        if (!mesh.colors.empty()) {
+            part->colors.reserve(touched.size() * 3);
+            for (const std::uint32_t vertex : touched) {
+                part->colors.insert(part->colors.end(), mesh.colors.begin() + 3 * vertex, mesh.colors.begin() + 3 * vertex + 3);
+            }
+        }
         for (const std::uint32_t vertex : touched) {
             local[vertex] = std::numeric_limits<std::uint32_t>::max();
         }
@@ -702,7 +744,8 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
         for (std::uint32_t group = 0; group < group_count && compressed; group++) {
             make_part(group, &part);
             compressed = mbdraco::add_primitive(&model, &gltf_mesh, &binary_buffer, part.positions, part.normals.empty() ? nullptr : &part.normals,
-                                                part.indices, compression_storage(), 0, &used, &reason);
+                                                part.indices, compression_storage(), 0, &used, &reason,
+                                                part.colors.empty() ? nullptr : &part.colors);
         }
         if (compressed) {
             content.compression = used;
@@ -724,6 +767,8 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
             make_part(group, &part);
             const std::size_t position_offset = append_vector_bytes(&binary_buffer, part.positions);
             const std::size_t normal_offset = part.normals.empty() ? 0 : append_vector_bytes(&binary_buffer, part.normals);
+            const std::size_t color_offset = part.colors.empty() ? 0 : append_vector_bytes(&binary_buffer, part.colors);
+            append_padding(&binary_buffer);
             const std::size_t index_offset = append_vector_bytes(&binary_buffer, part.indices);
             append_padding(&binary_buffer);
 
@@ -750,6 +795,16 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
                     add_vec3_accessor(&model, add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, normal_offset, part.normals.size() * sizeof(float)),
                                       vertex_count, normal_minimum, normal_maximum);
             }
+            if (!part.colors.empty()) {
+                tinygltf::Accessor color_accessor;
+                color_accessor.bufferView = add_buffer_view(&model, TINYGLTF_TARGET_ARRAY_BUFFER, color_offset, part.colors.size());
+                color_accessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
+                color_accessor.normalized = true;
+                color_accessor.count = vertex_count;
+                color_accessor.type = TINYGLTF_TYPE_VEC3;
+                model.accessors.push_back(std::move(color_accessor));
+                primitive.attributes["COLOR_0"] = static_cast<int>(model.accessors.size()) - 1;
+            }
             primitive.indices = add_index_accessor(
                 &model, add_buffer_view(&model, TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER, index_offset, part.indices.size() * sizeof(std::uint32_t)),
                 part.indices.size(), index_min_value(part.indices), index_max_value(part.indices));
@@ -769,7 +824,8 @@ bool write_mesh_glb_file(const std::filesystem::path &path, const Mesh &mesh, st
 
     tinygltf::Material material;
     material.doubleSided = true;
-    material.pbrMetallicRoughness.baseColorFactor = {0.35, 0.55, 0.72, 1.0};
+    // COLOR_0 is multiplied by the base color, so colored vertices get white, which leaves them as they are.
+    material.pbrMetallicRoughness.baseColorFactor = mesh.colors.empty() ? std::vector<double>{0.35, 0.55, 0.72, 1.0} : std::vector<double>{1.0, 1.0, 1.0, 1.0};
     material.pbrMetallicRoughness.metallicFactor = 0.0;
     material.pbrMetallicRoughness.roughnessFactor = 0.65;
     model.materials.push_back(std::move(material));

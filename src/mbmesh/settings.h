@@ -48,6 +48,8 @@ struct Options {
 
     // --lift, as --geoorigin works: not given, no lift; given without a value, the lift is decided from the lowest point of the mesh
     // (default_tileset_lift()); given with --lift=<meters>, that many meters, along the local vertical, in the transform of tileset.json.
+    // The tiles of --tileset are colored by height (COLOR_0, the Haxby table, bounds from the whole survey) unless --no-colors.
+    bool tileset_colors = true;
     bool tileset_lift_requested = false;
     bool tileset_lift_given = false;   // with a value
     double tileset_lift = 0.0;
