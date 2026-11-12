@@ -585,6 +585,10 @@ int main() {
         touch(survey / "lidar" / "a-x" / "q.glb");
         touch(survey / "lidar" / "a" / "p.glb");
         touch(survey / "lidar" / ".hidden" / "h.glb");
+        // The logs: mbmesh.log in the output directory, mbglb2tiles.log in its tileset directory, and a log beside a GLB of mbgrd2gltf
+        touch(survey / "multibeam" / "mbmesh_output" / "mbmesh.log");
+        touch(survey / "multibeam" / "mbmesh_output" / "mbglb2tiles_output" / "mbglb2tiles.log");
+        touch(survey / "multibeam" / "ZTopo.log");
 
         // The page in the output directory: relative to that directory, and no GLBs from beside it
         const std::filesystem::path output = survey / "multibeam" / "mbmesh_output";
@@ -617,8 +621,13 @@ int main() {
         ok &= check(models.size() == 8 && models[4].is_tileset && models[4].group == "20260101A/multibeam/mbmesh_output" &&
                         models[0].group == "20260101A/lidar" && models[2].group == "20260101A/lidar/a-x",
                     "the groups are the directory paths, from the survey directory");
-        ok &= check(models[4].label == "tileset (OGC 3D Tiles): mbglb2tiles_output" && models[5].is_tileset && models[5].label == "tileset (OGC 3D Tiles)",
-                    "a tileset directory of any name is one tileset, labeled by the name unless it is tileset, and its tiles are not listed");
+        ok &= check(models[4].label == "mbglb2tiles_output (OGC 3D Tiles)" && models[5].is_tileset && models[5].label == "tileset (OGC 3D Tiles)",
+                    "a tileset directory of any name is one tileset, labeled by the name of the directory, and its tiles are not listed");
+        ok &= check(models[3].log_label == "mbgrd2gltf log" && models[3].log_uri == "20260101A/multibeam/ZTopo.log" &&
+                        models[4].log_label == "mbglb2tiles log" && models[4].log_uri == "20260101A/multibeam/mbmesh_output/mbglb2tiles_output/mbglb2tiles.log" &&
+                        models[5].log_label == "mbmesh log" && models[5].log_uri == "20260101A/multibeam/mbmesh_output/mbmesh.log" &&
+                        models[6].log_label == "mbmesh log" && models[0].log_uri.empty(),
+                    "each model has a link to the log of the program that made it, named for the program, and none without a log file");
         ok &= check(!use_geoorigin, "GLBs without a georeference give no GeoOrigin");
 
         // A GLB with the georeference gives the GeoOrigin and the viewpoint

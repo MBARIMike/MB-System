@@ -604,6 +604,14 @@ bool read_tileset_height_colors(const std::filesystem::path &path) {
     return text.find("\"heightColors\"") != std::string::npos;
 }
 
+// The link to the right of a model's label that opens the log of the program that made it, or nothing.
+static std::string log_link(const X3DomModel &model) {
+    if (model.log_uri.empty()) {
+        return std::string();
+    }
+    return " <a href='" + escape_html(model.log_uri) + "' target='_blank' style='font-size:smaller; margin-left:0.6em;'>" + escape_html(model.log_label) + "</a>";
+}
+
 std::vector<X3DomModel> find_viewer_models(const std::filesystem::path &web_root, const std::filesystem::path &output_directory, bool tileset,
                                            bool page_in_output_directory) {
     std::vector<X3DomModel> models;
@@ -851,8 +859,8 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
             relative_to_page = entry.path;
         }
         model.uri = url_encode(relative_to_page.generic_string());
-        // The tileset of mbmesh is in a directory called tileset; any other is named by its directory, as mbglb2tiles_output is.
-        model.label = entry.is_tileset ? (entry.name == "tileset" ? std::string("tileset (OGC 3D Tiles)") : "tileset (OGC 3D Tiles): " + entry.name) : entry.name;
+        // A tileset is named by the directory that holds its tiles: tileset for mbmesh, whatever the user called it for mbglb2tiles.
+        model.label = entry.is_tileset ? entry.name + " (OGC 3D Tiles)" : entry.name;
         model.group = group;
         model.is_tileset = entry.is_tileset;
         if (entry.is_tileset) {
@@ -861,6 +869,38 @@ std::vector<X3DomModel> find_survey_models(const std::filesystem::path &survey_d
             model.height_colors = read_tileset_height_colors(entry.path);
         }
         model.visible = !entry.is_tileset && entry.name == "track.glb";
+
+        // The log of the program that made it, if it is there: mbglb2tiles writes mbglb2tiles.log into its tileset directory, mbmesh writes
+        // mbmesh.log into its output directory (the parent of its tileset directory, and the directory of its mesh.glb and track.glb), and
+        // mbgrd2gltf writes a .log file that has the name of its GLB beside it.
+        {
+            const std::filesystem::path directory = entry.path.parent_path();
+            std::filesystem::path log;
+            std::string log_label;
+            std::error_code log_error;
+            const auto exists = [&](const std::filesystem::path &candidate) { return std::filesystem::is_regular_file(candidate, log_error); };
+            if (entry.is_tileset && exists(directory / "mbglb2tiles.log")) {
+                log = directory / "mbglb2tiles.log";
+                log_label = "mbglb2tiles log";
+            } else if (entry.is_tileset && exists(directory.parent_path() / "mbmesh.log")) {
+                log = directory.parent_path() / "mbmesh.log";
+                log_label = "mbmesh log";
+            } else if (!entry.is_tileset && (entry.name == "mesh.glb" || entry.name == "track.glb") && exists(directory / "mbmesh.log")) {
+                log = directory / "mbmesh.log";
+                log_label = "mbmesh log";
+            } else if (!entry.is_tileset && exists(std::filesystem::path(entry.path).replace_extension(".log"))) {
+                log = std::filesystem::path(entry.path).replace_extension(".log");
+                log_label = "mbgrd2gltf log";
+            }
+            if (!log.empty()) {
+                std::filesystem::path relative_log = log.lexically_relative(page);
+                if (relative_log.empty()) {
+                    relative_log = log;
+                }
+                model.log_uri = url_encode(relative_log.generic_string());
+                model.log_label = log_label;
+            }
+        }
         models.push_back(model);
 
         if (!entry.is_tileset) {
@@ -1474,7 +1514,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
             }
             output << std::string(open_groups.size() * 2 + 12, ' ') << "<div><input id='model-checkbox-" << i << "' type='checkbox'"
                    << (model.visible ? " checked" : "") << " onclick='toggleModel(" << i << ", this.checked);'></input> "
-                   << escape_html(model.label) << "</div>\n";
+                   << escape_html(model.label) << log_link(model) << "</div>\n";
             if (model.height_colors) {
                 output << std::string(open_groups.size() * 2 + 12, ' ') << "<div style='margin-left:1.5em;'><input id='color-checkbox-" << i
                        << "' type='checkbox' checked onclick='setTilesetColors(" << i << ", this.checked);'></input> color by height</div>\n";
@@ -1507,7 +1547,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                << "            <td colspan='2'>\n"
                << "              <input id='model-checkbox-" << i << "' type='checkbox'" << (model.visible ? " checked" : "")
                << " onclick='toggleModel(" << i << ", this.checked);'>\n"
-               << "              </input> " << escape_html(model.label) << "\n"
+               << "              </input> " << escape_html(model.label) << log_link(model) << "\n"
                << "            </td>\n"
                << "          </tr>\n";
         if (model.height_colors) {

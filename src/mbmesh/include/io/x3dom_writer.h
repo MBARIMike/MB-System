@@ -88,6 +88,10 @@ struct X3DomModel {
     // For a tileset: its tiles have a color for each vertex (heightColors in its extras), and the page offers a checkbox that turns
     // the colors off, which shows the tiles in one gray.
     bool height_colors = false;
+    // The log of the program that made the model, if its file is there: a link to the right of the label, named for the program
+    // ("mbmesh log"). Both are empty without one.
+    std::string log_uri;     // relative to the page, with characters that need it percent-encoded
+    std::string log_label;
 };
 
 // A chunk of the reconstruction, to be drawn in the page: its outline as a closed line of four corners, and its file

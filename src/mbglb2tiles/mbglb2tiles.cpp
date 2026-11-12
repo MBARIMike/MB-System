@@ -608,7 +608,7 @@ int main(int argc, char **argv) {
         model.max_screen_space_error = options.sse;
         model.height_colors = options.colors;
         model.lift_meters = options.lift;
-        model.label = "tileset (OGC 3D Tiles, " + std::to_string(top + 1) + " levels)";
+        model.label = directory_name + " (OGC 3D Tiles, " + std::to_string(top + 1) + " levels)";
         model.group = directory_name;
         model.visible = true;
         model.is_tileset = true;
