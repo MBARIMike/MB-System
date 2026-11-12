@@ -75,6 +75,11 @@ if(buildTests)
 	add_executable(mbgrd2gltf_test_viewpoint tests/test_viewpoint.cpp viewpoint.cpp)
 	target_include_directories(mbgrd2gltf_test_viewpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 	add_test(NAME mbgrd2gltf_viewpoint COMMAND mbgrd2gltf_test_viewpoint)
+
+	# The scale object of the pages, held in scale_axes.h for mbmesh and mbglb2tiles as well.
+	add_executable(mbgrd2gltf_test_scale_axes tests/test_scale_axes.cpp)
+	target_include_directories(mbgrd2gltf_test_scale_axes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+	add_test(NAME mbgrd2gltf_scale_axes COMMAND mbgrd2gltf_test_scale_axes)
 endif()
 
 install(TARGETS mbgrd2gltf

@@ -149,7 +149,8 @@ if(buildTests)
     src/io/x3dom_writer.cpp)
   target_compile_features(mbmesh_test_x3dom_writer PRIVATE cxx_std_17)
   target_include_directories(mbmesh_test_x3dom_writer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/mbgrd2gltf)
   add_test(NAME mbmesh_x3dom_writer COMMAND mbmesh_test_x3dom_writer)
 
   add_executable(mbmesh_test_tileset

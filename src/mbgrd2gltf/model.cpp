@@ -34,6 +34,7 @@
 #include "model.h"
 #include "logger.h"
 #include "viewpoint.h"
+#include "scale_axes.h"
 
 // external libraries
 #define TINYGLTF_IMPLEMENTATION
@@ -891,23 +892,19 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "              </input> Log\n";
   html_file << "            </td>\n";
   html_file << "          </tr>\n";
-  html_file << "          <tr>\n";
-  html_file << "            <td>\n";
-  html_file << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.showAll();'> Show Everything\n";
-  html_file << "              </button>\n";
-  html_file << "            </td>\n";
-  html_file << "            <td>\n";
-  html_file << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.resetView();'> Reset View\n";
-  html_file << "              </button>\n";
-  html_file << "            </td>\n";
-  html_file << "          </tr>\n";
+  // The three buttons are in one row, in one cell so that the table keeps its two columns, and the scale axes check box is under them.
   html_file << "          <tr>\n";
   html_file << "            <td colspan='2'>\n";
+  html_file << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.showAll();'> Show Everything\n";
+  html_file << "              </button>\n";
+  html_file << "              <button onclick='document.getElementById(&apos;x3dElement&apos;).runtime.resetView();'> Reset View\n";
+  html_file << "              </button>\n";
   html_file << "              <button onclick='copyGeoViewpoint()' title='Puts the option that gives the current view on the clipboard and in the X3DOM log'> Copy GeoViewpoint\n";
   html_file << "              </button>\n";
-  html_file << "              <div id='copy-status' style='visibility:hidden; font-size:smaller; max-width:18em; min-height:1.2em;'>&nbsp;</div>\n";
+  html_file << "              <div id='copy-status' style='visibility:hidden; font-size:smaller; width:0; min-width:100%; min-height:1.2em;'>&nbsp;</div>\n";
   html_file << "            </td>\n";
   html_file << "          </tr>\n";
+  scale_axes::write_checkbox_row(html_file);
   html_file << "        </table>\n";
   html_file << "      </div>\n";
   html_file << "    </div>\n";
@@ -926,12 +923,12 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
             << local_position[0] << " " << local_position[1] << " " << local_position[2] << "' orientation='" << std::setprecision(8)
             << local_axis[0] << " " << local_axis[1] << " " << local_axis[2] << " " << local_angle
             << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(3) << local_center[0] << " " << local_center[1] << " "
-            << local_center[2] << "'></Viewpoint>\n";
+            << local_center[2] << "'" << scale_axes::viewpoint_hook() << "></Viewpoint>\n";
   html_file << "        <GeoViewpoint DEF='OVERVIEW_GEO' id='OVERVIEW_GEO' description='Overview, GeoViewpoint with geoOrigin' position='" << geoposition_str.str() 
             << "' orientation='" << orientation_str.str() 
             << "' fieldOfView='0.785398' centerOfRotation='" 
             << std::fixed << std::setprecision(6) << center_lat << " " << center_lon << " " 
-            << std::setprecision(2) << mean_depth << "'";
+            << std::setprecision(2) << mean_depth << "'" << scale_axes::viewpoint_hook();
   
   html_file << " geoSystem='\"GD\" \"WE\"'>";
 
@@ -966,7 +963,7 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
               << user.longitude << " " << std::setprecision(3) << user.elevation << "' orientation='" << std::setprecision(8) << axis[0] << " "
               << axis[1] << " " << axis[2] << " " << angle << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(7)
               << user.center_latitude << " " << user.center_longitude << " " << std::setprecision(3) << user.center_elevation
-              << "' geoSystem='\"GD\" \"WE\"'>";
+              << "'" << scale_axes::viewpoint_hook() << " geoSystem='\"GD\" \"WE\"'>";
     if (options.is_geoorigin_auto() || options.is_geoorigin_set())
       html_file << "\n          <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n        ";
     html_file << "</GeoViewpoint>\n";
@@ -978,6 +975,7 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "        <transform>\n";
   html_file << "          <Inline id='inline' url='" << model_filename << "' nameSpaceName='gltf' mapDEFToID='true'></Inline>\n";
   html_file << "        </transform>\n";
+  scale_axes::write_scene(html_file);
   html_file << "      </scene>\n";
   html_file << "    </x3d>\n";
   html_file << "    \n";
@@ -1061,6 +1059,8 @@ void write_html(const Bathymetry& bathymetry, const Geometry& geometry, const Op
   html_file << "          loadLog();\n";
   html_file << "        }\n";
   html_file << "      }\n";
+  html_file << scale_axes::script();
+  html_file << "      scaleAxesExaggeration = " << std::fixed << std::setprecision(6) << options.exaggeration() << ";\n";
   html_file << "    </script>\n";
   html_file << "  </body>\n";
   html_file << "</html>\n";

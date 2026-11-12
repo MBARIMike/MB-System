@@ -100,6 +100,14 @@ tileset/L1/…  Ln/…
 - `mbglb2tiles --html` writes `<outputdir>.html` beside the output directory.
 - `mbmesh -I <directory>` writes `mbmesh_survey.html`, which finds the products of every run below it, including a tileset in a directory of any
   name, in accordions by directory.
+- **Scale object.** Every page of the three programs (`mbgrd2gltf`, `mbmesh`, `mbglb2tiles`) has axes East (red), North (green) and Up (blue) at the center of rotation, the technique that STOQS uses for its platforms
+  (a `GeoLocation` with an axes triad, resized by a `viewpointChanged` handler and labeled with its length). Each viewpoint has `onviewpointChanged`,
+  which calls `updateScaleAxes()`: from the distance of the camera to the center of rotation and the field of view it picks a length of about a sixth of the
+  height of the view, rounded down to 1, 2 or 5 times a power of ten, puts the unit triad there with a matrix (X east, Y up, Z south at that point of the Earth), and
+  writes the length in the label only when the rounded length changes. The length is true at the axes, not elsewhere in a perspective view. The
+  "scale axes" check box switches it off. The code is one header, `src/mbgrd2gltf/scale_axes.h`, that the three page writers include (the hook, the scene nodes, the
+  check box row and the script), so the pages agree; `mbgrd2gltf`, which has a vertical exaggeration, sets `scaleAxesExaggeration` and the label then says what the Up
+  axis stands for too ("20 m (up 10 m)").
 - A tileset with colors gets a "color by height" checkbox, one for each tileset: unchecked, it turns the vertex colors off and sets the gray
   base color that MeshLab shows (192 of 255). The tiles are reached through X3DOM's internal nodes from the `GeoTileset`, and tiles that load later
   are done as they arrive.

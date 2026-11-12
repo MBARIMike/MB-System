@@ -124,6 +124,11 @@ struct X3DomWriterOptions {
     // which the build on www.x3dom.org, the default, does not.
     std::string x3dom_url = "https://www.x3dom.org/x3dom/dist/x3dom-full.js";
 
+    // A scale object in the scene: a triad of axes (East, North, Up) at the center of rotation, whose size follows the distance of the camera
+    // so that it stays about as large on the screen, and whose label says the length of the axes there, a round number (1, 2 or 5 times a power
+    // of ten) of meters. The page has a check box that switches it off.
+    bool scale_axes = true;
+
     // The GLBs the page can show.
     std::vector<X3DomModel> models;
 

@@ -310,6 +310,17 @@ int main() {
                     "Copy GeoViewpoint takes the lift off");
         ok &= check(contains(write_page(options), "var liftMeters = 0.000;") && !contains(write_page(options), "<GeoTransform"),
                     "without a lift the page has plain transforms");
+        // The scale object: axes at the center of rotation that the page resizes whenever a viewpoint changes, with a check box.
+        ok &= check(contains(lifted_page, "<matrixTransform id='scale_axes_matrix'") && contains(lifted_page, "<text id='scale_axes_length'") &&
+                        contains(lifted_page, "id='scale-axes-checkbox' type='checkbox' checked onclick='setScaleAxes(this.checked);'"),
+                    "the page has the scale object and its check box");
+        ok &= check(contains(lifted_page, "id='OVERVIEW_GEO'") && contains(lifted_page, "onviewpointChanged='updateScaleAxes()'") && contains(lifted_page, "function updateScaleAxes"),
+                    "each viewpoint calls updateScaleAxes when it changes");
+        X3DomWriterOptions without_axes = lifted;
+        without_axes.scale_axes = false;
+        ok &= check(!contains(write_page(without_axes), "<matrixTransform id='scale_axes_matrix'") && !contains(write_page(without_axes), "scale-axes-checkbox") &&
+                        !contains(write_page(without_axes), "onviewpointChanged"),
+                    "without scale_axes there is no scale object, no check box and no viewpoint hook");
         ok &= check(!contains(lifted_page, "id='color-checkbox-") && contains(lifted_page, "function setTilesetColors"), "a tileset without vertex colors has no color checkbox");
         lifted_tileset.height_colors = true;
         X3DomWriterOptions colored = lifted;

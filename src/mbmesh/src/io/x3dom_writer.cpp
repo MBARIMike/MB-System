@@ -1,5 +1,7 @@
 #include "io/x3dom_writer.h"
 
+#include "scale_axes.h"
+
 #include "io/coordinate_frame.h"
 
 #include <algorithm>
@@ -1518,7 +1520,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         }
     }
 
-    // The three buttons are in one row, in one cell so that the table keeps its two columns. The status message is
+    // The three buttons are in one row, in one cell so that the table keeps its two columns, with the scale axes check box under them. The status message is
     // as wide as the buttons and wraps, and width:0 with min-width:100% keeps it from making the table wider.
     output << "          <tr>\n"
            << "            <td colspan='2'>\n"
@@ -1530,8 +1532,11 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "              </button>\n"
            << "              <div id='copy-status' style='visibility:hidden; font-size:smaller; width:0; min-width:100%; min-height:1.2em;'>&nbsp;</div>\n"
            << "            </td>\n"
-           << "          </tr>\n"
-           << "        </table>\n"
+           << "          </tr>\n";
+    if (options.scale_axes) {
+        scale_axes::write_checkbox_row(output);
+    }
+    output << "        </table>\n"
            << "      </div>\n"
            << "    </div>\n"
            << "    <x3d id='x3dElement' showStat='false' showLog='false' style='width:100%; height:100%; border:0; margin:0; padding:0;'>\n"
@@ -1544,6 +1549,8 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
     // geoOrigin is an SFNode field, so X3DOM takes it from a child element and ignores an attribute
     // that names a DEF, in which case the GeoViewpoint is placed in absolute ECEF, millions of meters
     // from models that are relative to the GeoOrigin. Page Down steps from one viewpoint to the other.
+    // Each viewpoint tells the page when the camera moves, for the scale object.
+    const std::string viewpoint_hook = options.scale_axes ? scale_axes::viewpoint_hook() : std::string();
     if (geo.has_local_view) {
         output << std::fixed << std::setprecision(3)
                << "        <Viewpoint DEF='OVERVIEW_LOCAL' id='OVERVIEW_LOCAL' description='Overview, Viewpoint in model coordinates' position='"
@@ -1551,11 +1558,11 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                << (geo.view_position[2] + local_lift[2]) << "' orientation='"
                << std::setprecision(8) << geo.view_axis[0] << " " << geo.view_axis[1] << " " << geo.view_axis[2] << " " << geo.view_angle
                << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(3) << (geo.view_center[0] + local_lift[0]) << " "
-               << (geo.view_center[1] + local_lift[1]) << " " << (geo.view_center[2] + local_lift[2]) << "'></Viewpoint>\n";
+               << (geo.view_center[1] + local_lift[1]) << " " << (geo.view_center[2] + local_lift[2]) << "'" << viewpoint_hook << "></Viewpoint>\n";
     }
     output << "        <GeoViewpoint DEF='OVERVIEW_GEO' id='OVERVIEW_GEO' description='Overview, GeoViewpoint with geoOrigin' position='"
            << position.str() << "' orientation='1 0 0 -1.5708' fieldOfView='0.785398' centerOfRotation='" << center.str() << "'"
-           << " geoSystem='\"GD\" \"WE\"'>";
+           << viewpoint_hook << " geoSystem='\"GD\" \"WE\"'>";
     if (options.use_geoorigin) {
         output << "\n          <GeoOrigin DEF='GRID_ORIGIN' geoSystem='\"GD\" \"WE\"' geoCoords='" << origin_coordinates.str()
                << "'></GeoOrigin>\n        ";
@@ -1578,7 +1585,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
                << user.longitude << " " << std::setprecision(3) << (user.elevation + lift) << "' orientation='" << std::setprecision(8) << axis[0] << " "
                << axis[1] << " " << axis[2] << " " << angle << "' fieldOfView='0.785398' centerOfRotation='" << std::setprecision(7)
                << user.center_latitude << " " << user.center_longitude << " " << std::setprecision(3) << (user.center_elevation + lift)
-               << "' geoSystem='\"GD\" \"WE\"'>";
+               << "'" << viewpoint_hook << " geoSystem='\"GD\" \"WE\"'>";
         if (options.use_geoorigin) {
             output << "\n          <GeoOrigin USE='GRID_ORIGIN'></GeoOrigin>\n        ";
         }
@@ -1680,6 +1687,9 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
         output << (lift != 0.0 ? "          </GeoTransform>\n" : "          </transform>\n") << "        </switch>\n";
     }
 
+    if (options.scale_axes) {
+        scale_axes::write_scene(output);
+    }
     output << "      </scene>\n"
            << "    </x3d>\n"
            << "    \n"
@@ -1717,7 +1727,7 @@ bool write_glb_x3dom_file(const std::filesystem::path &html_path, const X3DomWri
            << "      // How far above the ellipsoid the page lifts the tileset and the rest with it, in meters; zero if it does not.\n"
            << "      var liftMeters = " << std::fixed << std::setprecision(3) << lift << ";\n"
            << "      var modelOrigin = [" << origin_ecef[0] << ", " << origin_ecef[1] << ", " << origin_ecef[2] << "];\n"
-           << page_script << "    </script>\n"
+           << page_script << (options.scale_axes ? scale_axes::script() : "") << "    </script>\n"
            << "  </body>\n"
            << "</html>\n";
 
