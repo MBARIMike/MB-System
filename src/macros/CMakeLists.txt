@@ -50,6 +50,7 @@ set(scripts
     mbm_utm
     mbm_xbt
     mbm_xyplot
+    mbpy_3dtiles
     mbpy_grdplot
     mbpy_grd3dplot
     mbpy_histplot
@@ -69,6 +70,7 @@ set(mbpy_modules
     python/mbpy_layout.py
     python/mbpy_color.py
     python/mbpy_misc.py
+    python/mbpy_3dtiles_script.py
     python/mbpy_grdplot_script.py
     python/mbpy_grd3dplot_script.py
     python/mbpy_histplot_script.py
